@@ -9,6 +9,17 @@ import Testing
 }
 
 @available(iOS 15.0, *)
+@Test func imageViewNormalizesImageURLsBeforeLoading() async throws {
+    let httpURL = try #require(ImageView.normalizedImageURL(from: "http://example.com/photo.png"))
+    let bareURL = try #require(ImageView.normalizedImageURL(from: "example.com/photo"))
+    let casedExtensionURL = try #require(ImageView.normalizedImageURL(from: "https://example.com/PHOTO.PNG"))
+
+    #expect(httpURL.absoluteString == "https://example.com/photo.png")
+    #expect(bareURL.absoluteString == "https://example.com/photo")
+    #expect(casedExtensionURL.absoluteString == "https://example.com/PHOTO.PNG")
+}
+
+@available(iOS 15.0, *)
 @Test func singleHeadingMarkdownStreamsParagraphByParagraph() async throws {
     let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
     let markdown = """

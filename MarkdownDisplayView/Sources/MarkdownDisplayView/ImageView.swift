@@ -7,12 +7,10 @@
 
 import UIKit
 import ImageIO
-import Combine
+import Kingfisher
 
 /// A subclass of `UIImageView` that provides a method for loading an image from a URL.
 @objc final public class ImageView: UIImageView {
-
-    private var cancellables = Set<AnyCancellable>()
     
     public override init(frame: CGRect) {
         super.init(frame: frame)
@@ -21,38 +19,42 @@ import Combine
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
+
+    public static func normalizedImageURL(from url: String) -> URL? {
+        var urlString = ""
+        if url.hasSuffix(".png") || url.hasSuffix(".jpg") || url.hasSuffix(".jpeg") {
+            urlString = url
+        } else {
+            if url.contains("?") {
+                let components = url.split(separator: "?")
+                if let firstComponent = components.first {
+                    urlString = String(firstComponent) + "?" + (components.last ?? "")
+                } else {
+                    urlString = url.lowercased()
+                }
+            } else {
+                urlString = url.lowercased()
+            }
+        }
+        if !url.hasPrefix("http://"), !url.hasPrefix("https://") {
+            urlString = "https://" + url
+        } else if url.hasPrefix("http://"),
+                  let index = urlString.index(urlString.startIndex, offsetBy: 4, limitedBy: urlString.endIndex) {
+            urlString.insert("s", at: index)
+        }
+        return URL(string: urlString)
+    }
     
     /// Loads an image from the specified URL and sets it as the image of the image view.
     /// - Parameters:
     ///   - url: The URL of the image to load.
     ///   - placeHolder: An optional placeholder image to display while the image is being loaded.
     @MainActor public func image(with url: String,placeHolder: UIImage?) {
-        self.image = placeHolder
-        var urlString = ""
-        if url.hasSuffix(".png") || url.hasSuffix(".jpg") || url.hasSuffix(".jpeg") {
-            urlString = url
-        } else {
-            urlString = url.lowercased()
-        }
-        if !url.hasPrefix("http://"), !url.hasPrefix("https://") {
-            urlString = "https://" + url
-        } else {
-            if url.hasPrefix("http://") {
-                if let index = urlString.index(urlString.startIndex, offsetBy: 4, limitedBy: urlString.endIndex) {
-                    urlString.insert("s", at: index)
-                }
-            }
-        }
-        guard let imageURL = URL(string: urlString) else {
+        guard let imageURL = Self.normalizedImageURL(from: url) else {
+            self.image = placeHolder
             return
         }
-        ImageLoader.shared.loadImage(from: imageURL)
-            .sink(receiveValue: { [weak self] url_image in
-                if url_image != nil,url_image?.size ?? .zero != .zero {
-                    self?.image = url_image
-                }
-            })
-            .store(in: &self.cancellables)
+        kf.setImage(with: imageURL, placeholder: placeHolder)
     }
 
     /// Loads an image from the specified URL and sets it as the image of the image view.
@@ -61,18 +63,17 @@ import Combine
     ///   - placeHolder: An optional placeholder image to display while the image is being loaded.
     ///   - loadFinished: Load finished callback.
     public func image(with url: String,placeHolder: UIImage?,loadFinished: @escaping (UIImage?) -> Void) {
-        self.image = placeHolder
-        guard let imageURL = URL(string: url) else {
+        guard let imageURL = Self.normalizedImageURL(from: url) else {
+            self.image = placeHolder
             return
         }
-        ImageLoader.shared.loadImage(from: imageURL)
-            .sink(receiveValue: { [weak self] url_image in
-                if url_image != nil,url_image?.size ?? .zero != .zero  {
-                    self?.image = url_image
-                    loadFinished(url_image)
-                }
-            })
-            .store(in: &self.cancellables)
+        kf.setImage(with: imageURL, placeholder: placeHolder) { result in
+            guard case .success(let value) = result,
+                  value.image.size != .zero else {
+                return
+            }
+            loadFinished(value.image)
+        }
     }
 }
 

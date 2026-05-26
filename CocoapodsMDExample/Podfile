@@ -7,5 +7,6 @@ target 'CocoapodsMDExample' do
 
   # 本地pod
   pod 'MarkdownDisplayKit', :path => '../'
+  pod 'Kingfisher', '~> 8.9.0'
 
 end

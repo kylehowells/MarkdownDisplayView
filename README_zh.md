@@ -97,9 +97,11 @@ Config.local.json 结构如下：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.7.5")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.7.8")
 ]
 ```
+
+`Package.swift` 会自动解析 `Kingfisher` `8.9.0` 起始版本，用于图片异步加载和缓存。
 
 然后在 target 中添加:
 
@@ -116,7 +118,7 @@ dependencies: [
 
 ```ruby
 
-pod 'MarkdownDisplayKit'
+pod 'MarkdownDisplayKit', '~> 1.7.8'
 ```
 
 然后运行:
@@ -124,6 +126,8 @@ pod 'MarkdownDisplayKit'
 ```bash
 pod install
 ```
+
+**说明**：`MarkdownDisplayKit.podspec` 已声明 `AppleSwiftMDWrapper` 作为 Markdown 解析依赖，并声明 `Kingfisher (~> 8.9.0)` 作为图片加载依赖，执行 `pod install` 时会自动解析。
 
 ## 快速开始
 
@@ -569,7 +573,7 @@ open ExampleForMarkdown.xcodeproj
 
 - **异步渲染** - Markdown 解析和渲染在后台队列执行，不阻塞主线程
 - **增量更新** - 使用 Diff 算法，只更新变化的部分
-- **图片懒加载** - 图片异步加载，带缓存机制
+- **图片懒加载** - 图片通过 Kingfisher 异步加载，并复用缓存
 - **正则缓存** - 语法高亮正则表达式缓存复用
 - **视图复用** - 高效的视图更新策略
 
@@ -599,8 +603,8 @@ markdownView.onLinkTap = { [weak self] url in
     }
 }
 markdownView.onImageTap = { imageURL in
-    //获取图片,如果已经加载出来
-    _ = ImageCacheManager.shared.image(for: imageURL)
+    // 内置 ImageView 会通过 Kingfisher 加载并缓存远程图片。
+    // 如需图片预览，可使用 imageURL 打开自定义预览页。
 }
 markdownView.onTOCItemTap = { item in
     print("title:\(item.title), level:\(item.level), id:\(item.id)")
@@ -630,8 +634,8 @@ scrollableMarkdownView.onLinkTap = { [weak self] url in
     }
 }
 scrollableMarkdownView.onImageTap = { imageURL in
-    //获取图片,如果已经加载出来
-    _ = ImageCacheManager.shared.image(for: imageURL)
+    // 内置 ImageView 会通过 Kingfisher 加载并缓存远程图片。
+    // 如需图片预览，可使用 imageURL 打开自定义预览页。
 }
 scrollableMarkdownView.onTOCItemTap = { item in
     print("title:\(item.title), level:\(item.level), id:\(item.id)")
@@ -904,6 +908,12 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 
 ## 更新日志
 
+### 1.7.8 (2026-05-26)
+
+- 🖼 **Kingfisher 图片加载** - `ImageView.swift` 中的 Markdown 图片加载与缓存切换为 Kingfisher 8.9.0。
+- 📦 **依赖对齐** - `Package.swift` 与 `MarkdownDisplayKit.podspec` 同步声明 Kingfisher，SPM 和 CocoaPods 使用同一个图片库。
+- 🧪 **示例更新** - `ExampleForMarkdown` 和 `CocoapodsMDExample` 的图片视图已更新为 Kingfisher 加载实现。
+
 ### 1.7.5 (2026-05-15)
 
 - 🚀 **预渲染内容渲染入口** - 新增 `MarkdownRenderer.prepare(_:)` 与 `MarkdownViewTextKit.setPreparedContent(_:)`，业务侧可提前解析长 Markdown，并复用生成好的渲染元素。
@@ -1065,6 +1075,7 @@ MarkdownDisplayView 由 [@zjc19891106](https://github.com/zjc19891106) 创建和
 ## 致谢
 
 - [swift-markdown](https://github.com/swiftlang/swift-markdown) - Markdown 解析库
+- [Kingfisher](https://github.com/onevcat/Kingfisher) - 图片加载与缓存库
 - [KaTeX](https://github.com/KaTeX/KaTeX) - 数学公式渲染字体
 - Apple TextKit 2 - 高性能文本渲染框架
 - Gemini3 Pro&Claude&Grok&GPT

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		05B326BD2F342A7D006A64C4 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 05B326BC2F342A7D006A64C4 /* Kingfisher */; };
 		05B326BB2F342A7D006A64C4 /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05B326BA2F342A7D006A64C4 /* MarkdownDisplayView */; };
 		05FB02FB2EF94E24003DB405 /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */; };
 		05FFEF752F04F01D000049DC /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05FFEF742F04F01D000049DC /* MarkdownDisplayView */; };
@@ -42,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				05B326BD2F342A7D006A64C4 /* Kingfisher in Frameworks */,
 				05B326BB2F342A7D006A64C4 /* MarkdownDisplayView in Frameworks */,
 				05FB02FB2EF94E24003DB405 /* MarkdownDisplayView in Frameworks */,
 				05FFEF752F04F01D000049DC /* MarkdownDisplayView in Frameworks */,
@@ -90,6 +92,7 @@
 				05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */,
 				05FFEF742F04F01D000049DC /* MarkdownDisplayView */,
 				05B326BA2F342A7D006A64C4 /* MarkdownDisplayView */,
+				05B326BC2F342A7D006A64C4 /* Kingfisher */,
 			);
 			productName = ExampleForMarkdown;
 			productReference = 05FAF23D2EF0060D00B7F56E /* ExampleForMarkdown.app */;
@@ -121,6 +124,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				05B326B92F342A7D006A64C4 /* XCLocalSwiftPackageReference "../../../MarkdownDisplayView" */,
+				05B326BE2F342A7D006A64C4 /* XCRemoteSwiftPackageReference "Kingfisher" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 05FAF23E2EF0060D00B7F56E /* Products */;
@@ -374,7 +378,23 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		05B326BE2F342A7D006A64C4 /* XCRemoteSwiftPackageReference "Kingfisher" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/onevcat/Kingfisher.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 8.9.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
+		05B326BC2F342A7D006A64C4 /* Kingfisher */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 05B326BE2F342A7D006A64C4 /* XCRemoteSwiftPackageReference "Kingfisher" */;
+			productName = Kingfisher;
+		};
 		05B326BA2F342A7D006A64C4 /* MarkdownDisplayView */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = MarkdownDisplayView;

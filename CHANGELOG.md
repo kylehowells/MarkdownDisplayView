@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 本项目的所有重要更改都将记录在此文件中。
 
+## [1.7.8] - 2026-05-26
+
+### Changed / 变更
+- 🖼 **Kingfisher Image Loading / Kingfisher 图片加载** - Switched Markdown image loading and caching to Kingfisher 8.9.0 in `ImageView.swift` / `ImageView.swift` 中的 Markdown 图片加载与缓存切换为 Kingfisher 8.9.0
+- 📦 **Dependency Alignment / 依赖对齐** - Added Kingfisher to both `Package.swift` and `MarkdownDisplayKit.podspec` so SPM and CocoaPods resolve the same image library / `Package.swift` 与 `MarkdownDisplayKit.podspec` 同步声明 Kingfisher，SPM 和 CocoaPods 使用同一个图片库
+- 🧪 **Example Update / 示例更新** - Updated `ExampleForMarkdown` and `CocoapodsMDExample` image views to use Kingfisher-based loading / `ExampleForMarkdown` 和 `CocoapodsMDExample` 的图片视图已更新为 Kingfisher 加载实现
+
 ## [1.7.5] - 2026-05-15
 
 ### Added / 新增

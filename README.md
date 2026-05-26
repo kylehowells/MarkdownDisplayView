@@ -90,15 +90,17 @@ Config.local.json structure:
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.7.5")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.7.8")
 ]
 ```
+
+`Package.swift` resolves `Kingfisher` from `8.9.0` automatically for asynchronous image loading and caching.
 
 ### CocoaPods
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit'
+pod 'MarkdownDisplayKit', '~> 1.7.8'
 ```
 
 Then run:
@@ -107,7 +109,7 @@ Then run:
 pod install
 ```
 
-**Note**: MarkdownDisplayKit depends on `swift-markdown` for Markdown parsing. Since `swift-markdown` is not yet available on CocoaPods trunk, you need to add it from the GitHub source as shown above.
+**Note**: `MarkdownDisplayKit.podspec` declares `AppleSwiftMDWrapper` for Markdown parsing and `Kingfisher (~> 8.9.0)` for image loading, so CocoaPods resolves those dependencies during `pod install`.
 
 ## Quick Start
 
@@ -553,7 +555,7 @@ open ExampleForMarkdown.xcodeproj
 
 - **Asynchronous Rendering** - Markdown parsing and rendering execute in background queue, not blocking the main thread
 - **Incremental Updates** - Uses Diff algorithm, only updates changed parts
-- **Lazy Image Loading** - Images load asynchronously with caching mechanism
+- **Lazy Image Loading** - Images load asynchronously through Kingfisher with cache reuse
 - **Regex Caching** - Syntax highlighting regex expressions are cached and reused
 - **View Reuse** - Efficient view update strategy
 
@@ -583,8 +585,8 @@ markdownView.onLinkTap = { [weak self] url in
     }
 }
 markdownView.onImageTap = { imageURL in
-    // Get image if already loaded
-    _ = ImageCacheManager.shared.image(for: imageURL)
+    // Built-in ImageView loads and caches remote images through Kingfisher.
+    // Use imageURL to present your own preview if needed.
 }
 markdownView.onTOCItemTap = { item in
     print("title:\(item.title), level:\(item.level), id:\(item.id)")
@@ -614,8 +616,8 @@ scrollableMarkdownView.onLinkTap = { [weak self] url in
     }
 }
 scrollableMarkdownView.onImageTap = { imageURL in
-    // Get image if already loaded
-    _ = ImageCacheManager.shared.image(for: imageURL)
+    // Built-in ImageView loads and caches remote images through Kingfisher.
+    // Use imageURL to present your own preview if needed.
 }
 scrollableMarkdownView.onTOCItemTap = { item in
     print("title:\(item.title), level:\(item.level), id:\(item.id)")
@@ -888,6 +890,12 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 
 ## Changelog
 
+### 1.7.8 (2026-05-26)
+
+- 🖼 **Kingfisher Image Loading** - Switched Markdown image loading and caching to Kingfisher 8.9.0 in `ImageView.swift`.
+- 📦 **Dependency Alignment** - Added Kingfisher to both `Package.swift` and `MarkdownDisplayKit.podspec`, so SPM and CocoaPods resolve the same image library.
+- 🧪 **Example Update** - Updated `ExampleForMarkdown` and `CocoapodsMDExample` image views to use Kingfisher-based loading.
+
 ### 1.7.5 (2026-05-15)
 
 - 🚀 **Prepared Content Rendering** - Added `MarkdownRenderer.prepare(_:)` and `MarkdownViewTextKit.setPreparedContent(_:)` so apps can pre-parse long Markdown off the main display path and reuse the generated render elements.
@@ -1050,6 +1058,7 @@ If this library saved you time, consider supporting me. Thanks to everyone who h
 ## Acknowledgments
 
 - [swift-markdown](https://github.com/swiftlang/swift-markdown) - Markdown parsing library
+- [Kingfisher](https://github.com/onevcat/Kingfisher) - Image loading and caching library
 - [KaTeX](https://github.com/KaTeX/KaTeX) - Math formula rendering fonts
 - Apple TextKit 2 - High-performance text rendering framework
 - Gemini3 Pro&Claude&Grok&GPT

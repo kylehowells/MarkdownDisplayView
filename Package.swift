@@ -16,6 +16,7 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.7.3"),
+        .package(url: "https://github.com/onevcat/Kingfisher.git", from: "8.9.0"),
 
     ],
     targets: [
@@ -24,7 +25,8 @@ let package = Package(
         .target(
             name: "MarkdownDisplayView",
             dependencies: [
-                .product(name: "Markdown", package: "swift-markdown")
+                .product(name: "Markdown", package: "swift-markdown"),
+                .product(name: "Kingfisher", package: "Kingfisher")
             ],
             path: "MarkdownDisplayView/Sources/MarkdownDisplayView",
             resources: [
