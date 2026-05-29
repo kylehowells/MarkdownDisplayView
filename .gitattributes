@@ -1,7 +1,6 @@
 # 在 git archive 时排除示例和辅助文件
 Effects/ export-ignore
 Support/ export-ignore
-Sources/ export-ignore
 README.md export-ignore
 README_zh.md export-ignore
 .gitignore export-ignore
