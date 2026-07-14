@@ -2257,16 +2257,26 @@ public final class MarkdownViewTextKit: UIView {
             let attrString = NSMutableAttributedString(attachment: attachment)
             attrString.addAttribute(.paragraphStyle, value: paragraphStyle, range: NSRange(location: 0, length: attrString.length))
 
-            return createTextView(with: attrString, width: containerWidth)
+            let view = createTextView(
+                with: attrString,
+                width: containerWidth,
+                fixedHeight: ceil(attachment.totalSize.height + 1)
+            )
+            view.accessibilityIdentifier = "MarkdownAtomicTable"
+            return view
 
         case .thematicBreak:
-            return createThematicBreakView(width: containerWidth)
+            let view = createThematicBreakView(width: containerWidth)
+            view.accessibilityIdentifier = "MarkdownAtomicThematicBreak"
+            return view
         case .codeBlock(let language, let attributedString):
             // 检查是否有自定义代码块渲染器
             if let lang = language,
                let renderer = MarkdownCustomExtensionManager.shared.codeBlockRenderer(for: lang) {
                 let rawCode = attributedString.string
-                return renderer.renderCodeBlock(code: rawCode, configuration: configuration, containerWidth: containerWidth)
+                let view = renderer.renderCodeBlock(code: rawCode, configuration: configuration, containerWidth: containerWidth)
+                view.accessibilityIdentifier = "MarkdownAtomicCodeBlock"
+                return view
             }
             // 默认代码块渲染：使用 CodeBlockAttachment 支持横向滚动
             let codeAttachment = CodeBlockAttachment(
@@ -2282,7 +2292,13 @@ public final class MarkdownViewTextKit: UIView {
             let codeAttrString = NSMutableAttributedString(attachment: codeAttachment)
             codeAttrString.addAttribute(.paragraphStyle, value: codeParagraphStyle, range: NSRange(location: 0, length: codeAttrString.length))
 
-            return createTextView(with: codeAttrString, width: containerWidth)
+            let view = createTextView(
+                with: codeAttrString,
+                width: containerWidth,
+                fixedHeight: ceil(codeAttachment.bounds.height + 1)
+            )
+            view.accessibilityIdentifier = "MarkdownAtomicCodeBlock"
+            return view
         case .quote(let children, let level):
             return createQuoteView(children: children, width: containerWidth, level: level)
 
@@ -2291,7 +2307,9 @@ public final class MarkdownViewTextKit: UIView {
         case .image(let source, let altText):
             let topSpacing = suppressTopSpacing ? 0 : 8.0
             let bottomSpacing = suppressBottomSpacing ? 0 : 8.0
-            return createImageView(source: source, altText: altText, width: containerWidth, topSpacing: topSpacing, bottomSpacing: bottomSpacing)
+            let view = createImageView(source: source, altText: altText, width: containerWidth, topSpacing: topSpacing, bottomSpacing: bottomSpacing)
+            view.accessibilityIdentifier = "MarkdownAtomicImage"
+            return view
         case .latex(let latex):
             let topSpacing = suppressTopSpacing ? 0 : 8.0
             let bottomSpacing = suppressBottomSpacing ? 0 : 8.0
@@ -2301,7 +2319,9 @@ public final class MarkdownViewTextKit: UIView {
         case .list(items: let list, level: let level):
             return createListView(items: list, width: containerWidth, level: level)
         case .custom(let data):
-            return createCustomView(data: data, containerWidth: containerWidth)
+            let view = createCustomView(data: data, containerWidth: containerWidth)
+            view.accessibilityIdentifier = "MarkdownAtomicCustom"
+            return view
         }
     }
 
@@ -2591,8 +2611,8 @@ public final class MarkdownViewTextKit: UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
         // ⭐️ 标记为原子 Block，包含流式开始时间和创建时间，用于追踪显示延迟
-        // 格式: LatexContainer_<streamStartTime>_<createTime>
-        container.accessibilityIdentifier = "LatexContainer_\(streamingStartTimestamp)_\(createTime)"
+        // 格式: MarkdownAtomicLatex_<streamStartTime>_<createTime>
+        container.accessibilityIdentifier = "MarkdownAtomicLatex_\(streamingStartTimestamp)_\(createTime)"
 
         // ⚡️ 使用 LaTeXAttachment
         let attachmentStart = CFAbsoluteTimeGetCurrent()
@@ -2991,13 +3011,13 @@ public final class MarkdownViewTextKit: UIView {
             let contentWidth = width - insets.left - insets.right
             if contentWidth > 0 {
                 let useAppendTypewriter = enableTypewriterEffect && configuration.typewriterTextMode == .append
-                if useAppendTypewriter {
-                    textView.textContainer.size = CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
-                    textView.setFixedHeight(1)
-                } else if let fixedHeight = fixedHeight {
-                    // ⚡️ 使用预计算高度，跳过主线程布局计算
+                if let fixedHeight = fixedHeight {
+                    // 完整块已经解析完成，直接采用最终高度；只对普通文字使用 1pt 增长路径。
                     textView.textContainer.size = CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
                     textView.setFixedHeight(fixedHeight)
+                } else if useAppendTypewriter {
+                    textView.textContainer.size = CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
+                    textView.setFixedHeight(1)
                 } else {
                     textView.applyLayout(width: contentWidth, force: true)
                 }
@@ -3145,8 +3165,8 @@ public final class MarkdownViewTextKit: UIView {
         // 外层容器，添加上下间距
         let outerContainer = UIView()
         outerContainer.translatesAutoresizingMaskIntoConstraints = false
-        // ⭐️ 标记为 DetailsContainer，包含流式开始时间和创建时间
-        outerContainer.accessibilityIdentifier = "DetailsContainer_\(streamingStartTimestamp)_\(createTime)"
+        // Details 在语法完整后作为整块显示，内部内容不再递归逐字。
+        outerContainer.accessibilityIdentifier = "MarkdownAtomicDetails_\(streamingStartTimestamp)_\(createTime)"
 
         // 🔧 设置容器的内容优先级，防止被压缩（类似图片修复）
         outerContainer.setContentHuggingPriority(.required, for: .vertical)

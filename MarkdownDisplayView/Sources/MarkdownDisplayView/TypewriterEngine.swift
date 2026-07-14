@@ -63,11 +63,18 @@ class TypewriterEngine {
     }
 
     func enqueue(view: UIView, isRoot: Bool = true) {
+        // 完整块只执行根视图的 show：先不占 StackView 高度，轮到它时整块插入并淡入。
+        // 普通文本继续递归到 MarkdownTextViewTK2，保持逐字显示。
+        let isAtomicRoot = isRoot && view.accessibilityIdentifier?.hasPrefix("MarkdownAtomic") == true
         if isRoot {
             // 🆕 根视图初始设为透明，通过 .show 任务渐显
             view.alpha = 0
             taskQueue.append(.show(view))
             print("[TYPEWRITER] 🎬 enqueue root: \(type(of: view)), subviews: \(view.subviews.count)")
+        }
+
+        if isAtomicRoot {
+            return
         }
 
         // 1. 文本组件
@@ -100,7 +107,7 @@ class TypewriterEngine {
             return
         }
 
-        // 4.5 ⭐️ 代码块容器：先显示容器背景，再逐字显示内部文本
+        // 兼容旧的非 attachment 代码块容器。
         if view.accessibilityIdentifier == "CodeBlockContainer" {
             // 1. 先添加容器显示任务（显示背景色）
             view.alpha = 0
@@ -118,7 +125,7 @@ class TypewriterEngine {
         // ⭐️ 合并两个版本：使用前缀匹配（更灵活），并保留脚注容器检查
         // ⭐️ 注意：CodeBlockContainer 不再作为原子块，允许内部 MarkdownTextViewTK2 逐字显示
         let isAtomicBlock = (view is UIImageView) ||
-                            (view.accessibilityIdentifier?.hasPrefix("LatexContainer") == true) ||
+                            (view.accessibilityIdentifier?.hasPrefix("MarkdownAtomic") == true) ||
                             (view.accessibilityIdentifier?.hasPrefix("latex_") == true) ||
                             (view.accessibilityIdentifier == "FootnoteContainer")
         if view.subviews.count > 0 && !isAtomicBlock {
