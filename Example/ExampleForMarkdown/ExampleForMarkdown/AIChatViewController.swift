@@ -463,6 +463,7 @@ final class AIChatViewController: UIViewController {
 
     /// 用户是否正在交互（拖拽滚动），用于暂停自动滚动
     private var isUserInteracting = false
+    private var pendingRowHeightUpdate = false
 
     private let inputContainer = UIView()
     private let inputTextView = UITextView()
@@ -818,7 +819,8 @@ final class AIChatViewController: UIViewController {
             }
             scrollToBottom(animated: false)
         } else {
-            tableView.reloadRows(at: [IndexPath(row: index, section: 0)], with: .none)
+            // 离屏时只更新数据源。Cell 再次出现时由 cellForRowAt 使用累计内容
+            // 恢复真流式，避免每个 delta 都触发复用和一次普通全文渲染。
         }
     }
 
@@ -833,15 +835,28 @@ final class AIChatViewController: UIViewController {
             messages[index].content.append(remaining)
         }
         messages[index].content = StreamMarkdownNormalizer().normalizeFullText(messages[index].content)
-        messages[index].isStreaming = false
         let indexPath = IndexPath(row: index, section: 0)
         if let cell = tableView.cellForRow(at: indexPath) as? AIChatMessageCell {
-            cell.endStreaming()
-            cell.configure(with: messages[index])
+            // Normalizer 可能还缓存了尾部字符，必须先交给 StreamBuffer，再结束网络输入。
+            if !remaining.isEmpty {
+                cell.appendStreamData(remaining)
+            }
+            // 网络接收完成不等于打字机播放完成。保持页面流式状态和自动跟随，
+            // 直到 MarkdownView 的 TypewriterEngine 队列真正播放完毕。
+            cell.endStreaming { [weak self, weak cell] in
+                guard let self,
+                      self.messages.indices.contains(index),
+                      self.streamingAssistantIndex == index else { return }
+                self.messages[index].isStreaming = false
+                cell?.setStreamingAppearanceEnabled(false)
+                self.streamingAssistantIndex = nil
+                self.scheduleRowHeightUpdate()
+            }
         } else {
+            messages[index].isStreaming = false
             tableView.reloadRows(at: [indexPath], with: .fade)
+            streamingAssistantIndex = nil
         }
-        streamingAssistantIndex = nil
     }
 
     private func failStream(message: String) {
@@ -960,12 +975,32 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
             return UITableViewCell(style: .default, reuseIdentifier: "fallback")
         }
         let message = messages[indexPath.row]
-        cell.configure(with: message)
         cell.onHeightChange = { [weak self] in
-            self?.tableView.beginUpdates()
-            self?.tableView.endUpdates()
+            self?.scheduleRowHeightUpdate()
+        }
+        cell.configure(with: message)
+        if message.isStreaming {
+            cell.startStreaming(withInitial: message.content)
         }
         return cell
+    }
+
+    /// 合并同一主循环的高度变化，避免从 MarkdownView.layoutSubviews 同步重入 TableView 布局。
+    private func scheduleRowHeightUpdate() {
+        guard !pendingRowHeightUpdate else { return }
+        pendingRowHeightUpdate = true
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingRowHeightUpdate = false
+            let shouldFollowBottom = !self.isUserInteracting && self.streamingAssistantIndex != nil
+            UIView.performWithoutAnimation {
+                self.tableView.performBatchUpdates(nil) { [weak self] _ in
+                    guard shouldFollowBottom else { return }
+                    self?.scrollToBottom(animated: false)
+                }
+            }
+        }
     }
 
     // MARK: - UIScrollViewDelegate（用户交互检测）
@@ -1075,15 +1110,13 @@ final class AIChatMessageCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         hasStartedStreaming = false
-        markdownView.resetForReuse()
         onHeightChange = nil
+        markdownView.resetForReuse()
     }
 
     func configure(with message: AIChatMessage) {
         markdownView.enableTypewriterEffect = message.isStreaming
         if !message.isStreaming {
-            markdownView.markdown = message.content
-        } else if !hasStartedStreaming && !message.content.isEmpty {
             markdownView.markdown = message.content
         }
 
@@ -1123,10 +1156,18 @@ final class AIChatMessageCell: UITableViewCell {
         markdownView.appendStreamData(data)
     }
 
-    func endStreaming() {
-        guard hasStartedStreaming else { return }
-        markdownView.endRealStreaming()
-        hasStartedStreaming = false
+    func endStreaming(completion: (() -> Void)? = nil) {
+        guard hasStartedStreaming else {
+            completion?()
+            return
+        }
+        markdownView.endRealStreaming { [weak self] in
+            self?.hasStartedStreaming = false
+            completion?()
+        }
+    }
+
+    func setStreamingAppearanceEnabled(_ enabled: Bool) {
+        markdownView.enableTypewriterEffect = enabled
     }
 }
-

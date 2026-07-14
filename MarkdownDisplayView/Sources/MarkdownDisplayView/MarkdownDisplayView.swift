@@ -1564,7 +1564,7 @@ public final class MarkdownViewTextKit: UIView {
                 let isLatestVersion = currentVersion == self.renderVersion
                 self.renderVersionLock.unlock()
 
-                guard isLatestVersion else {
+                guard isLatestVersion, !self.isRealStreamingMode else {
                     print("[MarkdownDisplayView] 丢弃旧版本渲染结果 (version \(currentVersion))")
                     return
                 }
@@ -5286,6 +5286,16 @@ public final class MarkdownViewTextKit: UIView {
 
         // 停止任何现有流式
         stopStreaming()
+
+        // Cell 可能刚在 configure 中调度过普通 Markdown 渲染。进入真流式前必须
+        // 同时取消尚未执行的任务，并让已经在后台解析的结果失效，禁止其回写流式 UI。
+        renderWorkItem?.cancel()
+        renderWorkItem = nil
+        offscreenRenderWorkItem?.cancel()
+        offscreenRenderWorkItem = nil
+        renderVersionLock.lock()
+        renderVersion += 1
+        renderVersionLock.unlock()
 
         // 初始化真流式状态
         isRealStreamingMode = true
