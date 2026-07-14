@@ -90,7 +90,7 @@ Config.local.json structure:
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.7.8")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.0")
 ]
 ```
 
@@ -100,7 +100,7 @@ dependencies: [
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 1.7.8'
+pod 'MarkdownDisplayKit', '~> 1.8.0'
 ```
 
 Then run:
@@ -889,6 +889,13 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 **Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
 
 ## Changelog
+
+### 1.8.0 (2026-07-14)
+
+- 🌊 **Stable Real-Streaming Rendering** - Starting real streaming now cancels and invalidates pending regular renders, preventing stale parse results from replacing the active typewriter UI.
+- 🧱 **Atomic Block Reveal** - Tables, code blocks, images, LaTeX, details, thematic breaks, and custom views are revealed as complete blocks with their final height instead of expanding from a temporary `1pt` placeholder.
+- 📜 **Chat Auto-Follow and Row-Height Fixes** - The SPM and CocoaPods AI chat examples now coalesce row-height updates, keep following the streaming message after layout changes, and pause auto-scroll while the user browses older messages.
+- ✨ **Reduced Streaming Cell Flicker** - Offscreen deltas no longer reload cells repeatedly, reused streaming cells resume from accumulated content, and the final state waits for the typewriter queue to finish before switching to static rendering.
 
 ### 1.7.8 (2026-05-26)
 

@@ -97,7 +97,7 @@ Config.local.json 结构如下：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.7.8")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.0")
 ]
 ```
 
@@ -118,7 +118,7 @@ dependencies: [
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 1.7.8'
+pod 'MarkdownDisplayKit', '~> 1.8.0'
 ```
 
 然后运行:
@@ -907,6 +907,13 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 **解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
 
 ## 更新日志
+
+### 1.8.0 (2026-07-14)
+
+- 🌊 **真流式渲染稳定性修复** - 开始真流式输出时会取消并失效尚未完成的普通渲染任务，避免旧解析结果回写并覆盖正在运行的打字机界面。
+- 🧱 **原子块级内容整块显示** - 表格、代码块、图片、LaTeX、详情块、分隔线和自定义视图会按最终高度整块显示，不再从临时 `1pt` 占位高度逐步撑开。
+- 📜 **聊天自动跟随与行高修复** - SPM 与 CocoaPods 的 AI 聊天示例会合并行高更新，在布局变化后持续跟随流式消息，并在用户浏览历史消息时暂停自动滚动。
+- ✨ **减少流式 Cell 闪烁** - 离屏增量不再反复 reload Cell，复用后的流式 Cell 会从累计内容继续输出，并等待打字机队列真正播放完毕后再切换为静态展示。
 
 ### 1.7.8 (2026-05-26)
 
