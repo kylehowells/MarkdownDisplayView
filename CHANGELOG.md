@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 本项目的所有重要更改都将记录在此文件中。
 
+## [1.8.1] - 2026-07-15
+
+### Fixed / 修复
+- 📏 **Append Typewriter Height Stability / Append 打字机高度稳定性** - Separated character reveal from height remeasurement and only fire layout callbacks when height actually changes / 将字符揭示与高度重测解耦，仅在高度真正变化时触发布局回调
+- 🧱 **No Pre-Reveal Blank Height / 不再预暴露最终空白高度** - Append mode discards precalculated final height before typing starts, so height grows with visible text only / Append 模式在开始打字前丢弃预计算最终高度，高度只随可见文本增长
+- 🔒 **Height Floor During Playback / 播放期高度下限** - Prevents shrink from transient width corrections while append typewriter is active; releases the floor on finish or engine stop / 播放期间禁止临时宽度修正导致高度回缩，完成或 stop 后释放下限
+
+### Tests / 测试
+- 🧪 **Streaming Layout Coverage / 流式布局覆盖** - Added tests for reveal/height decoupling, pre-playback height reset, and height-floor release on finish/stop / 新增字符揭示/高度解耦、播放前高度重置、完成/停止后释放高度下限用例
+
 ## [1.7.8] - 2026-05-26
 
 ### Changed / 变更

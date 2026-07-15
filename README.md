@@ -90,7 +90,7 @@ Config.local.json structure:
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.0")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.1")
 ]
 ```
 
@@ -100,7 +100,7 @@ dependencies: [
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 1.8.0'
+pod 'MarkdownDisplayKit', '~> 1.8.1'
 ```
 
 Then run:
@@ -889,6 +889,13 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 **Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
 
 ## Changelog
+
+### 1.8.1 (2026-07-15)
+
+- 📏 **Append Typewriter Height Stability** - Character reveal is now separated from height remeasurement. Layout callbacks fire only when height actually changes, reducing row jitter during streaming playback.
+- 🧱 **No Pre-Reveal Blank Height** - Append mode discards precalculated final height before typing starts, so cells no longer flash a large empty area, and height only grows with visible text.
+- 🔒 **Height Floor During Playback** - While append typewriter is active, height is not allowed to shrink on transient width corrections, preventing bubble bounce; the floor is released after playback finishes or the engine stops so wider reflows can still settle correctly.
+- 🧪 **Streaming Layout Tests** - Added coverage for reveal/height decoupling, pre-playback height reset, and height-floor release on finish/stop.
 
 ### 1.8.0 (2026-07-14)
 

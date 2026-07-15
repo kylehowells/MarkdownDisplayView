@@ -97,7 +97,7 @@ Config.local.json 结构如下：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.0")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.1")
 ]
 ```
 
@@ -118,7 +118,7 @@ dependencies: [
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 1.8.0'
+pod 'MarkdownDisplayKit', '~> 1.8.1'
 ```
 
 然后运行:
@@ -907,6 +907,13 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 **解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
 
 ## 更新日志
+
+### 1.8.1 (2026-07-15)
+
+- 📏 **Append 打字机高度稳定性** - 字符揭示与高度重测解耦，仅在高度真正变化时触发布局回调，减少流式播放时的行高抖动。
+- 🧱 **不再预暴露最终空白高度** - Append 模式在开始打字前会丢弃预计算的最终高度，避免 Cell 先闪出大块空白，高度只随可见文本增长。
+- 🔒 **播放期高度下限** - Append 打字机播放期间禁止因临时宽度修正而回缩高度，避免气泡上下跳动；播放完成或引擎 stop 后释放下限，宽屏重排仍可正常收敛。
+- 🧪 **流式布局测试** - 新增字符揭示/高度解耦、播放前高度重置、完成/停止后释放高度下限等覆盖用例。
 
 ### 1.8.0 (2026-07-14)
 
