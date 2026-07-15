@@ -464,6 +464,9 @@ final class AIChatViewController: UIViewController {
     /// 用户主动浏览历史内容时暂停自动跟随；回到底部后恢复。
     private var isUserInteracting = false
     private var pendingRowHeightUpdate = false
+    private var pendingStreamingFollow = false
+    /// 每次开始/结束流式时递增，使已经排队的自动滚动任务立即失效。
+    private var autoScrollGeneration = 0
 
     private let inputContainer = UIView()
     private let inputTextView = UITextView()
@@ -676,6 +679,7 @@ final class AIChatViewController: UIViewController {
         )
         pendingAssistantIndex = placeholderIndex
         streamingAssistantIndex = willStream ? placeholderIndex : nil
+        autoScrollGeneration += 1
         prepareStreamingCellIfNeeded()
         requestAssistantReply()
     }
@@ -817,7 +821,6 @@ final class AIChatViewController: UIViewController {
             } else {
                 cell.startStreaming(withInitial: messages[index].content)
             }
-            scrollToBottom(animated: false)
         } else {
             // 离屏时只更新数据源。Cell 再次出现时用累计内容恢复真流式，
             // 避免每个 delta 都 reload Cell 并触发普通全文渲染。
@@ -848,12 +851,14 @@ final class AIChatViewController: UIViewController {
                 self.messages[index].isStreaming = false
                 cell?.setStreamingAppearanceEnabled(false)
                 self.streamingAssistantIndex = nil
-                self.scheduleRowHeightUpdate()
+                self.autoScrollGeneration += 1
+                self.scheduleRowHeightUpdate(followStreaming: false)
             }
         } else {
             messages[index].isStreaming = false
             tableView.reloadRows(at: [indexPath], with: .fade)
             streamingAssistantIndex = nil
+            autoScrollGeneration += 1
         }
     }
 
@@ -973,7 +978,10 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
         }
         let message = messages[indexPath.row]
         cell.onHeightChange = { [weak self] in
-            self?.scheduleRowHeightUpdate()
+            self?.scheduleRowHeightUpdate(followStreaming: false)
+        }
+        cell.onStreamingStep = { [weak self] in
+            self?.scheduleRowHeightUpdate(followStreaming: true)
         }
         cell.configure(with: message)
         if message.isStreaming {
@@ -982,18 +990,25 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
         return cell
     }
 
-    private func scheduleRowHeightUpdate() {
+    private func scheduleRowHeightUpdate(followStreaming: Bool = true) {
+        pendingStreamingFollow = pendingStreamingFollow || followStreaming
         guard !pendingRowHeightUpdate else { return }
         pendingRowHeightUpdate = true
+        let generation = autoScrollGeneration
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.pendingRowHeightUpdate = false
-            let shouldFollowBottom = !self.isUserInteracting && self.streamingAssistantIndex != nil
+            let shouldFollowStreaming = self.pendingStreamingFollow
+            self.pendingStreamingFollow = false
             UIView.performWithoutAnimation {
                 self.tableView.performBatchUpdates(nil) { [weak self] _ in
-                    guard shouldFollowBottom else { return }
-                    self?.scrollToBottom(animated: false)
+                    guard let self,
+                          shouldFollowStreaming,
+                          generation == self.autoScrollGeneration,
+                          !self.isUserInteracting,
+                          self.streamingAssistantIndex != nil else { return }
+                    self.scrollToBottom(animated: false)
                 }
             }
         }
@@ -1031,6 +1046,7 @@ final class AIChatMessageCell: UITableViewCell {
     private let typewriterCharsPerStep = 1
 
     var onHeightChange: (() -> Void)?
+    var onStreamingStep: (() -> Void)?
 
     var isStreamingActive: Bool {
         hasStartedStreaming
@@ -1059,6 +1075,9 @@ final class AIChatMessageCell: UITableViewCell {
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.onHeightChange = { [weak self] _ in
             self?.onHeightChange?()
+        }
+        markdownView.onStreamingStep = { [weak self] in
+            self?.onStreamingStep?()
         }
         bubbleView.addSubview(markdownView)
 
@@ -1094,6 +1113,7 @@ final class AIChatMessageCell: UITableViewCell {
         super.prepareForReuse()
         hasStartedStreaming = false
         onHeightChange = nil
+        onStreamingStep = nil
         markdownView.resetForReuse()
     }
 

@@ -36,7 +36,9 @@ public final class MarkdownViewTextKit: UIView {
         }
         // ⭐️ 震动反馈：每次输出内容时触发
         engine.onTypewriterStep = { [weak self] in
-            self?.triggerHapticFeedback()
+            guard let self else { return }
+            self.triggerHapticFeedback()
+            self.onStreamingStep?()
         }
         return engine
     }()
@@ -102,6 +104,9 @@ public final class MarkdownViewTextKit: UIView {
     public var onLinkTap: ((URL) -> Void)?
     public var onImageTap: ((String) -> Void)?
     public var onHeightChange: ((CGFloat) -> Void)?
+    /// TypewriterEngine 每次实际揭示文字或块级内容时触发。
+    /// 可用于让外层滚动容器跟随真实播放进度，而不是跟随网络数据到达。
+    public var onStreamingStep: (() -> Void)?
     public var onTOCItemTap: ((MarkdownTOCItem) -> Void)?
     private let inlineSegmentAttributeKey = NSAttributedString.Key("MarkdownInlineSegment")
     // 🆕 新增：用于暂存流式输出结束时的回调
@@ -5681,9 +5686,6 @@ public final class MarkdownViewTextKit: UIView {
         // ⭐️ 隐藏等待动画
         hideWaitingIndicator()
 
-        // 停止震动反馈
-        stopHapticFeedback()
-
         // ⭐️ 智能缓存模式：处理剩余的未完成内容
         if useSmartBufferMode {
             let remainingText = streamBuffer.flush()
@@ -5743,6 +5745,7 @@ public final class MarkdownViewTextKit: UIView {
             self.isRealStreamingMode = false
             self.isStreaming = false
             self.useSmartBufferMode = false
+            self.stopHapticFeedback()
             print("[FOOTNOTE_DEBUG] 🔴 isRealStreamingMode set to FALSE")
 
             // 3. 通知最终高度
