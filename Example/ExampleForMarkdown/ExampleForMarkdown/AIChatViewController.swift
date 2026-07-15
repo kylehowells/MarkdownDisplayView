@@ -981,10 +981,7 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
         }
         let message = messages[indexPath.row]
         cell.onHeightChange = { [weak self] in
-            self?.scheduleRowHeightUpdate(followStreaming: false)
-        }
-        cell.onStreamingStep = { [weak self] in
-            self?.scheduleRowHeightUpdate(followStreaming: true)
+            self?.scheduleRowHeightUpdate(followStreaming: message.isStreaming)
         }
         cell.configure(with: message)
         if message.isStreaming {
@@ -1064,7 +1061,6 @@ final class AIChatMessageCell: UITableViewCell {
     private let typewriterCharsPerStep = 1
 
     var onHeightChange: (() -> Void)?
-    var onStreamingStep: (() -> Void)?
 
     var isStreamingActive: Bool {
         hasStartedStreaming
@@ -1092,9 +1088,6 @@ final class AIChatMessageCell: UITableViewCell {
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.onHeightChange = { [weak self] _ in
             self?.onHeightChange?()
-        }
-        markdownView.onStreamingStep = { [weak self] in
-            self?.onStreamingStep?()
         }
         bubbleView.addSubview(markdownView)
 
@@ -1130,7 +1123,6 @@ final class AIChatMessageCell: UITableViewCell {
         super.prepareForReuse()
         hasStartedStreaming = false
         onHeightChange = nil
-        onStreamingStep = nil
         markdownView.resetForReuse()
     }
 

@@ -1,4 +1,5 @@
 import Testing
+import UIKit
 @testable import MarkdownDisplayView
 
 @Test func listWrapperPaddingDefaultsToZero() async throws {
@@ -80,4 +81,54 @@ import Testing
     #expect(prepared.elements.isEmpty == false)
     #expect(prepared.estimatedTotalHeight > 0)
     #expect(prepared.preparedWidth == 320)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func appendTypewriterSeparatesCharacterRevealFromHeightChanges() async throws {
+    let textView = MarkdownTextViewTK2()
+    textView.typewriterTextMode = .append
+    textView.typewriterHeightUpdateInterval = 20
+    textView.attributedText = NSAttributedString(
+        string: String(repeating: "a", count: 40),
+        attributes: [.font: UIFont.systemFont(ofSize: 16)]
+    )
+    textView.textContainer.size = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+    textView.setFixedHeight(1)
+    textView.prepareForTypewriter()
+
+    let firstCharacter = textView.revealCharacter(upto: 1)
+    #expect(firstCharacter.didReveal)
+    #expect(firstCharacter.didChangeHeight == false)
+
+    let firstMeasurement = textView.revealCharacter(upto: 20)
+    #expect(firstMeasurement.didReveal)
+    #expect(firstMeasurement.didChangeHeight)
+
+    let sameLineCharacter = textView.revealCharacter(upto: 21)
+    #expect(sameLineCharacter.didReveal)
+    #expect(sameLineCharacter.didChangeHeight == false)
+
+    let completion = textView.revealCharacter(upto: 40)
+    #expect(completion.didReveal)
+    let completedHeight = textView.intrinsicContentSize.height
+    textView.applyLayout(width: 1_000, force: true)
+    #expect(textView.intrinsicContentSize.height == completedHeight)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func appendTypewriterDoesNotExposePrecalculatedFinalHeightBeforeTyping() async throws {
+    let textView = MarkdownTextViewTK2()
+    textView.typewriterTextMode = .append
+    textView.attributedText = NSAttributedString(
+        string: String(repeating: "precalculated content ", count: 8),
+        attributes: [.font: UIFont.systemFont(ofSize: 16)]
+    )
+    textView.textContainer.size = CGSize(width: 220, height: CGFloat.greatestFiniteMagnitude)
+    textView.setFixedHeight(180)
+
+    textView.prepareForTypewriter()
+
+    #expect(textView.intrinsicContentSize.height == 1)
 }

@@ -242,7 +242,7 @@ class TypewriterEngine {
         switch task {
         case .text(let textView):
             if let len = textView.attributedText?.length {
-                if textView.revealCharacter(upto: len) {
+                if textView.revealCharacter(upto: len).didChangeHeight {
                     onLayoutChange?()
                 }
             }
@@ -389,7 +389,7 @@ class TypewriterEngine {
         }
 
         if currentIndex >= totalLen {
-            if textView.revealCharacter(upto: totalLen) {
+            if textView.revealCharacter(upto: totalLen).didChangeHeight {
                 onLayoutChange?()
             }
             finishCurrentTask()
@@ -398,9 +398,11 @@ class TypewriterEngine {
 
         // ⭐️ 优化：批量显示字符（每次显示 charsPerStep 个）
         let nextIndex = min(currentIndex + charsPerStep, totalLen)
-        let didReveal = textView.revealCharacter(upto: nextIndex)
-        if didReveal {
-            onLayoutChange?()
+        let revealResult = textView.revealCharacter(upto: nextIndex)
+        if revealResult.didReveal {
+            if revealResult.didChangeHeight {
+                onLayoutChange?()
+            }
             // 只在有实际内容显示时触发震动反馈
             onTypewriterStep?()
         }

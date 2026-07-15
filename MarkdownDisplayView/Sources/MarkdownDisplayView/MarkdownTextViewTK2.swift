@@ -39,6 +39,7 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
 
     private var lastHeightUpdateIndex: Int = 0
     private var cachedOriginalAttributedString: NSAttributedString?
+    private var isAppendingTypewriterText = false
 
     override init(frame: CGRect) {
         textContentStorage = NSTextContentStorage()
@@ -129,6 +130,12 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
                 newHeight = ceil(fallbackSize.height + 1) // +1 buffer
             }
 
+            // append 打字机播放期间，可见内容只会增加。即使父布局临时修正宽度，
+            // 也不能让已经展示的内容高度回缩，否则外层 Cell 会产生上下跳动。
+            if isAppendingTypewriterText {
+                newHeight = max(newHeight, calculatedHeight)
+            }
+
             if heightConstraint?.constant != newHeight {
                 heightConstraint?.constant = newHeight
                 calculatedHeight = newHeight
@@ -176,6 +183,9 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     }
 
     private func updateContent() {
+        // attributedText 被外部替换意味着上一轮 append 播放已经结束。
+        isAppendingTypewriterText = false
+
         guard let attributedText = attributedText else {
             textContentStorage.attributedString = nil
             calculatedHeight = 0
@@ -392,15 +402,22 @@ extension MarkdownTextViewTK2 {
         lastRevealedIndex = 0
         lastHeightUpdateIndex = 0
         cachedOriginalAttributedString = attr
+        isAppendingTypewriterText = false
 
         // ⚡️ 强制触发布局，确保高度和位置在开始打字前是正确的
         // 这能防止在 hidden = false 瞬间因为布局未完成而导致的闪烁或跳动
         layoutIfNeeded()
 
         if typewriterTextMode == .append {
+            isAppendingTypewriterText = true
             let mutable = NSMutableAttributedString()
             cachedMutableString = mutable
             textContentStorage.attributedString = mutable
+            // createTextView 可能使用了整段文本的预计算高度。开始 append 播放时必须
+            // 丢弃这个最终高度，否则根视图 show 时会先暴露一块尚未显示的空白区域。
+            heightConstraint?.constant = 1
+            calculatedHeight = 1
+            invalidateIntrinsicContentSize()
             textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
             setNeedsDisplay()
             print("[TYPEWRITER] 🎯 prepareForTypewriter 完成 (append)")
@@ -432,22 +449,22 @@ extension MarkdownTextViewTK2 {
         print("[TYPEWRITER] 🎯 prepareForTypewriter 完成")
     }
 
-    /// 揭示前 N 个字符（支持批量显示）
-    /// - Returns: 是否有新字符被显示
-    func revealCharacter(upto index: Int) -> Bool {
-        guard index > 0 else { return false }
+    /// 揭示前 N 个字符（支持批量显示）。
+    /// - Returns: 本次是否显示了新字符，以及重新测量后高度是否真的改变。
+    func revealCharacter(upto index: Int) -> (didReveal: Bool, didChangeHeight: Bool) {
+        guard index > 0 else { return (false, false) }
 
         if typewriterTextMode == .append {
             guard let originalAttr = cachedOriginalAttributedString else {
-                return false
+                return (false, false)
             }
 
             let length = originalAttr.length
-            if index > length { return false }
+            if index > length { return (false, false) }
 
             let startIndex = lastRevealedIndex
             let endIndex = index
-            guard endIndex > startIndex else { return false }
+            guard endIndex > startIndex else { return (false, false) }
 
             let range = NSRange(location: startIndex, length: endIndex - startIndex)
             let segment = originalAttr.attributedSubstring(from: range)
@@ -468,7 +485,10 @@ extension MarkdownTextViewTK2 {
                 lastHeightUpdateIndex = endIndex
                 let layoutWidth = textContainer.size.width > 0 ? textContainer.size.width : bounds.width
                 if layoutWidth > 0 {
+                    let previousHeight = heightConstraint?.constant ?? calculatedHeight
                     applyLayout(width: layoutWidth, force: true)
+                    let currentHeight = heightConstraint?.constant ?? calculatedHeight
+                    return (true, abs(currentHeight - previousHeight) > 0.5)
                 } else {
                     setNeedsLayout()
                 }
@@ -477,25 +497,24 @@ extension MarkdownTextViewTK2 {
                 setNeedsDisplay()
             }
 
-            // ⭐️ 方案 A：只要有新字符显示就返回 true
-            return true
+            return (true, false)
         }
 
         guard let originalAttr = attributedText,
               let workingAttr = cachedMutableString else {
             print("[TYPEWRITER] ⚠️ revealCharacter 提前返回: attributedText=\(attributedText != nil), cachedMutableString=\(cachedMutableString != nil), index=\(index)")
-            return false
+            return (false, false)
         }
 
         let length = originalAttr.length
-        if index > length { return false }
+        if index > length { return (false, false) }
 
         // ⭐️ 批量支持：从上次位置到当前位置，显示所有字符
         let startIndex = lastRevealedIndex
         let endIndex = index
 
         // 如果没有新字符需要显示，直接返回
-        guard endIndex > startIndex else { return false }
+        guard endIndex > startIndex else { return (false, false) }
 
         // 遍历需要显示的每个字符，恢复其原始属性
         for charIndex in startIndex..<endIndex {
@@ -518,8 +537,8 @@ extension MarkdownTextViewTK2 {
         // 强制重绘
         setNeedsDisplay()
 
-        // ⭐️ 方案 A：只要有新字符显示就返回 true
-        return true
+        // reveal 模式预先保留完整布局，显示字符不会改变高度。
+        return (true, false)
     }
 }
 
