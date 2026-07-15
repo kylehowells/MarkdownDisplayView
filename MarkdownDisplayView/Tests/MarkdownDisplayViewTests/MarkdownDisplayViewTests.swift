@@ -114,6 +114,10 @@ import UIKit
     let completedHeight = textView.intrinsicContentSize.height
     textView.applyLayout(width: 1_000, force: true)
     #expect(textView.intrinsicContentSize.height == completedHeight)
+
+    textView.finishAppendTypewriterPlayback()
+    textView.applyLayout(width: 1_000, force: true)
+    #expect(textView.intrinsicContentSize.height < completedHeight)
 }
 
 @available(iOS 15.0, *)
@@ -131,4 +135,34 @@ import UIKit
     textView.prepareForTypewriter()
 
     #expect(textView.intrinsicContentSize.height == 1)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func stoppingTypewriterReleasesHeightFloorsForCurrentAndQueuedText() async throws {
+    func makeTextView(_ text: String) -> MarkdownTextViewTK2 {
+        let textView = MarkdownTextViewTK2()
+        textView.typewriterTextMode = .append
+        textView.attributedText = NSAttributedString(
+            string: text,
+            attributes: [.font: UIFont.systemFont(ofSize: 16)]
+        )
+        textView.textContainer.size = CGSize(width: 80, height: CGFloat.greatestFiniteMagnitude)
+        textView.setFixedHeight(160)
+        return textView
+    }
+
+    let currentText = makeTextView(String(repeating: "current text ", count: 12))
+    let queuedText = makeTextView(String(repeating: "queued text ", count: 12))
+    let engine = TypewriterEngine()
+    engine.enqueue(view: currentText)
+    engine.enqueue(view: queuedText)
+    engine.start()
+    engine.stop()
+
+    currentText.applyLayout(width: 1_000, force: true)
+    queuedText.applyLayout(width: 1_000, force: true)
+
+    #expect(currentText.intrinsicContentSize.height < 160)
+    #expect(queuedText.intrinsicContentSize.height < 160)
 }

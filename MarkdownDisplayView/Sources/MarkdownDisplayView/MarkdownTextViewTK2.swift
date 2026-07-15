@@ -159,6 +159,12 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         }
     }
 
+    /// 结束 append 打字机播放，恢复正常的响应式测高。
+    /// 最后一帧应先在播放保护下完成测量，再由引擎调用本方法。
+    func finishAppendTypewriterPlayback() {
+        isAppendingTypewriterText = false
+    }
+
     private func setupGestures() {
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
         // 不拦截子视图触摸（例如表格 CollectionView 的 cell 点击）

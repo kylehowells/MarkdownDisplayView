@@ -151,6 +151,18 @@ class TypewriterEngine {
     func stop() {
         isPaused = true
         watchdogTimer?.invalidate()
+
+        // TextView 在入队时已经 prepare；停止播放时必须同时清理当前任务和
+        // 尚未执行的文字任务，否则它们会永久保留播放期的高度下限。
+        if case .text(let textView) = currentTask {
+            textView.finishAppendTypewriterPlayback()
+        }
+        for task in taskQueue {
+            if case .text(let textView) = task {
+                textView.finishAppendTypewriterPlayback()
+            }
+        }
+
         taskQueue.removeAll()
         isRunning = false
         currentTask = nil
@@ -439,6 +451,12 @@ class TypewriterEngine {
     }
 
     private func _finish() {
+        // 正常完成、空文本和 watchdog 强制完成最终都会汇聚到主线程的这里。
+        // 此时最后一次字符测高已经结束，可以解除播放期的单调高度保护。
+        if case .text(let textView) = currentTask {
+            textView.finishAppendTypewriterPlayback()
+        }
+
         isRunning = false
         // ⭐️ 优化：如果上一个任务是块级任务，添加额外延迟，让元素之间有明显间隔
         if lastTaskWasBlock && !taskQueue.isEmpty {
