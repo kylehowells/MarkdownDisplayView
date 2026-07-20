@@ -465,6 +465,14 @@ final class AIChatViewController: UIViewController {
     private var isUserInteracting = false
     private var pendingRowHeightUpdate = false
     private var pendingStreamingFollow = false
+    /// 防止 performBatchUpdates 触发的布局回调再次排队，形成行高更新反馈环。
+    private var isApplyingRowHeightUpdate = false
+    /// 首轮 batch 中可能才得到最终有效高度；允许 completion 后补一次，但禁止继续递归。
+    private var needsPostBatchRowHeightUpdate = false
+    private var isPostBatchRowHeightUpdate = false
+    /// 拖拽或减速期间只记录一次行高变化，手势结束后合并刷新。
+    private var hasDeferredRowHeightUpdate = false
+    private var isTableViewGestureActive = false
     /// 每次开始/结束流式时递增，使已经排队的自动滚动任务立即失效。
     private var autoScrollGeneration = 0
 
@@ -993,23 +1001,61 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
     /// 合并同一主循环的高度变化，避免从 MarkdownView.layoutSubviews 同步重入 TableView 布局。
     private func scheduleRowHeightUpdate(followStreaming: Bool = true) {
         pendingStreamingFollow = pendingStreamingFollow || followStreaming
+
+        if isApplyingRowHeightUpdate {
+            // 首轮 batch 可能修正 TextKit 的实际宽度并产生一个新的有效高度，因此保留一次补刷。
+            // 补刷自身引起的回调直接丢弃，把反馈链限制为最多两轮。
+            if !isPostBatchRowHeightUpdate {
+                needsPostBatchRowHeightUpdate = true
+            }
+            return
+        }
+
+        // 手指拖拽或 TableView 正在减速时不改变 contentSize，避免滚动条和手势争抢。
+        // 高度本身已经写入 MarkdownView，手势结束后合并刷新一次即可。
+        if isTableViewGestureActive {
+            hasDeferredRowHeightUpdate = true
+            return
+        }
+
         guard !pendingRowHeightUpdate else { return }
         pendingRowHeightUpdate = true
         let generation = autoScrollGeneration
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.pendingRowHeightUpdate = false
+
+            if self.isTableViewGestureActive {
+                self.pendingRowHeightUpdate = false
+                self.hasDeferredRowHeightUpdate = true
+                return
+            }
+
             let shouldFollowStreaming = self.pendingStreamingFollow
             self.pendingStreamingFollow = false
+            self.isApplyingRowHeightUpdate = true
             UIView.performWithoutAnimation {
                 self.tableView.performBatchUpdates(nil) { [weak self] _ in
-                    guard let self,
-                          shouldFollowStreaming,
-                          generation == self.autoScrollGeneration,
-                          !self.isUserInteracting,
-                          self.streamingAssistantIndex != nil else { return }
-                    self.scrollToBottom(animated: false)
+                    guard let self else { return }
+                    self.isApplyingRowHeightUpdate = false
+                    self.pendingRowHeightUpdate = false
+
+                    if shouldFollowStreaming,
+                       generation == self.autoScrollGeneration,
+                       !self.isUserInteracting,
+                       self.streamingAssistantIndex != nil {
+                        self.scrollToBottom(animated: false)
+                    }
+
+                    if self.needsPostBatchRowHeightUpdate,
+                       !self.isPostBatchRowHeightUpdate {
+                        self.needsPostBatchRowHeightUpdate = false
+                        self.isPostBatchRowHeightUpdate = true
+                        self.scheduleRowHeightUpdate(followStreaming: false)
+                    } else {
+                        self.needsPostBatchRowHeightUpdate = false
+                        self.isPostBatchRowHeightUpdate = false
+                    }
                 }
             }
         }
@@ -1019,19 +1065,31 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         // 用户开始拖拽，暂停自动滚动
+        isTableViewGestureActive = true
         isUserInteracting = true
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
         if !decelerate {
+            isTableViewGestureActive = false
             // 拖拽结束且没有惯性滚动，检查是否在底部
             checkIfAtBottomAndResumeAutoScroll(scrollView)
+            flushDeferredRowHeightUpdateIfNeeded()
         }
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        isTableViewGestureActive = false
         // 惯性滚动结束，检查是否在底部
         checkIfAtBottomAndResumeAutoScroll(scrollView)
+        flushDeferredRowHeightUpdateIfNeeded()
+    }
+
+    private func flushDeferredRowHeightUpdateIfNeeded() {
+        guard hasDeferredRowHeightUpdate else { return }
+        hasDeferredRowHeightUpdate = false
+        // pendingStreamingFollow 已保存拖动期间是否需要继续跟随；这里仅触发合并刷新。
+        scheduleRowHeightUpdate(followStreaming: false)
     }
 
     private func checkIfAtBottomAndResumeAutoScroll(_ scrollView: UIScrollView) {
