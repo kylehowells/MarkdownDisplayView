@@ -7,6 +7,7 @@
 
 import UIKit
 import MarkdownDisplayKit
+import PhotosUI
 
 enum ChatRole: String, Codable {
     case user
@@ -18,6 +19,30 @@ struct AIChatMessage: Codable {
     var content: String
     var isPlaceholder: Bool = false
     var isStreaming: Bool = false
+    var attachments: [AIChatImageAttachment] = []
+
+    init(
+        role: ChatRole,
+        content: String,
+        isPlaceholder: Bool = false,
+        isStreaming: Bool = false,
+        attachments: [AIChatImageAttachment] = []
+    ) {
+        self.role = role
+        self.content = content
+        self.isPlaceholder = isPlaceholder
+        self.isStreaming = isStreaming
+        self.attachments = attachments
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        role = try container.decode(ChatRole.self, forKey: .role)
+        content = try container.decode(String.self, forKey: .content)
+        isPlaceholder = try container.decodeIfPresent(Bool.self, forKey: .isPlaceholder) ?? false
+        isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
+        attachments = try container.decodeIfPresent([AIChatImageAttachment].self, forKey: .attachments) ?? []
+    }
 }
 
 private struct AIChatConfig: Decodable {
@@ -461,6 +486,12 @@ final class AIChatViewController: UIViewController {
     private let streamNormalizer = StreamMarkdownNormalizer()
     private var receivedText = ""
 
+    private let conversationStore = AIChatConversationStore.shared
+    private var currentConversation = AIChatConversation(title: "新对话")
+    private var selectedHistoryConversationIDs = Set<UUID>()
+    private let ocrService = AIChatOCRService()
+    private var selectedImages: [AIChatSelectedImage] = []
+
     /// 用户主动浏览历史内容时暂停自动跟随；回到底部后恢复。
     private var isUserInteracting = false
     private var pendingRowHeightUpdate = false
@@ -479,6 +510,9 @@ final class AIChatViewController: UIViewController {
     private let inputContainer = UIView()
     private let inputTextView = UITextView()
     private let sendButton = UIButton(type: .system)
+    private let imageButton = UIButton(type: .system)
+    private let imageStripView = AIChatImageStripView()
+    private var imageStripHeightConstraint: NSLayoutConstraint?
     private var inputBottomConstraint: NSLayoutConstraint?
 
     private lazy var closeButton: UIButton = {
@@ -486,6 +520,15 @@ final class AIChatViewController: UIViewController {
         button.setTitle("关闭", for: .normal)
         button.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
         button.addTarget(self, action: #selector(closeTapped), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+
+    private lazy var historyButton: UIButton = {
+        let button = UIButton(type: .system)
+        button.setImage(UIImage(systemName: "clock.arrow.circlepath"), for: .normal)
+        button.accessibilityLabel = "历史会话"
+        button.addTarget(self, action: #selector(historyTapped), for: .touchUpInside)
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
     }()
@@ -515,6 +558,7 @@ final class AIChatViewController: UIViewController {
         setupTableView()
         setupInputArea()
         loadConfig()
+        loadConversationHistory()
         registerKeyboardNotifications()
     }
 
@@ -527,6 +571,7 @@ final class AIChatViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        persistCurrentConversation()
         streamSession?.cancel()
         streamSession = nil
     }
@@ -539,6 +584,7 @@ final class AIChatViewController: UIViewController {
         view.addSubview(titleLabel)
         view.addSubview(closeButton)
         view.addSubview(stopButton)
+        view.addSubview(historyButton)
 
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -551,7 +597,12 @@ final class AIChatViewController: UIViewController {
 
             closeButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             closeButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
-            closeButton.heightAnchor.constraint(equalToConstant: 44)
+            closeButton.heightAnchor.constraint(equalToConstant: 44),
+
+            historyButton.leadingAnchor.constraint(equalTo: titleLabel.trailingAnchor, constant: 10),
+            historyButton.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+            historyButton.widthAnchor.constraint(equalToConstant: 40),
+            historyButton.heightAnchor.constraint(equalToConstant: 44)
         ])
     }
 
@@ -584,25 +635,50 @@ final class AIChatViewController: UIViewController {
         inputTextView.layer.borderColor = UIColor.systemGray4.cgColor
         inputTextView.backgroundColor = .systemBackground
         inputTextView.textContainerInset = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
+        inputTextView.delegate = self
         inputTextView.translatesAutoresizingMaskIntoConstraints = false
+
+        imageButton.setImage(UIImage(systemName: "photo.on.rectangle.angled"), for: .normal)
+        imageButton.accessibilityLabel = "选择图片"
+        imageButton.addTarget(self, action: #selector(selectImagesTapped), for: .touchUpInside)
+        imageButton.translatesAutoresizingMaskIntoConstraints = false
 
         sendButton.setTitle("发送", for: .normal)
         sendButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
         sendButton.addTarget(self, action: #selector(sendTapped), for: .touchUpInside)
         sendButton.translatesAutoresizingMaskIntoConstraints = false
 
+        imageStripView.translatesAutoresizingMaskIntoConstraints = false
+        imageStripView.onRemove = { [weak self] id in
+            self?.removeSelectedImage(id: id)
+        }
+
+        inputContainer.addSubview(imageStripView)
+        inputContainer.addSubview(imageButton)
         inputContainer.addSubview(inputTextView)
         inputContainer.addSubview(sendButton)
 
         inputBottomConstraint = inputContainer.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+
+        imageStripHeightConstraint = imageStripView.heightAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
             inputContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             inputContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             inputBottomConstraint!,
 
-            inputTextView.topAnchor.constraint(equalTo: inputContainer.topAnchor, constant: 8),
-            inputTextView.leadingAnchor.constraint(equalTo: inputContainer.leadingAnchor, constant: 12),
+            imageStripView.topAnchor.constraint(equalTo: inputContainer.topAnchor),
+            imageStripView.leadingAnchor.constraint(equalTo: inputContainer.leadingAnchor, constant: 12),
+            imageStripView.trailingAnchor.constraint(equalTo: inputContainer.trailingAnchor, constant: -12),
+            imageStripHeightConstraint!,
+
+            imageButton.topAnchor.constraint(equalTo: imageStripView.bottomAnchor, constant: 8),
+            imageButton.leadingAnchor.constraint(equalTo: inputContainer.leadingAnchor, constant: 8),
+            imageButton.bottomAnchor.constraint(equalTo: inputContainer.bottomAnchor, constant: -8),
+            imageButton.widthAnchor.constraint(equalToConstant: 40),
+
+            inputTextView.topAnchor.constraint(equalTo: imageStripView.bottomAnchor, constant: 8),
+            inputTextView.leadingAnchor.constraint(equalTo: imageButton.trailingAnchor, constant: 4),
             inputTextView.bottomAnchor.constraint(equalTo: inputContainer.bottomAnchor, constant: -8),
             inputTextView.heightAnchor.constraint(equalToConstant: 40),
 
@@ -613,6 +689,117 @@ final class AIChatViewController: UIViewController {
         ])
 
         tableView.bottomAnchor.constraint(equalTo: inputContainer.topAnchor).isActive = true
+        updateComposerState(animated: false)
+    }
+
+    private func loadConversationHistory() {
+        do { _ = try conversationStore.load() }
+        catch { showTransientAlert(title: "历史记录读取失败", message: error.localizedDescription) }
+    }
+
+    @objc private func historyTapped() {
+        guard !isRequesting, streamingAssistantIndex == nil else {
+            showTransientAlert(title: "正在回复", message: "请先停止或等待当前回复完成后再切换会话。")
+            return
+        }
+        persistCurrentConversation()
+        let historyConversations = conversationStore.conversations.filter { $0.id != currentConversation.id }
+        let availableIDs = Set(historyConversations.map(\.id))
+        selectedHistoryConversationIDs.formIntersection(availableIDs)
+        let history = AIChatHistoryViewController(conversations: historyConversations, selectedIDs: selectedHistoryConversationIDs)
+        history.onReferenceSelection = { [weak self] ids in self?.selectedHistoryConversationIDs = ids; self?.updateHistoryButtonState() }
+        history.onOpenConversation = { [weak self] item in self?.openConversation(item) }
+        history.onDeleteConversation = { [weak self] id in
+            guard let self else { return }
+            do {
+                try self.conversationStore.delete(id: id); self.selectedHistoryConversationIDs.remove(id)
+                if self.currentConversation.id == id { self.startNewConversation() }
+                self.updateHistoryButtonState()
+            } catch { self.showTransientAlert(title: "删除失败", message: error.localizedDescription) }
+        }
+        history.onCreateConversation = { [weak self] in self?.startNewConversation() }
+        present(UINavigationController(rootViewController: history), animated: true)
+    }
+
+    private func openConversation(_ conversation: AIChatConversation) {
+        currentConversation = conversation
+        messages = conversation.messages.map { var value = $0; value.isPlaceholder = false; value.isStreaming = false; return value }
+        pendingAssistantIndex = nil; streamingAssistantIndex = nil; clearSelectedImages(); tableView.reloadData(); tableView.layoutIfNeeded()
+        scrollToBottom(animated: false); titleLabel.text = "AI 对话"
+    }
+
+    private func startNewConversation() {
+        currentConversation = AIChatConversation(title: "新对话"); messages = []; pendingAssistantIndex = nil; streamingAssistantIndex = nil
+        selectedHistoryConversationIDs.removeAll(); clearSelectedImages(); tableView.reloadData(); titleLabel.text = "AI 对话"; updateHistoryButtonState()
+    }
+
+    private func persistCurrentConversation() {
+        let stable = messages.filter { !$0.isPlaceholder && !$0.isStreaming && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard stable.contains(where: { $0.role == .user }) else { return }
+        currentConversation.messages = stable
+        if currentConversation.title == "新对话", let first = stable.first(where: { $0.role == .user })?.content {
+            let title = first.trimmingCharacters(in: .whitespacesAndNewlines); currentConversation.title = title.isEmpty ? "新对话" : String(title.prefix(30))
+        }
+        currentConversation.updatedAt = Date()
+        do { try conversationStore.save(currentConversation) }
+        catch { print("[AIChat][History] 保存失败: \(error.localizedDescription)") }
+    }
+
+    private func updateHistoryButtonState() {
+        historyButton.tintColor = selectedHistoryConversationIDs.isEmpty ? .systemBlue : .systemOrange
+        historyButton.accessibilityValue = selectedHistoryConversationIDs.isEmpty ? "未引用历史会话" : "已引用 \(selectedHistoryConversationIDs.count) 个历史会话"
+    }
+
+    @objc private func selectImagesTapped() {
+        guard !isRequesting else { return }; let remaining = 9 - selectedImages.count
+        guard remaining > 0 else { showTransientAlert(title: "最多选择 9 张图片", message: "请先移除部分图片后再添加。"); return }
+        var config = PHPickerConfiguration(photoLibrary: .shared()); config.filter = .images; config.selectionLimit = remaining; config.selection = .ordered
+        let picker = PHPickerViewController(configuration: config); picker.delegate = self; present(picker, animated: true)
+    }
+
+    private func addSelectedImages(_ images: [UIImage]) {
+        guard !images.isEmpty else { return }
+        var newItems: [AIChatSelectedImage] = []
+        for image in images { newItems.append(AIChatSelectedImage(image: image)) }
+        let ids = newItems.map(\.id)
+        selectedImages.append(contentsOf: newItems); updateComposerState(animated: true)
+        ocrService.recognize(images: images) { [weak self] results in
+            guard let self else { return }
+            for result in results where ids.indices.contains(result.index) {
+                guard let index = self.selectedImages.firstIndex(where: { $0.id == ids[result.index] }) else { continue }
+                let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines); self.selectedImages[index].recognizedText = text
+                if let error = result.error { self.selectedImages[index].state = .failed; self.selectedImages[index].errorDescription = error.localizedDescription }
+                else if text.isEmpty { self.selectedImages[index].state = .failed; self.selectedImages[index].errorDescription = "未识别到文字" }
+                else { self.selectedImages[index].state = .ready; self.selectedImages[index].errorDescription = nil }
+            }
+            self.updateComposerState(animated: false)
+        }
+    }
+
+    private func removeSelectedImage(id: UUID) { selectedImages.removeAll { $0.id == id }; updateComposerState(animated: true) }
+    private func clearSelectedImages() { ocrService.cancelAll(); selectedImages.removeAll(); updateComposerState(animated: false) }
+
+    private var recognizedAttachments: [AIChatImageAttachment] {
+        selectedImages.enumerated().map { index, item in
+            let state: AIChatImageAttachment.RecognitionState
+            switch item.state { case .processing: state = .recognizing; case .ready: state = .completed; case .failed: state = .failed }
+            return AIChatImageAttachment(id: item.id, displayName: "图片 \(index + 1)", ocrText: item.recognizedText, recognitionState: state, errorDescription: item.errorDescription)
+        }
+    }
+
+    private func updateComposerState(animated: Bool) {
+        imageStripView.update(items: selectedImages); imageStripHeightConstraint?.constant = selectedImages.isEmpty ? 0 : 76
+        let recognizing = selectedImages.contains { $0.state == .processing }
+        let hasImageText = selectedImages.contains { $0.state == .ready && !$0.recognizedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let hasText = !inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let isBusy = isRequesting || streamingAssistantIndex != nil
+        sendButton.isEnabled = !isBusy && !recognizing && (hasText || hasImageText); imageButton.isEnabled = !isBusy
+        let updates = { self.view.layoutIfNeeded() }; animated ? UIView.animate(withDuration: 0.2, animations: updates) : updates()
+    }
+
+    private func showTransientAlert(title: String, message: String) {
+        guard presentedViewController == nil else { return }; let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "知道了", style: .default)); present(alert, animated: true)
     }
 
     private func loadConfig() {
@@ -667,7 +854,8 @@ final class AIChatViewController: UIViewController {
 
     @objc private func sendTapped() {
         let text = inputTextView.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        let attachments = recognizedAttachments.filter { $0.recognitionState == .completed && !$0.ocrText.isEmpty }
+        guard !text.isEmpty || !attachments.isEmpty else { return }
         guard !isRequesting else { return }
 
         view.endEditing(true)
@@ -676,8 +864,10 @@ final class AIChatViewController: UIViewController {
         if willStream {
             streamNormalizer.reset()
         }
-        appendMessage(role: .user, content: text)
+        let visibleQuestion = text.isEmpty ? "请根据图片中识别到的文字回答。" : text
+        appendMessage(role: .user, content: visibleQuestion, attachments: attachments)
         inputTextView.text = ""
+        clearSelectedImages()
 
         let placeholderIndex = appendMessage(
             role: .assistant,
@@ -689,6 +879,7 @@ final class AIChatViewController: UIViewController {
         streamingAssistantIndex = willStream ? placeholderIndex : nil
         autoScrollGeneration += 1
         prepareStreamingCellIfNeeded()
+        persistCurrentConversation()
         requestAssistantReply()
     }
 
@@ -705,7 +896,23 @@ final class AIChatViewController: UIViewController {
 
         var requestMessages = messages
             .filter { !$0.isPlaceholder }
-            .map { OpenAIChatRequest.Message(role: $0.role.rawValue, content: $0.content) }
+            .map { message in
+                let content = message.role == .user
+                    ? AIChatRequestContextBuilder.combinedQuestion(userText: message.content, attachments: message.attachments)
+                    : message.content
+                return OpenAIChatRequest.Message(role: message.role.rawValue, content: content)
+            }
+
+        if let latestUser = messages.last(where: { $0.role == .user }) {
+            let query = AIChatRequestContextBuilder.combinedQuestion(userText: latestUser.content, attachments: latestUser.attachments)
+            let selected = conversationStore.conversations.filter {
+                selectedHistoryConversationIDs.contains($0.id) && $0.id != currentConversation.id
+            }
+            let relevantPairs = AIChatHistoryRetriever.relevantPairs(for: query, in: selected)
+            if let historyContext = AIChatRequestContextBuilder.historyContext(from: relevantPairs) {
+                requestMessages.insert(OpenAIChatRequest.Message(role: "system", content: historyContext), at: 0)
+            }
+        }
 
         if let systemPrompt = config.systemPrompt?.trimmingCharacters(in: .whitespacesAndNewlines),
            !systemPrompt.isEmpty {
@@ -737,7 +944,7 @@ final class AIChatViewController: UIViewController {
         }
 
         isRequesting = true
-        sendButton.isEnabled = false
+        updateComposerState(animated: false)
 
         if shouldStream {
             startStreamRequest(request)
@@ -760,7 +967,7 @@ final class AIChatViewController: UIViewController {
     private func handleResponse(data: Data?, response: URLResponse?, error: Error?) {
         defer {
             isRequesting = false
-            sendButton.isEnabled = true
+            updateComposerState(animated: false)
         }
 
         if let error = error {
@@ -838,7 +1045,7 @@ final class AIChatViewController: UIViewController {
     private func finishStream() {
         print("[AIChat][Stream][Complete] Total received chars: \(receivedText)")
         isRequesting = false
-        sendButton.isEnabled = true
+        updateComposerState(animated: false)
 
         guard let index = streamingAssistantIndex, messages.indices.contains(index) else { return }
         let remaining = streamNormalizer.flush()
@@ -861,18 +1068,22 @@ final class AIChatViewController: UIViewController {
                 self.streamingAssistantIndex = nil
                 self.autoScrollGeneration += 1
                 self.scheduleRowHeightUpdate(followStreaming: false)
+                self.persistCurrentConversation()
+                self.updateComposerState(animated: false)
             }
         } else {
             messages[index].isStreaming = false
             tableView.reloadRows(at: [indexPath], with: .fade)
             streamingAssistantIndex = nil
             autoScrollGeneration += 1
+            persistCurrentConversation()
+            updateComposerState(animated: false)
         }
     }
 
     private func failStream(message: String) {
         isRequesting = false
-        sendButton.isEnabled = true
+        updateComposerState(animated: false)
         streamNormalizer.reset()
         if let index = streamingAssistantIndex,
            let cell = tableView.cellForRow(at: IndexPath(row: index, section: 0)) as? AIChatMessageCell {
@@ -880,6 +1091,8 @@ final class AIChatViewController: UIViewController {
         }
         updatePendingMessage(with: "流式请求失败：\(message)")
         streamingAssistantIndex = nil
+        persistCurrentConversation()
+        updateComposerState(animated: false)
     }
 
     private func cancelActiveRequest(showMessage: Bool) {
@@ -902,9 +1115,11 @@ final class AIChatViewController: UIViewController {
         }
 
         isRequesting = false
-        sendButton.isEnabled = true
+        updateComposerState(animated: false)
         pendingAssistantIndex = nil
         streamingAssistantIndex = nil
+        persistCurrentConversation()
+        updateComposerState(animated: false)
     }
 
     private func logServerText(_ text: String, category: String, limit: Int?) {
@@ -924,8 +1139,14 @@ final class AIChatViewController: UIViewController {
     }
 
     @discardableResult
-    private func appendMessage(role: ChatRole, content: String, isPlaceholder: Bool = false, isStreaming: Bool = false) -> Int {
-        let message = AIChatMessage(role: role, content: content, isPlaceholder: isPlaceholder, isStreaming: isStreaming)
+    private func appendMessage(
+        role: ChatRole,
+        content: String,
+        isPlaceholder: Bool = false,
+        isStreaming: Bool = false,
+        attachments: [AIChatImageAttachment] = []
+    ) -> Int {
+        let message = AIChatMessage(role: role, content: content, isPlaceholder: isPlaceholder, isStreaming: isStreaming, attachments: attachments)
         messages.append(message)
         let indexPath = IndexPath(row: messages.count - 1, section: 0)
         tableView.insertRows(at: [indexPath], with: .fade)
@@ -941,6 +1162,7 @@ final class AIChatViewController: UIViewController {
         let indexPath = IndexPath(row: index, section: 0)
         tableView.reloadRows(at: [indexPath], with: .fade)
         scrollToBottom(animated: true)
+        persistCurrentConversation()
     }
 
     private func scrollToBottom(animated: Bool) {
@@ -1091,6 +1313,26 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
     }
 }
 
+extension AIChatViewController: UITextViewDelegate, PHPickerViewControllerDelegate {
+    func textViewDidChange(_ textView: UITextView) { updateComposerState(animated: false) }
+
+    func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+        picker.dismiss(animated: true); guard !results.isEmpty else { return }
+        let group = DispatchGroup(); let lock = NSLock(); var loadedImages: [Int: UIImage] = [:]
+        for (index, result) in results.enumerated() {
+            guard result.itemProvider.canLoadObject(ofClass: UIImage.self) else { continue }
+            group.enter()
+            result.itemProvider.loadObject(ofClass: UIImage.self) { object, _ in
+                if let image = object as? UIImage { lock.lock(); loadedImages[index] = image; lock.unlock() }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
+            let images = loadedImages.keys.sorted().compactMap { loadedImages[$0] }; self?.addSelectedImages(images)
+        }
+    }
+}
+
 final class AIChatMessageCell: UITableViewCell {
     static let reuseIdentifier = "AIChatMessageCell"
 
@@ -1170,7 +1412,8 @@ final class AIChatMessageCell: UITableViewCell {
     func configure(with message: AIChatMessage) {
         markdownView.enableTypewriterEffect = message.isStreaming
         if !message.isStreaming {
-            markdownView.markdown = message.content
+            let summary = message.attachments.isEmpty ? "" : "\n\n*已识别 \(message.attachments.count) 张图片中的文字*"
+            markdownView.markdown = message.content + summary
         }
 
         let isUser = message.role == .user
