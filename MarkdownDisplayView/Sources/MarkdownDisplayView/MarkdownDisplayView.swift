@@ -254,6 +254,15 @@ public final class MarkdownViewTextKit: UIView {
     
     private var autoScrollEnabled: Bool = false
 
+    /// 用户主动上滑离开底部后置为 true，暂停自动滚动直到其手动滑回底部
+    private var userScrolledAway: Bool = false
+
+    /// 合并多次 token 触发的滚动请求，避免 asyncAfter 堆积
+    private var autoScrollWorkItem: DispatchWorkItem?
+
+    /// 判定"已贴底"的容差
+    private static let autoScrollBottomTolerance: CGFloat = 44
+
     // 流式渲染节流（避免过度渲染）
     private var lastStreamRenderTime: TimeInterval = 0
     private let streamRenderThrottle: TimeInterval = 0.3  // 300ms 节流（大幅降低CPU占用）
@@ -3987,6 +3996,7 @@ public final class MarkdownViewTextKit: UIView {
             onComplete: (() -> Void)? = nil
         ) {
             autoScrollEnabled = autoScrollBottom
+            userScrolledAway = false
             stopStreaming()
             isStreaming = true
             self.onStreamComplete = onComplete
@@ -4822,11 +4832,47 @@ public final class MarkdownViewTextKit: UIView {
         }
         
         private func handleAutoScroll() {
-            if autoScrollEnabled {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                    self?.scrollToBottom(animated: false)
-                }
+            guard autoScrollEnabled else { return }
+
+            autoScrollWorkItem?.cancel()
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.autoScrollToBottomIfAppropriate()
             }
+            autoScrollWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)
+        }
+
+        /// 仅在用户未接管滚动、且视图仍贴近底部时才滚动
+        private func autoScrollToBottomIfAppropriate() {
+            guard autoScrollEnabled, let sv = findEnclosingScrollView() else { return }
+
+            // 用户手指在屏幕上或惯性滚动中：视为接管，不再抢夺
+            if sv.isDragging || sv.isTracking || sv.isDecelerating {
+                userScrolledAway = true
+                return
+            }
+
+            let distance = distanceFromBottom(sv)
+
+            if distance <= Self.autoScrollBottomTolerance {
+                // 已贴回底部，恢复跟随
+                userScrolledAway = false
+            } else if userScrolledAway {
+                return
+            } else if distance > max(Self.autoScrollBottomTolerance, sv.bounds.height * 0.5) {
+                // 拖拽在两次 token 之间结束、且无惯性时 isDragging/isDecelerating 都已复位，
+                // 此处用距离兜底：单个 token 的内容增量不可能造成半屏以上的偏离
+                userScrolledAway = true
+                return
+            }
+
+            scrollToBottom(animated: false)
+        }
+
+        /// 当前偏移距底部的距离
+        private func distanceFromBottom(_ sv: UIScrollView) -> CGFloat {
+            let maxOffsetY = max(0, sv.contentSize.height - sv.bounds.height + sv.contentInset.bottom)
+            return maxOffsetY - sv.contentOffset.y
         }
 
     private func tokenize(_ text: String, unit: StreamingUnit) -> [String] {
@@ -4874,11 +4920,7 @@ public final class MarkdownViewTextKit: UIView {
         streamTokenIndex = endIndex
         
         // 自动滚动到底部
-        if autoScrollEnabled {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.scrollToBottom(animated: false)
-            }
-        }
+        handleAutoScroll()
     }
 
     /// ⚡️ 如果有待渲染的脚注，则渲染（在打字机动画完成后调用）
@@ -5042,6 +5084,9 @@ public final class MarkdownViewTextKit: UIView {
     public func resetForReuse() {
         renderWorkItem?.cancel()
         offscreenRenderWorkItem?.cancel()
+        autoScrollWorkItem?.cancel()
+        autoScrollWorkItem = nil
+        userScrolledAway = false
         streamTimer?.invalidate()
         streamTimer = nil
         waitingDetectionTimer?.invalidate()
@@ -5308,6 +5353,7 @@ public final class MarkdownViewTextKit: UIView {
         useSmartBufferMode = useSmartBuffer
         print("[FOOTNOTE_DEBUG] 🟢 isRealStreamingMode set to TRUE")
         autoScrollEnabled = autoScrollBottom
+        userScrolledAway = false
         realStreamAccumulatedText = ""
         realStreamParsedElementCount = 0
         realStreamBlockQueue = []
@@ -5580,11 +5626,7 @@ public final class MarkdownViewTextKit: UIView {
         notifyHeightChange()
 
         // 自动滚动
-        if autoScrollEnabled {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.scrollToBottom(animated: false)
-            }
-        }
+        handleAutoScroll()
     }
 
     /// 检测并更新已有元素的内容变化
@@ -5856,40 +5898,30 @@ public final class MarkdownViewTextKit: UIView {
         streamCurrentIndex = endIndex
     }
     
+    /// 向上查找宿主 UIScrollView
+    private func findEnclosingScrollView() -> UIScrollView? {
+        var superview = self.superview
+        while let current = superview {
+            if let sv = current as? UIScrollView { return sv }
+            superview = current.superview
+        }
+        return nil
+    }
+
     /// 滚动到底部
     public func scrollToBottom(animated: Bool = true) {
-        var scrollView: UIScrollView?
-        var superview = self.superview
-        while superview != nil {
-            if let sv = superview as? UIScrollView {
-                scrollView = sv
-                break
-            }
-            superview = superview?.superview
-        }
-        
-        guard let sv = scrollView else { return }
-        
+        guard let sv = findEnclosingScrollView() else { return }
+
         let bottomOffset = CGPoint(
             x: 0,
             y: max(0, sv.contentSize.height - sv.bounds.height + sv.contentInset.bottom)
         )
         sv.setContentOffset(bottomOffset, animated: animated)
     }
-    
+
     /// 滚动到顶部
     public func scrollToTop(animated: Bool = true) {
-        var scrollView: UIScrollView?
-        var superview = self.superview
-        while superview != nil {
-            if let sv = superview as? UIScrollView {
-                scrollView = sv
-                break
-            }
-            superview = superview?.superview
-        }
-        
-        guard let sv = scrollView else { return }
+        guard let sv = findEnclosingScrollView() else { return }
         sv.setContentOffset(CGPoint(x: 0, y: -sv.contentInset.top), animated: animated)
     }
     
