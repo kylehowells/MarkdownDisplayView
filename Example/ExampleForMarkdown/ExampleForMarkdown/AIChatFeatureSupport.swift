@@ -342,8 +342,13 @@ enum AIChatRequestContextBuilder {
     }
 }
 
+struct AIChatOCRRequestItem {
+    let id: UUID
+    let image: UIImage
+}
+
 struct AIChatOCRResult {
-    let index: Int
+    let id: UUID
     let text: String
     let error: Error?
 }
@@ -357,25 +362,32 @@ final class AIChatOCRService {
         return queue
     }()
 
-    func recognize(images: [UIImage], completion: @escaping ([AIChatOCRResult]) -> Void) {
-        guard !images.isEmpty else {
-            DispatchQueue.main.async { completion([]) }
+    /// 结果按 id 回传，调用方无需依赖数组下标对齐，避免识别文字挂到错误图片上。
+    /// `generation` 由调用方持有：清空选图后自增，过期回调会被直接丢弃。
+    func recognize(
+        items: [AIChatOCRRequestItem],
+        generation: Int,
+        completion: @MainActor @escaping (Int, [AIChatOCRResult]) -> Void
+    ) {
+        guard !items.isEmpty else {
+            DispatchQueue.main.async { completion(generation, []) }
             return
         }
 
         let group = DispatchGroup()
         let lock = NSLock()
         var results: [AIChatOCRResult] = []
-        for (index, image) in images.enumerated() {
+        let order = items.map(\.id)
+        for item in items {
             group.enter()
             let operation = BlockOperation()
             operation.addExecutionBlock { [weak self, weak operation] in
                 let result: AIChatOCRResult
                 if operation?.isCancelled == true {
-                    result = AIChatOCRResult(index: index, text: "", error: OCRServiceError.cancelled)
+                    result = AIChatOCRResult(id: item.id, text: "", error: OCRServiceError.cancelled)
                 } else {
-                    result = self?.recognize(image: image, index: index)
-                        ?? AIChatOCRResult(index: index, text: "", error: OCRServiceError.cancelled)
+                    result = self?.recognize(image: item.image, id: item.id)
+                        ?? AIChatOCRResult(id: item.id, text: "", error: OCRServiceError.cancelled)
                 }
                 lock.lock()
                 results.append(result)
@@ -387,7 +399,9 @@ final class AIChatOCRService {
             operationQueue.addOperation(operation)
         }
         group.notify(queue: .main) {
-            completion(results.sorted { $0.index < $1.index })
+            let ranks = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
+            let sorted = results.sorted { (ranks[$0.id] ?? 0) < (ranks[$1.id] ?? 0) }
+            MainActor.assumeIsolated { completion(generation, sorted) }
         }
     }
 
@@ -395,12 +409,9 @@ final class AIChatOCRService {
         operationQueue.cancelAllOperations()
     }
 
-    private func recognize(image: UIImage, index: Int) -> AIChatOCRResult {
-        guard !operationQueue.isSuspended else {
-            return AIChatOCRResult(index: index, text: "", error: OCRServiceError.cancelled)
-        }
+    private func recognize(image: UIImage, id: UUID) -> AIChatOCRResult {
         guard let cgImage = image.cgImage ?? makeCGImage(from: image) else {
-            return AIChatOCRResult(index: index, text: "", error: OCRServiceError.invalidImage)
+            return AIChatOCRResult(id: id, text: "", error: OCRServiceError.invalidImage)
         }
 
         var observations: [VNRecognizedTextObservation] = []
@@ -436,9 +447,9 @@ final class AIChatOCRService {
             let text = sorted.compactMap { $0.topCandidates(1).first?.string }
                 .joined(separator: "\n")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            return AIChatOCRResult(index: index, text: text, error: nil)
+            return AIChatOCRResult(id: id, text: text, error: nil)
         } catch {
-            return AIChatOCRResult(index: index, text: "", error: error)
+            return AIChatOCRResult(id: id, text: "", error: error)
         }
     }
 

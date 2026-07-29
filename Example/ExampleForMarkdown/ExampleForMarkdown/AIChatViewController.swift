@@ -491,6 +491,8 @@ final class AIChatViewController: UIViewController {
     private var selectedHistoryConversationIDs = Set<UUID>()
     private let ocrService = AIChatOCRService()
     private var selectedImages: [AIChatSelectedImage] = []
+    /// 清空选图后自增，用于丢弃已在执行中的 OCR 回调
+    private var ocrGeneration = 0
 
     /// 用户是否正在交互（拖拽滚动），用于暂停自动滚动
     private var isUserInteracting = false
@@ -816,13 +818,14 @@ final class AIChatViewController: UIViewController {
         for image in images {
             newItems.append(AIChatSelectedImage(image: image))
         }
-        let ids = newItems.map(\.id)
         selectedImages.append(contentsOf: newItems)
         updateComposerState(animated: true)
-        ocrService.recognize(images: images) { [weak self] results in
-            guard let self else { return }
-            for result in results where ids.indices.contains(result.index) {
-                guard let itemIndex = self.selectedImages.firstIndex(where: { $0.id == ids[result.index] }) else { continue }
+        let items = newItems.map { AIChatOCRRequestItem(id: $0.id, image: $0.image) }
+        let generation = ocrGeneration
+        ocrService.recognize(items: items, generation: generation) { [weak self] resultGeneration, results in
+            guard let self, resultGeneration == self.ocrGeneration else { return }
+            for result in results {
+                guard let itemIndex = self.selectedImages.firstIndex(where: { $0.id == result.id }) else { continue }
                 let text = result.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 self.selectedImages[itemIndex].recognizedText = text
                 if let error = result.error {
@@ -846,6 +849,7 @@ final class AIChatViewController: UIViewController {
     }
 
     private func clearSelectedImages() {
+        ocrGeneration &+= 1
         ocrService.cancelAll()
         selectedImages.removeAll()
         updateComposerState(animated: false)
@@ -977,6 +981,7 @@ final class AIChatViewController: UIViewController {
     }
 
     private func requestAssistantReply() {
+        receivedText = ""
         guard let config else {
             updatePendingMessage(with: "未找到本地配置，请先创建 Config.local.json。")
             return
@@ -1139,7 +1144,7 @@ final class AIChatViewController: UIViewController {
     }
 
     private func finishStream() {
-        print("[AIChat][Stream][Complete] Total received chars: \(receivedText)")
+        print("[AIChat][Stream][Complete] Total received chars: \(receivedText.count)")
         isRequesting = false
         updateComposerState(animated: false)
 

@@ -1,7 +1,7 @@
 import UIKit
 
 struct AIChatSelectedImage: Identifiable {
-    enum OCRState {
+    enum OCRState: String {
         case processing
         case ready
         case failed
@@ -27,6 +27,8 @@ final class AIChatImageStripView: UIView {
 
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
+    /// 只有 id 或识别状态变化才重建子视图：update 会随每次输入框改动被调用。
+    private var renderedSignature: [String] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -60,6 +62,10 @@ final class AIChatImageStripView: UIView {
     }
 
     func update(items: [AIChatSelectedImage]) {
+        let signature = items.map { "\($0.id.uuidString)-\($0.state.rawValue)" }
+        guard signature != renderedSignature else { return }
+        renderedSignature = signature
+
         stackView.arrangedSubviews.forEach { view in
             stackView.removeArrangedSubview(view)
             view.removeFromSuperview()
@@ -184,7 +190,6 @@ final class AIChatHistoryViewController: UIViewController {
 
         tableView.dataSource = self
         tableView.delegate = self
-        tableView.allowsMultipleSelection = true
         tableView.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(tableView)
 
@@ -256,27 +261,23 @@ extension AIChatHistoryViewController: UITableViewDataSource, UITableViewDelegat
         cell.detailTextLabel?.textColor = .secondaryLabel
         cell.detailTextLabel?.numberOfLines = 2
         cell.accessoryType = .detailButton
-        cell.accessibilityHint = "轻点选择为相关历史，轻点信息按钮打开会话"
-        if selectedIDs.contains(conversation.id) {
-            tableView.selectRow(at: indexPath, animated: false, scrollPosition: .none)
-            cell.imageView?.image = UIImage(systemName: "checkmark.circle.fill")
-            cell.imageView?.tintColor = .systemBlue
-        } else {
-            cell.imageView?.image = UIImage(systemName: "circle")
-            cell.imageView?.tintColor = .tertiaryLabel
-        }
+        cell.accessibilityHint = "轻点切换引用状态，轻点信息按钮打开会话"
+        // selectedIDs 是唯一数据源；不再调用 tableView.selectRow，避免与 reloadRows 互相覆盖。
+        let isSelected = selectedIDs.contains(conversation.id)
+        cell.imageView?.image = UIImage(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+        cell.imageView?.tintColor = isSelected ? .systemBlue : .tertiaryLabel
+        cell.accessibilityValue = isSelected ? "已引用" : "未引用"
         return cell
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
         let id = conversations[indexPath.row].id
-        selectedIDs.insert(id)
-        tableView.reloadRows(at: [indexPath], with: .none)
-        updateApplyButton()
-    }
-
-    func tableView(_ tableView: UITableView, didDeselectRowAt indexPath: IndexPath) {
-        selectedIDs.remove(conversations[indexPath.row].id)
+        if selectedIDs.contains(id) {
+            selectedIDs.remove(id)
+        } else {
+            selectedIDs.insert(id)
+        }
         tableView.reloadRows(at: [indexPath], with: .none)
         updateApplyButton()
     }

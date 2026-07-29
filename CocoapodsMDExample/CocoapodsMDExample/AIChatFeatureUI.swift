@@ -1,7 +1,7 @@
 import UIKit
 
 struct AIChatSelectedImage: Identifiable {
-    enum OCRState {
+    enum OCRState: String {
         case processing
         case ready
         case failed
@@ -27,6 +27,8 @@ final class AIChatImageStripView: UIView {
 
     private let scrollView = UIScrollView()
     private let stackView = UIStackView()
+    /// 只有 id 或识别状态变化才重建子视图：update 会随每次输入框改动被调用。
+    private var renderedSignature: [String] = []
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -53,6 +55,9 @@ final class AIChatImageStripView: UIView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func update(items: [AIChatSelectedImage]) {
+        let signature = items.map { "\($0.id.uuidString)-\($0.state.rawValue)" }
+        guard signature != renderedSignature else { return }
+        renderedSignature = signature
         stackView.arrangedSubviews.forEach { stackView.removeArrangedSubview($0); $0.removeFromSuperview() }
         items.forEach { stackView.addArrangedSubview(makeItemView($0)) }
         accessibilityLabel = items.isEmpty ? "未选择图片" : "已选择 \(items.count) 张图片"
@@ -64,12 +69,14 @@ final class AIChatImageStripView: UIView {
         container.layer.cornerRadius = 10
         container.layer.borderWidth = 1
         container.layer.borderColor = UIColor.separator.cgColor
+        container.clipsToBounds = false
         container.translatesAutoresizingMaskIntoConstraints = false
         let imageView = UIImageView(image: item.image)
         imageView.contentMode = .scaleAspectFill
         imageView.clipsToBounds = true
         imageView.layer.cornerRadius = 9
         imageView.translatesAutoresizingMaskIntoConstraints = false
+        imageView.isAccessibilityElement = false
         container.addSubview(imageView)
         let statusView: UIView
         switch item.state {
@@ -131,7 +138,7 @@ final class AIChatHistoryViewController: UIViewController {
         super.viewDidLoad(); title = "历史会话"; view.backgroundColor = .systemGroupedBackground
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(close))
         navigationItem.rightBarButtonItem = applyButton
-        tableView.dataSource = self; tableView.delegate = self; tableView.allowsMultipleSelection = true
+        tableView.dataSource = self; tableView.delegate = self
         tableView.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(tableView)
         let newButton = UIButton(type: .system); var config = UIButton.Configuration.filled(); config.title = "新建会话"
         config.image = UIImage(systemName: "square.and.pencil"); config.imagePadding = 8; newButton.configuration = config
@@ -163,19 +170,20 @@ extension AIChatHistoryViewController: UITableViewDataSource, UITableViewDelegat
         let question = item.messages.last(where: { $0.role == .user })?.content ?? "暂无问题"
         cell.detailTextLabel?.text = "\(Self.dateFormatter.string(from: item.updatedAt)) · \(question.prefix(48))"
         cell.detailTextLabel?.textColor = .secondaryLabel; cell.detailTextLabel?.numberOfLines = 2
-        cell.accessibilityHint = "轻点选择为相关历史，轻点信息按钮打开会话"
+        cell.accessibilityHint = "轻点切换引用状态，轻点信息按钮打开会话"
         cell.accessoryType = .detailButton
-        if selectedIDs.contains(item.id) {
-            tableView.selectRow(at: indexPath, animated: false, scrollPosition: .none)
-            cell.imageView?.image = UIImage(systemName: "checkmark.circle.fill"); cell.imageView?.tintColor = .systemBlue
-        } else { cell.imageView?.image = UIImage(systemName: "circle"); cell.imageView?.tintColor = .tertiaryLabel }
+        // selectedIDs 是唯一数据源；不再调用 tableView.selectRow，避免与 reloadRows 互相覆盖。
+        let isSelected = selectedIDs.contains(item.id)
+        cell.imageView?.image = UIImage(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+        cell.imageView?.tintColor = isSelected ? .systemBlue : .tertiaryLabel
+        cell.accessibilityValue = isSelected ? "已引用" : "未引用"
         return cell
     }
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
-        selectedIDs.insert(conversations[indexPath.row].id); tableView.reloadRows(at: [indexPath], with: .none); updateApplyButton()
-    }
-    func tableView(_ tableView: UITableView, didDeselectRowAt indexPath: IndexPath) {
-        selectedIDs.remove(conversations[indexPath.row].id); tableView.reloadRows(at: [indexPath], with: .none); updateApplyButton()
+        tableView.deselectRow(at: indexPath, animated: true)
+        let id = conversations[indexPath.row].id
+        if selectedIDs.contains(id) { selectedIDs.remove(id) } else { selectedIDs.insert(id) }
+        tableView.reloadRows(at: [indexPath], with: .none); updateApplyButton()
     }
     func tableView(_ tableView: UITableView, accessoryButtonTappedForRowWith indexPath: IndexPath) {
         onOpenConversation?(conversations[indexPath.row]); dismiss(animated: true)
