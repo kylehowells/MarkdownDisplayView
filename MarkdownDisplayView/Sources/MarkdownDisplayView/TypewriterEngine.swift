@@ -25,6 +25,12 @@ class TypewriterEngine {
     private var isPaused = false
 
     private var watchdogTimer: Timer?
+    private var lastFeedTimestamp: CFAbsoluteTime = 0
+
+    /// 任务无进展超过该时长即强制完成
+    private static let watchdogTimeout: CFAbsoluteTime = 4.0
+    /// 常驻 Timer 的检查周期
+    private static let watchdogTickInterval: TimeInterval = 1.0
 
     // 追踪当前正在执行的任务，以便超时后强制完成
     private var currentTask: TaskType?
@@ -150,7 +156,7 @@ class TypewriterEngine {
 
     func stop() {
         isPaused = true
-        watchdogTimer?.invalidate()
+        stopWatchdog()
 
         // TextView 在入队时已经 prepare；停止播放时必须同时清理当前任务和
         // 尚未执行的文字任务，否则它们会永久保留播放期的高度下限。
@@ -236,12 +242,34 @@ class TypewriterEngine {
     }
 
     private func feedWatchdog() {
-        watchdogTimer?.invalidate()
-        // ⚡️ 延长看门狗时间到 4.0 秒，防止复杂渲染（如LaTeX）卡顿导致提前结束
-        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 4.0, repeats: false) { [weak self] _ in
+        lastFeedTimestamp = CFAbsoluteTimeGetCurrent()
+        startWatchdogIfNeeded()
+    }
+
+    /// 常驻看门狗：每步只更新时间戳，避免 typeNextCharacter 每 12ms 重建一次 Timer 并注册 RunLoop。
+    /// 用 .common mode 注册，保证用户拖动 scrollView 期间（.tracking）仍会触发。
+    private func startWatchdogIfNeeded() {
+        guard watchdogTimer == nil else { return }
+
+        let timer = Timer(timeInterval: Self.watchdogTickInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            // ⚡️ 超时 4.0 秒，为复杂渲染（如 LaTeX）卡顿留出余量
+            guard CFAbsoluteTimeGetCurrent() - self.lastFeedTimestamp > Self.watchdogTimeout else { return }
             print("🐶 [Watchdog] Task timed out, forcing completion...")
-            self?.forceFinishCurrentTask()
+            self.forceFinishCurrentTask()
         }
+        RunLoop.main.add(timer, forMode: .common)
+        watchdogTimer = timer
+    }
+
+    private func stopWatchdog() {
+        watchdogTimer?.invalidate()
+        watchdogTimer = nil
+    }
+
+    deinit {
+        // 常驻 Timer 由 RunLoop 持有，不 invalidate 会在引擎释放后继续空转
+        watchdogTimer?.invalidate()
     }
 
     /// 超时强制完成当前任务
@@ -275,10 +303,10 @@ class TypewriterEngine {
     }
 
     private func runNext() {
-        watchdogTimer?.invalidate()
-
         guard !isRunning, !taskQueue.isEmpty else {
             if taskQueue.isEmpty {
+                // 队列空闲，停掉常驻 Timer 避免空转
+                stopWatchdog()
                 currentTask = nil
                 onComplete?()
             }
@@ -427,7 +455,9 @@ class TypewriterEngine {
     }
 
     private func finishCurrentTask() {
-        watchdogTimer?.invalidate()
+        // 任务间隔（elementGapDuration）不应计入超时，这里刷新时间戳而非停表；
+        // 队列真正空了由 runNext 停掉常驻 Timer。
+        lastFeedTimestamp = CFAbsoluteTimeGetCurrent()
 
         // ⭐️ 记录当前任务类型，用于判断是否需要添加间隔
         let isBlockTask: Bool
