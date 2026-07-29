@@ -207,6 +207,15 @@ public final class MarkdownViewTextKit: UIView {
     /// 缓存的容器宽度（用于检测宽度变化）
     private var cachedContainerWidth: CGFloat = 0
 
+    /// 供后台解析使用的容器宽度。
+    ///
+    /// 必须在主线程调用后取快照传入后台闭包 —— `bounds` 与 `UIScreen.main.bounds`
+    /// 都是 UIKit 状态，off-main 读取会触发 Main Thread Checker。
+    private func currentContainerWidthForParsing() -> CGFloat {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+    }
+
     /// 配置哈希值（用于检测配置变化）
     private var configurationHash: Int = 0
 
@@ -4015,6 +4024,7 @@ public final class MarkdownViewTextKit: UIView {
             print("[STREAM] 开始流式，文本长度: \(text.count) 字符")
 
             // ⭐️ 新方案：后台预解析整个文本 + 分段显示
+            let containerWidth = currentContainerWidthForParsing()
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { return }
 
@@ -4029,7 +4039,6 @@ public final class MarkdownViewTextKit: UIView {
                 // 2. 一次性解析整个文本
                 let markdownParseStart = CFAbsoluteTimeGetCurrent()
                 let config = self.configuration
-                let containerWidth = UIScreen.main.bounds.width - 32
                 let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
                 let (elements, attachments, tocItems, tocId) = renderer.render(processedMarkdown)
                 let markdownParseTime = CFAbsoluteTimeGetCurrent() - markdownParseStart
@@ -4318,13 +4327,13 @@ public final class MarkdownViewTextKit: UIView {
             print("📝 [Fake-Stream] Parsing chunk \(fakeStreamChunkIndex)/\(fakeStreamChunks.count)...")
 
             // 后台解析当前累积的文本
+            let containerWidth = currentContainerWidthForParsing()
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { return }
 
                 let parseStartTime = CFAbsoluteTimeGetCurrent()
 
                 let config = self.configuration
-                let containerWidth = UIScreen.main.bounds.width - 32
                 let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
                 let (elements, attachments, tocItems, tocId) = renderer.render(textToParse)
 
@@ -4550,12 +4559,12 @@ public final class MarkdownViewTextKit: UIView {
         /// 最终完整解析（确保所有元素都正确显示）
         private func performFinalParse() {
             let fullText = streamFullText
+            let containerWidth = currentContainerWidthForParsing()
 
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { return }
 
                 let config = self.configuration
-                let containerWidth = UIScreen.main.bounds.width - 32
                 let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
                 let (elements, attachments, tocItems, tocId) = renderer.render(fullText)
 
@@ -5346,6 +5355,9 @@ public final class MarkdownViewTextKit: UIView {
     /// 自动检测完整模块并渲染，无需外部预分割
     /// - Parameter data: 网络到达的原始文本数据
     public func appendStreamData(_ data: String) {
+        // 该方法会同步阻塞调用方并直接改动视图层级，必须在主线程调用
+        dispatchPrecondition(condition: .onQueue(.main))
+
         guard isRealStreamingMode else {
             print("⚠️ [RealStream] Not in real streaming mode, call beginRealStreaming() first")
             return
@@ -5375,12 +5387,15 @@ public final class MarkdownViewTextKit: UIView {
     }
 
     /// ⭐️ 同步解析并渲染单个模块（保证顺序）
-    /// 使用串行队列避免竞态条件导致的渲染顺序错乱
+    /// 串行队列的作用是保证多个模块按到达顺序解析，而非把工作卸载到后台
+    /// —— `.sync` 会完整阻塞调用方（主线程）直到解析完成。
     private func parseAndRenderModuleSync(_ moduleText: String) {
         // 记录当前元素数量（在主线程上）
         let previousElementCount = realStreamParsedElementCount
 
-        // ⭐️ 修复：先在后台线程同步解析
+        // UIKit 状态必须在进入队列前于主线程取快照
+        let containerWidth = currentContainerWidthForParsing()
+
         var elements: [MarkdownRenderElement] = []
         var attachments: [(attachment: MarkdownImageAttachment, urlString: String)] = []
         var tocItems: [MarkdownTOCItem] = []
@@ -5398,7 +5413,6 @@ public final class MarkdownViewTextKit: UIView {
 
             // 解析 Markdown
             let config = self.configuration
-            let containerWidth = UIScreen.main.bounds.width - 32
             let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
             let result = renderer.render(processedText)
 
@@ -5470,6 +5484,7 @@ public final class MarkdownViewTextKit: UIView {
     private func parseAndDisplayNewContent() {
         let textToParse = realStreamAccumulatedText
         let previousElementCount = realStreamParsedElementCount
+        let containerWidth = currentContainerWidthForParsing()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self, self.isRealStreamingMode else { return }
@@ -5490,7 +5505,6 @@ public final class MarkdownViewTextKit: UIView {
 
             // 解析 Markdown
             let config = self.configuration
-            let containerWidth = UIScreen.main.bounds.width - 32
             let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
             let (elements, attachments, tocItems, tocId) = renderer.render(processedText)
 
