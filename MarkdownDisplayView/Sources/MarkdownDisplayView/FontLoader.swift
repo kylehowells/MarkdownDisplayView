@@ -57,7 +57,7 @@ public final class FontLoader {
 
         // 获取资源 bundle
         guard let resourceBundle = getResourceBundle() else {
-            print("⚠️ [FontLoader] 无法找到资源 bundle")
+            mdLog("⚠️ [FontLoader] 无法找到资源 bundle")
             return
         }
 
@@ -75,11 +75,11 @@ public final class FontLoader {
 
         isRegistered = true
 
-        print("✅ [FontLoader] 成功注册 \(successCount)/\(fontNames.count) 个字体")
+        mdLog("✅ [FontLoader] 成功注册 \(successCount)/\(fontNames.count) 个字体")
 
         if !failedFonts.isEmpty {
-            print("⚠️ [FontLoader] 以下字体注册失败：")
-            failedFonts.forEach { print("   - \($0)") }
+            mdLog("⚠️ [FontLoader] 以下字体注册失败：")
+            failedFonts.forEach { mdLog("   - \($0)") }
         }
     }
 
@@ -122,7 +122,7 @@ public final class FontLoader {
                 forResource: fontName.replacingOccurrences(of: ".ttf", with: ""),
                 withExtension: "ttf"
             ) else {
-                print("⚠️ [FontLoader] 找不到字体文件：\(fontName)")
+                mdLog("⚠️ [FontLoader] 找不到字体文件：\(fontName)")
                 return false
             }
 
@@ -136,7 +136,7 @@ public final class FontLoader {
     private func registerFontFromURL(_ fontURL: URL, fontName: String) -> Bool {
         guard let fontDataProvider = CGDataProvider(url: fontURL as CFURL),
               let font = CGFont(fontDataProvider) else {
-            print("⚠️ [FontLoader] 无法创建 CGFont：\(fontName)")
+            mdLog("⚠️ [FontLoader] 无法创建 CGFont：\(fontName)")
             return false
         }
 
@@ -148,7 +148,7 @@ public final class FontLoader {
                 let errorDescription = CFErrorCopyDescription(error) as String
                 // 忽略"已注册"的错误
                 if !errorDescription.contains("already registered") {
-                    print("⚠️ [FontLoader] 注册字体失败：\(fontName), 错误：\(errorDescription)")
+                    mdLog("⚠️ [FontLoader] 注册字体失败：\(fontName), 错误：\(errorDescription)")
                 }
             }
             return false

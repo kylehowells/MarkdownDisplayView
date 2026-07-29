@@ -1022,14 +1022,14 @@ final class MarkdownParser: MarkdownParserProtocol {
         let language = codeBlock.language
 
         // [CODEBLOCK_DEBUG] 追踪代码块解析
-        print("[CODEBLOCK_DEBUG] 🔍 renderCodeBlock: lang=\(language ?? "nil"), codeLength=\(code.count), codePreview=\(code.prefix(50).replacingOccurrences(of: "\n", with: "⏎"))")
+        mdLog("[CODEBLOCK_DEBUG] 🔍 renderCodeBlock: lang=\(language ?? "nil"), codeLength=\(code.count), codePreview=\(code.prefix(50).replacingOccurrences(of: "\n", with: "⏎"))")
 
         // 应用语法高亮
         let highlightedCode = applySyntaxHighlighting(to: code, language: language)
         let result = NSMutableAttributedString(attributedString: highlightedCode)
 
         // [CODEBLOCK_DEBUG] 追踪高亮后长度
-        print("[CODEBLOCK_DEBUG] 🔍 renderCodeBlock: highlightedLength=\(result.length)")
+        mdLog("[CODEBLOCK_DEBUG] 🔍 renderCodeBlock: highlightedLength=\(result.length)")
 
         // 添加段落样式
         let paragraphStyle = NSMutableParagraphStyle()

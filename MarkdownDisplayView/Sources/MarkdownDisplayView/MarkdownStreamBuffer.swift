@@ -73,7 +73,7 @@ final class MarkdownStreamBuffer {
         lastSafePosition = 0
         committedElementCount = 0
         moduleBoundaries = []
-        print("[StreamBuffer] 🔄 Buffer reset")
+        mdLog("[StreamBuffer] 🔄 Buffer reset")
     }
 
     /// 更新容器宽度
@@ -91,7 +91,7 @@ final class MarkdownStreamBuffer {
     /// - Returns: 检测结果，包含可渲染的完整模块
     func append(_ text: String) -> ModuleDetectionResult {
         accumulatedText += text
-        print("[StreamBuffer] 📥 Appended \(text.count) chars, total: \(accumulatedText.count) chars")
+        mdLog("[StreamBuffer] 📥 Appended \(text.count) chars, total: \(accumulatedText.count) chars")
 
         return detectCompleteModules()
     }
@@ -100,7 +100,7 @@ final class MarkdownStreamBuffer {
     /// - Returns: 剩余的所有文本
     func flush() -> String {
         let remaining = String(accumulatedText.dropFirst(lastSafePosition))
-        print("[StreamBuffer] 🚿 Flushing remaining: \(remaining.count) chars")
+        mdLog("[StreamBuffer] 🚿 Flushing remaining: \(remaining.count) chars")
         lastSafePosition = accumulatedText.count
         return remaining
     }
@@ -122,7 +122,7 @@ final class MarkdownStreamBuffer {
 
         // 2. 如果有未闭合的结构，需要等待
         if let pending = pendingInfo {
-            print("[StreamBuffer] ⏳ Pending structure detected: \(pending.rawValue)")
+            mdLog("[StreamBuffer] ⏳ Pending structure detected: \(pending.rawValue)")
             // ⭐️ 移除频繁的状态回调，避免 UI 闪烁
             return ModuleDetectionResult(
                 completeModules: [],
@@ -145,7 +145,7 @@ final class MarkdownStreamBuffer {
                 let completeText = remainingText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !completeText.isEmpty {
                     lastSafePosition = textToAnalyze.count
-                    print("[StreamBuffer] ✅ No heading found, but submitting text block: \(completeText.prefix(50))...")
+                    mdLog("[StreamBuffer] ✅ No heading found, but submitting text block: \(completeText.prefix(50))...")
                     return ModuleDetectionResult(
                         completeModules: [completeText],
                         pendingText: "",
@@ -173,7 +173,7 @@ final class MarkdownStreamBuffer {
                 let moduleText = extractModule(from: textToAnalyze, start: lastBoundary, end: boundary)
                 if !moduleText.isEmpty {
                     completeModules.append(moduleText)
-                    print("[StreamBuffer] ✅ Complete module found: \(moduleText.prefix(50))... (\(moduleText.count) chars)")
+                    mdLog("[StreamBuffer] ✅ Complete module found: \(moduleText.prefix(50))... (\(moduleText.count) chars)")
                 }
             }
             lastBoundary = boundary
@@ -209,7 +209,7 @@ final class MarkdownStreamBuffer {
             if backtickSuffix.hasSuffix("`") && !backtickSuffix.hasSuffix("```") {
                 let backtickCount = backtickSuffix.reversed().prefix(while: { $0 == "`" }).count
                 if backtickCount == 1 || backtickCount == 2 {
-                    print("[StreamBuffer] ⏳ Incomplete backtick detected at end: \(backtickCount) backticks")
+                    mdLog("[StreamBuffer] ⏳ Incomplete backtick detected at end: \(backtickCount) backticks")
                     return .codeBlock
                 }
             }
@@ -379,9 +379,9 @@ final class MarkdownStreamBuffer {
             boundaries = paragraphBoundaries
         }
 
-        print("[StreamBuffer] 📊 Strategy: \(headingLevel), H1=\(h1Positions.count), H2=\(h2Positions.count), startPos=\(startPosition)")
+        mdLog("[StreamBuffer] 📊 Strategy: \(headingLevel), H1=\(h1Positions.count), H2=\(h2Positions.count), startPos=\(startPosition)")
 
-        print("[StreamBuffer] 📊 Found \(boundaries.count) boundaries: \(boundaries)")
+        mdLog("[StreamBuffer] 📊 Found \(boundaries.count) boundaries: \(boundaries)")
         return boundaries
     }
 

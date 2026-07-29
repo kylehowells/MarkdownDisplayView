@@ -900,7 +900,7 @@ class LatexParser {
                 // 如果 parseNodes 没有消耗 token，且我们也没遇到 & 或 \\ 或 \end，说明遇到了无法解析的垃圾 Token
                 if index == loopStartIndex {
                     // 强制跳过一个 token，防止死循环
-                    // print("⚠️ Warning: Skipping unexpected token in matrix: \(tokens[index].content)")
+                    // mdLog("⚠️ Warning: Skipping unexpected token in matrix: \(tokens[index].content)")
                     index += 1
                 }
             }
