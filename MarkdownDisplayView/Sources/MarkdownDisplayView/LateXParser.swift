@@ -816,30 +816,6 @@ class LatexParser {
             return parseAtom(font: font) ?? TextNode(text: "", font: font)
         }
     }
-    // 辅助：根据文本内容选择合适的 KaTeX 字体
-    private func getFont(for text: String, baseSize: CGFloat) -> UIFont {
-        // 1. 如果是数字或特殊符号，使用 Main-Regular
-        // 简单的判断：如果首字符是数字，或者是 +-= 等符号
-        if text.first?.isNumber == true || "+-=()[]".contains(text.first ?? " ") {
-            return UIFont(name: "KaTeXMain-Regular", size: baseSize) ?? UIFont.systemFont(ofSize: baseSize)
-        }
-        
-        // 2. 如果是希腊字母或特殊命令转换来的符号 (如 α, ∑)，通常也在 Main 里
-        // 检查是否是 LaTeXSymbols 里的值
-        if LatexSymbols.map.values.contains(text) {
-             return UIFont(name: "KaTeXMain-Regular", size: baseSize) ?? UIFont.systemFont(ofSize: baseSize)
-        }
-        
-        // 3. 剩下的通常是变量 (x, y, a, b)，使用 Math-Italic
-        // 注意：如果是 "sin", "cos" 这种函数名，通常需要用 Main-Regular，这里简化处理暂且归为 Italic，
-        // 严谨的做法是解析器识别 function 类型。
-        if text.count == 1 && text.first?.isLetter == true {
-            return UIFont(name: "KaTeXMath-Italic", size: baseSize) ?? UIFont.italicSystemFont(ofSize: baseSize)
-        }
-        
-        // 默认回退
-        return UIFont(name: "KaTeXMain-Regular", size: baseSize) ?? UIFont.systemFont(ofSize: baseSize)
-    }
     // 解析矩阵
     // 替换原有的 parseMatrix 方法
         private func parseMatrix(font: UIFont) -> FormulaRenderNode {
