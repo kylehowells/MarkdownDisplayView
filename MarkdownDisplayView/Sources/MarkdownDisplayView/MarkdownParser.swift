@@ -424,8 +424,8 @@ final class MarkdownParser: MarkdownParserProtocol {
         let openPattern = "<details>\\s*<summary>(.*?)</summary>"
         let closePattern = "</details>"
         
-        let openRegex = try? NSRegularExpression(pattern: openPattern, options: [.dotMatchesLineSeparators, .caseInsensitive])
-        let closeRegex = try? NSRegularExpression(pattern: closePattern, options: [.caseInsensitive])
+        let openRegex = cachedRegex(openPattern, options: [.dotMatchesLineSeparators, .caseInsensitive])
+        let closeRegex = cachedRegex(closePattern, options: [.caseInsensitive])
         
         for element in elements {
             var processed = false
@@ -1276,7 +1276,7 @@ final class MarkdownParser: MarkdownParserProtocol {
     }
 
     private func applyPatternGroup(_ pattern: String, to attrString: NSMutableAttributedString, color: UIColor, groupIndex: Int = 1) {
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else { return }
+        guard let regex = cachedRegex(pattern) else { return }
         let range = NSRange(location: 0, length: attrString.length)
         regex.enumerateMatches(in: attrString.string, options: [], range: range) { match, _, _ in
             if let matchRange = match?.range(at: groupIndex), matchRange.location != NSNotFound {
