@@ -97,7 +97,7 @@ Config.local.json 结构如下：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.1")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.5")
 ]
 ```
 
@@ -118,7 +118,7 @@ dependencies: [
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 1.8.1'
+pod 'MarkdownDisplayKit', '~> 1.8.5'
 ```
 
 然后运行:
@@ -907,6 +907,19 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 **解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
 
 ## 更新日志
+
+### 1.8.5 (2026-07-30)
+
+- ⚡ **流式缓存器增量扫描** - `MarkdownStreamBuffer.append()` 由每次全文重扫改为只扫描未提交尾部，消除 O(n²) 开销，长文本流式输入实测提速 1.6~3.8 倍；补齐 chunk 边界无关性差分测试锁定行为不变量。
+- ⚡ **TextKit 2 增量排版与测高** - 打字机逐字追加不再整篇替换 attributedString，改为事务内增量修改；测高改用 `usageBoundsForTextContainer`，消除流式追加场景下的 O(n²) 卡顿。
+- ⚡ **LaTeX 公式解析去重** - 单个公式的重复解析从 6 次降到 1 次，`LatexMathView` 内容未变时短路跳过。
+- 🐛 **修复回归审查合入后的三处渲染缺陷** - 恢复容器宽度取值语义、修复 `draw(_:)` 脏矩形裁剪导致内容截断、离屏占位替换新增淡入过渡，避免闪烁。
+- 🐛 **消除后台线程 UIKit 访问** - 统一在主线程读取容器宽度快照后再进入后台解析，规避潜在崩溃风险。
+- 🐛 **流式自动滚动优化** - 增加用户接管判定与节流，用户上滑回看历史内容时不再被强制拽回底部。
+- ⚡ **打字机看门狗改为常驻 Timer** - 避免每步重建 Timer，且在 `.common` RunLoop mode 下滚动期间仍可正常兜底。
+- ⚡ **正则缓存覆盖补全** - 详情块与代码高亮的正则匹配统一走已有的 `cachedRegex`。
+- 🧹 **代码清理** - 删除全仓库零调用的增量解析死代码；251 处调试日志加 `#if DEBUG` 守卫，降低 Release 包的日志开销。
+- ✨ **AI 对话示例增强** - CocoaPods/SPM 示例新增聊天历史记录能力，并优化交互细节。
 
 ### 1.8.1 (2026-07-15)
 

@@ -90,7 +90,7 @@ Config.local.json structure:
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.1")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.5")
 ]
 ```
 
@@ -100,7 +100,7 @@ dependencies: [
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 1.8.1'
+pod 'MarkdownDisplayKit', '~> 1.8.5'
 ```
 
 Then run:
@@ -889,6 +889,19 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 **Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
 
 ## Changelog
+
+### 1.8.5 (2026-07-30)
+
+- ⚡ **Incremental Stream Buffer Scanning** - `MarkdownStreamBuffer.append()` now scans only the uncommitted tail instead of rescanning the full accumulated text, eliminating O(n²) growth; measured 1.6x-3.8x speedup on long streaming input. Added chunk-boundary-independence differential tests to lock the behavior invariant.
+- ⚡ **TextKit 2 Incremental Layout & Height Measurement** - Typewriter append no longer replaces the whole attributed string per character; edits happen incrementally within an editing transaction. Height measurement now uses `usageBoundsForTextContainer`, removing the O(n²) bottleneck during streaming append.
+- ⚡ **LaTeX Formula Parse Deduplication** - Reduced repeated parsing of a single formula from 6 times to 1; `LatexMathView` now short-circuits when content is unchanged.
+- 🐛 **Fixed Three Rendering Regressions Surfaced After Code Review Merge** - Restored correct container width semantics, fixed content truncation caused by `draw(_:)` dirty-rect clipping, and added a fade-in transition when off-screen placeholders are replaced to avoid flicker.
+- 🐛 **Eliminated Background-Thread UIKit Access** - Container width is now snapshotted on the main thread before background parsing begins, removing a potential crash risk.
+- 🐛 **Streaming Auto-Scroll Improvements** - Added user takeover detection and throttling so scrolling back to read history is no longer forced back to the bottom.
+- ⚡ **Typewriter Watchdog Uses a Persistent Timer** - Avoids rebuilding a Timer on every step, and stays reliable during scrolling via `.common` RunLoop mode.
+- ⚡ **Regex Cache Coverage** - Details block and code-highlighting regex matching now consistently use the existing `cachedRegex`.
+- 🧹 **Code Cleanup** - Removed dead incremental-parsing code with zero call sites across the repo; gated 251 debug log statements behind `#if DEBUG` to reduce release-build logging overhead.
+- ✨ **Enhanced AI Chat Examples** - CocoaPods/SPM examples now include chat history support with refined interaction details.
 
 ### 1.8.1 (2026-07-15)
 
