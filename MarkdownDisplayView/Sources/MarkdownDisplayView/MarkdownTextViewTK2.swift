@@ -59,9 +59,6 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     /// 当前内容是否含附件，用于跳过无附件时的全文片段遍历
     private var contentHasAttachments = false
 
-    /// 上次触发重绘时的尺寸，避免 layoutSubviews 无条件整篇重绘
-    private var lastDisplayedBoundsSize: CGSize = .zero
-
     override init(frame: CGRect) {
         textContentStorage = NSTextContentStorage()
         textLayoutManager = NSTextLayoutManager()
@@ -162,8 +159,11 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
                 heightConstraint?.constant = newHeight
                 calculatedHeight = newHeight
                 invalidateIntrinsicContentSize() // 通知系统 update constraints
-                setNeedsDisplay() // ⭐️ 高度变化后强制重绘，防止内容空白
             }
+
+            // ⭐️ 无条件重绘：高度没变也可能是内容变了（同一行内追加），
+            // 且 contentMode 为 .topLeft 时视图长高本身不会触发 draw。
+            setNeedsDisplay()
 
             // ⭐️ 布局完成后，更新附件视图位置
             layoutAttachments()
@@ -334,12 +334,11 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         // ⭐️ 修复 3: 尺寸变化时强制重绘
         // 当 StackView 展开时，bounds 从 0 变为有值，但 TextKit 可能需要一个显式的重绘信号，
         // 尤其是在 backgroundColor 为 clear 的情况下。
-        // 仅在尺寸真的变了时才重绘：内容变化的重绘由 updateContent / applyLayout /
-        // revealCharacter 各自显式触发，此处无条件重绘会让流式期间每次布局都整篇 draw 一遍。
-        if bounds.size != lastDisplayedBoundsSize {
-            lastDisplayedBoundsSize = bounds.size
-            setNeedsDisplay()
-        }
+        //
+        // 这里刻意保持无条件：contentMode 为 .topLeft 时视图长高不会自动触发 draw，
+        // 而 applyLayout 的重算被 `force || widthChanged || calculatedHeight == 0` 挡住时
+        // 也不会重绘，此处是最后的兜底。
+        setNeedsDisplay()
     }
 
     override func draw(_ rect: CGRect) {
@@ -347,16 +346,15 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
 
         guard let context = UIGraphicsGetCurrentContext() else { return }
 
+        // 不能按 rect 裁剪片段、也不能提前终止枚举：
+        // applyLayout 是"先量高、再改约束"，约束要到下一个布局周期才生效，
+        // 且 append 打字机起点会把高度显式设成 1pt，所以 draw 期间 bounds 常常
+        // 远小于内容高度。据此裁剪会只画出第一个片段。
         var hasFragments = false
         textLayoutManager.enumerateTextLayoutFragments(from: textLayoutManager.documentRange.location, options: [.ensuresLayout]) { fragment in
             hasFragments = true
-            let frame = fragment.layoutFragmentFrame
-            // 只绘制与脏矩形相交的片段；片段按文档顺序自上而下，
-            // 越过脏矩形底边后即可停止枚举
-            if frame.intersects(rect) {
-                fragment.draw(at: frame.origin, in: context)
-            }
-            return frame.minY <= rect.maxY
+            fragment.draw(at: fragment.layoutFragmentFrame.origin, in: context)
+            return true
         }
 
         // Fallback: 如果 TextKit 2 没有生成任何片段（但有文本），说明布局引擎在视图隐藏时可能未正确更新
@@ -542,7 +540,7 @@ extension MarkdownTextViewTK2 {
                 }
             } else {
                 // ⭐️ 方案 A：即使不更新布局，也强制重绘以实现匀速显示
-                setNeedsDisplayForTail()
+                setNeedsDisplay()
             }
 
             return (true, false)
@@ -578,50 +576,12 @@ extension MarkdownTextViewTK2 {
         // 更新上次显示位置
         lastRevealedIndex = endIndex
 
-        // 强制重绘：只脏化被揭示范围所在的区域
-        setNeedsDisplay(dirtyRect(for: revealedRange))
+        // 强制重绘。不做局部脏化：UIKit 会把同一帧内的多次 setNeedsDisplay(rect)
+        // 合并成整个 bounds 的一次 draw，省不下来，反而要承担矩形算错就漏画的风险。
+        setNeedsDisplay()
 
         // reveal 模式预先保留完整布局，显示字符不会改变高度。
         return (true, false)
-    }
-
-    /// append 模式下只有末尾会变化，把重绘范围收敛到"最后一个片段顶部 ~ 视图底部"。
-    /// 高度真的变了时 applyLayout / layoutSubviews 会各自触发整篇重绘，故此处无需兜全。
-    private func setNeedsDisplayForTail() {
-        let contentHeight = heightConstraint?.constant ?? calculatedHeight
-        guard contentHeight > 0, bounds.width > 0,
-              let lastFragment = textLayoutManager.textLayoutFragment(
-                  for: CGPoint(x: 0, y: max(0, contentHeight - 1))
-              ) else {
-            setNeedsDisplay()
-            return
-        }
-
-        let top = max(0, lastFragment.layoutFragmentFrame.minY)
-        setNeedsDisplay(CGRect(x: 0, y: top, width: bounds.width, height: max(0, bounds.maxY - top)))
-    }
-
-    /// 把字符范围换算成需要重绘的矩形；换算不出来时退回整篇。
-    private func dirtyRect(for range: NSRange) -> CGRect {
-        let documentStart = textLayoutManager.documentRange.location
-        guard bounds.width > 0,
-              let start = textLayoutManager.location(documentStart, offsetBy: range.location),
-              let startFragment = textLayoutManager.textLayoutFragment(for: start) else {
-            return bounds
-        }
-
-        var minY = startFragment.layoutFragmentFrame.minY
-        var maxY = startFragment.layoutFragmentFrame.maxY
-
-        if let end = textLayoutManager.location(documentStart, offsetBy: max(range.location, NSMaxRange(range) - 1)),
-           let endFragment = textLayoutManager.textLayoutFragment(for: end) {
-            minY = min(minY, endFragment.layoutFragmentFrame.minY)
-            maxY = max(maxY, endFragment.layoutFragmentFrame.maxY)
-        } else {
-            maxY = bounds.maxY
-        }
-
-        return CGRect(x: 0, y: minY, width: bounds.width, height: max(0, maxY - minY))
     }
 }
 

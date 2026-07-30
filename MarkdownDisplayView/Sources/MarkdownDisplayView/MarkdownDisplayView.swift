@@ -209,11 +209,14 @@ public final class MarkdownViewTextKit: UIView {
 
     /// 供后台解析使用的容器宽度。
     ///
-    /// 必须在主线程调用后取快照传入后台闭包 —— `bounds` 与 `UIScreen.main.bounds`
-    /// 都是 UIKit 状态，off-main 读取会触发 Main Thread Checker。
+    /// 必须在主线程调用后取快照传入后台闭包 —— `UIScreen.main.bounds` 是 UIKit 状态，
+    /// off-main 读取会触发 Main Thread Checker。
+    ///
+    /// 刻意不取 `bounds.width`：这些调用点都在流式解析路径上，此时自身可能尚未完成布局，
+    /// `bounds.width` 会是未定形的中间值，据此排版会把正文压成每行一两个字。
     private func currentContainerWidthForParsing() -> CGFloat {
         dispatchPrecondition(condition: .onQueue(.main))
-        return bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+        return UIScreen.main.bounds.width - 32
     }
 
     /// 配置哈希值（用于检测配置变化）
@@ -1759,6 +1762,7 @@ public final class MarkdownViewTextKit: UIView {
 
                 // ⭐️ 关键优化：只追加离屏元素，不重新 Diff 首屏元素
                 // 这样首屏视图保持不变，避免布局跳动
+                var newlyAddedViews: [UIView] = []
                 for (index, element) in offscreenElementsCaptured.enumerated() {
                     let createStart = CFAbsoluteTimeGetCurrent()
                     let view = self.createView(
@@ -1770,7 +1774,10 @@ public final class MarkdownViewTextKit: UIView {
                     // 设置 tag 便于调试
                     view.tag = 1000 + firstScreenCountCaptured + index
 
+                    // 占位符是纯空白，替换成真实内容是硬切；淡入让这个替换不那么突兀
+                    view.alpha = 0
                     self.contentStackView.addArrangedSubview(view)
+                    newlyAddedViews.append(view)
 
                     // 注册 heading
                     if case .heading(let id, _) = element {
@@ -1784,6 +1791,10 @@ public final class MarkdownViewTextKit: UIView {
                     if createTime > 10 {
                         mdLog("⚡️ [Offscreen] Created \(self.elementTypeString(element)) in \(String(format: "%.1f", createTime))ms")
                     }
+                }
+
+                UIView.animate(withDuration: 0.15) {
+                    newlyAddedViews.forEach { $0.alpha = 1 }
                 }
 
                 // 更新 oldElements 为完整元素列表
