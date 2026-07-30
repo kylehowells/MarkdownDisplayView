@@ -2703,6 +2703,8 @@ public final class MarkdownViewTextKit: UIView {
 
         // 如果通过 ViewProvider 获取到了视图，使用它；否则回退到直接创建
         let formulaView: UIView
+        // 回退路径能直接拿到 createScrollableView 算出的尺寸，避免再解析一遍公式
+        var formulaSizeFromFallback: CGSize?
         if let view = attachmentView {
             print("[STREAM] 📐 使用 ViewProvider 视图")
             formulaView = view
@@ -2710,13 +2712,15 @@ public final class MarkdownViewTextKit: UIView {
             // 回退方案：直接创建
             print("[STREAM] 📐 回退方案: 直接创建 LatexMathView")
             let fallbackStart = CFAbsoluteTimeGetCurrent()
-            formulaView = LatexMathView.createScrollableView(
+            let created = LatexMathView.createScrollableView(
                 latex: latex,
                 fontSize: configuration.latexFontSize,
                 maxWidth: width - configuration.latexPadding * 2,
                 padding: configuration.latexPadding,
                 backgroundColor: configuration.latexBackgroundColor
             )
+            formulaView = created.view
+            formulaSizeFromFallback = created.contentSize
             print("[STREAM] 📐 回退创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - fallbackStart) * 1000))ms")
         }
 
@@ -2725,7 +2729,7 @@ public final class MarkdownViewTextKit: UIView {
 
         // 获取公式视图的实际尺寸
         let sizeCalcStart = CFAbsoluteTimeGetCurrent()
-        let formulaSize = LatexMathView.calculateSize(
+        let formulaSize = formulaSizeFromFallback ?? LatexMathView.calculateSize(
             latex: latex,
             fontSize: configuration.latexFontSize,
             padding: configuration.latexPadding

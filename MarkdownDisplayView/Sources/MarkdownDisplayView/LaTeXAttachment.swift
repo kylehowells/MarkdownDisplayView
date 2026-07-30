@@ -153,18 +153,10 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
 
         print("[STREAM] 📐📐📐 loadView() 开始创建公式视图: \(attachment.latex.prefix(30))...")
 
-        // 计算公式尺寸
-        let sizeStart = CFAbsoluteTimeGetCurrent()
-        let formulaSize = LatexMathView.calculateSize(
-            latex: attachment.latex,
-            fontSize: attachment.fontSize,
-            padding: attachment.padding
-        )
-        print("[STREAM] 📐📐📐 loadView 尺寸计算耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - sizeStart) * 1000))ms")
-
-        // 使用 LatexMathView 的 createScrollableView 方法创建视图
+        // 创建视图并复用其内容尺寸 —— createScrollableView 内部已解析过公式，
+        // 再单独调 calculateSize 会把同一个公式重复解析一遍。
         let viewStart = CFAbsoluteTimeGetCurrent()
-        let formulaView = LatexMathView.createScrollableView(
+        let (formulaView, formulaSize) = LatexMathView.createScrollableView(
             latex: attachment.latex,
             fontSize: attachment.fontSize,
             maxWidth: attachment.maxWidth,
