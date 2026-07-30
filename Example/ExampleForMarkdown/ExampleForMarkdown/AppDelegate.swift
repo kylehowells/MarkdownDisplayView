@@ -17,6 +17,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // 注册自定义扩展示例
         MarkdownCustomExtensionManager.shared.registerVideoExtension()   // 视频扩展（行内语法）
         MarkdownCustomExtensionManager.shared.registerMermaidRenderer()  // Mermaid 渲染器（代码块）
+        MarkdownCustomExtensionManager.shared.registerEChartsExtension() // ECharts（HTML 风格自定义标签）
         return true
     }
 
@@ -36,4 +37,3 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
 
 }
-

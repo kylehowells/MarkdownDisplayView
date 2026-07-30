@@ -861,6 +861,313 @@ let sampleMarkdown = """
           更多...
     ```    
 
+    ## 12.4 ECharts
+
+    使用 HTML 风格的自定义标签，通过 `MarkdownCustomParser` 解析 ECharts JSON 配置：
+
+    ### 12.4.1 柱状图
+
+    <echarts height="320">
+    {
+      "tooltip": {},
+      "xAxis": {
+        "type": "category",
+        "data": ["周一", "周二", "周三", "周四", "周五"]
+      },
+      "yAxis": {
+        "type": "value"
+      },
+      "series": [{
+        "name": "访问量",
+        "type": "bar",
+        "data": [120, 200, 150, 80, 170],
+        "itemStyle": {
+          "color": "#5470c6",
+          "borderRadius": [6, 6, 0, 0]
+        }
+      }]
+    }
+    </echarts>
+
+    ### 12.4.2 饼图
+
+    <echarts height="340">
+    {
+      "tooltip": {
+        "trigger": "item"
+      },
+      "legend": {
+        "bottom": 8
+      },
+      "series": [{
+        "name": "访问来源",
+        "type": "pie",
+        "radius": ["35%", "65%"],
+        "center": ["50%", "45%"],
+        "data": [
+          { "value": 1048, "name": "搜索引擎" },
+          { "value": 735, "name": "直接访问" },
+          { "value": 580, "name": "邮件营销" },
+          { "value": 484, "name": "联盟广告" },
+          { "value": 300, "name": "视频广告" }
+        ]
+      }]
+    }
+    </echarts>
+
+    ### 12.4.3 折线图
+
+    <echarts height="320">
+    {
+      "tooltip": {
+        "trigger": "axis"
+      },
+      "xAxis": {
+        "type": "category",
+        "boundaryGap": false,
+        "data": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+      },
+      "yAxis": {
+        "type": "value"
+      },
+      "series": [{
+        "name": "订单量",
+        "type": "line",
+        "smooth": true,
+        "data": [150, 230, 224, 218, 135, 147, 260]
+      }]
+    }
+    </echarts>
+
+    ### 12.4.4 散点图
+
+    <echarts height="320">
+    {
+      "tooltip": {
+        "trigger": "item"
+      },
+      "xAxis": {
+        "name": "身高(cm)",
+        "type": "value",
+        "scale": true
+      },
+      "yAxis": {
+        "name": "体重(kg)",
+        "type": "value",
+        "scale": true
+      },
+      "series": [{
+        "name": "样本",
+        "type": "scatter",
+        "symbolSize": 12,
+        "data": [
+          [158, 51], [162, 55], [165, 58], [168, 62],
+          [170, 65], [172, 68], [175, 72], [178, 74],
+          [180, 79], [183, 82], [185, 88]
+        ]
+      }]
+    }
+    </echarts>
+
+    ### 12.4.5 堆叠面积图
+
+    <echarts height="340">
+    {
+      "tooltip": {
+        "trigger": "axis"
+      },
+      "legend": {
+        "data": ["邮件", "广告", "搜索"]
+      },
+      "xAxis": {
+        "type": "category",
+        "boundaryGap": false,
+        "data": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+      },
+      "yAxis": {
+        "type": "value"
+      },
+      "series": [
+        {
+          "name": "邮件",
+          "type": "line",
+          "stack": "总量",
+          "areaStyle": {},
+          "data": [120, 132, 101, 134, 90, 230, 210]
+        },
+        {
+          "name": "广告",
+          "type": "line",
+          "stack": "总量",
+          "areaStyle": {},
+          "data": [220, 182, 191, 234, 290, 330, 310]
+        },
+        {
+          "name": "搜索",
+          "type": "line",
+          "stack": "总量",
+          "areaStyle": {},
+          "data": [150, 232, 201, 154, 190, 330, 410]
+        }
+      ]
+    }
+    </echarts>
+
+    ### 12.4.6 K 线图
+
+    <echarts height="360">
+    {
+      "tooltip": {
+        "trigger": "axis"
+      },
+      "grid": {
+        "left": 48,
+        "right": 24,
+        "bottom": 40
+      },
+      "xAxis": {
+        "type": "category",
+        "data": ["7/21", "7/22", "7/23", "7/24", "7/25", "7/28", "7/29", "7/30"]
+      },
+      "yAxis": {
+        "type": "value",
+        "scale": true
+      },
+      "series": [{
+        "name": "日 K",
+        "type": "candlestick",
+        "data": [
+          [20, 34, 10, 38],
+          [40, 35, 30, 50],
+          [31, 38, 28, 44],
+          [38, 36, 33, 42],
+          [36, 45, 35, 49],
+          [45, 44, 40, 48],
+          [44, 52, 42, 55],
+          [52, 58, 49, 61]
+        ]
+      }]
+    }
+    </echarts>
+
+    ### 12.4.7 直方图
+
+    将连续数据按区间分桶后，使用柱状系列展示频数：
+
+    <echarts height="320">
+    {
+      "tooltip": {
+        "trigger": "axis"
+      },
+      "xAxis": {
+        "name": "数值区间",
+        "type": "category",
+        "data": ["0–10", "10–20", "20–30", "30–40", "40–50", "50–60"]
+      },
+      "yAxis": {
+        "name": "频数",
+        "type": "value"
+      },
+      "series": [{
+        "name": "频数",
+        "type": "bar",
+        "barWidth": "96%",
+        "data": [2, 8, 15, 22, 11, 4],
+        "itemStyle": {
+          "color": "#91cc75"
+        }
+      }]
+    }
+    </echarts>
+
+    ### 12.4.8 关系图
+
+    <echarts height="380">
+    {
+      "tooltip": {},
+      "legend": [{
+        "data": ["产品", "服务", "数据"]
+      }],
+      "series": [{
+        "type": "graph",
+        "layout": "circular",
+        "roam": true,
+        "label": {
+          "show": true
+        },
+        "categories": [
+          { "name": "产品" },
+          { "name": "服务" },
+          { "name": "数据" }
+        ],
+        "data": [
+          { "name": "Markdown", "symbolSize": 58, "category": 0 },
+          { "name": "渲染器", "symbolSize": 46, "category": 1 },
+          { "name": "解析器", "symbolSize": 46, "category": 1 },
+          { "name": "主题", "symbolSize": 38, "category": 0 },
+          { "name": "AST", "symbolSize": 38, "category": 2 },
+          { "name": "缓存", "symbolSize": 38, "category": 2 }
+        ],
+        "links": [
+          { "source": "Markdown", "target": "渲染器" },
+          { "source": "Markdown", "target": "解析器" },
+          { "source": "渲染器", "target": "主题" },
+          { "source": "解析器", "target": "AST" },
+          { "source": "渲染器", "target": "缓存" },
+          { "source": "AST", "target": "缓存" }
+        ],
+        "lineStyle": {
+          "curveness": 0.15
+        }
+      }]
+    }
+    </echarts>
+
+    ### 12.4.9 热力图
+
+    <echarts height="380">
+    {
+      "tooltip": {
+        "position": "top"
+      },
+      "grid": {
+        "top": 24,
+        "left": 58,
+        "right": 20,
+        "bottom": 82
+      },
+      "xAxis": {
+        "type": "category",
+        "data": ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+      },
+      "yAxis": {
+        "type": "category",
+        "data": ["上午", "中午", "下午", "晚上"]
+      },
+      "visualMap": {
+        "min": 0,
+        "max": 10,
+        "calculable": true,
+        "orient": "horizontal",
+        "left": "center",
+        "bottom": 8
+      },
+      "series": [{
+        "name": "活跃度",
+        "type": "heatmap",
+        "data": [
+          [0, 0, 2], [1, 0, 4], [2, 0, 6], [3, 0, 5], [4, 0, 7], [5, 0, 3], [6, 0, 2],
+          [0, 1, 5], [1, 1, 7], [2, 1, 8], [3, 1, 6], [4, 1, 9], [5, 1, 4], [6, 1, 3],
+          [0, 2, 3], [1, 2, 5], [2, 2, 7], [3, 2, 8], [4, 2, 6], [5, 2, 5], [6, 2, 4],
+          [0, 3, 6], [1, 3, 8], [2, 3, 9], [3, 3, 7], [4, 3, 10], [5, 3, 8], [6, 3, 6]
+        ],
+        "label": {
+          "show": true
+        }
+      }]
+    }
+    </echarts>
+
     ---
 
     # 十三、混合内容测试
