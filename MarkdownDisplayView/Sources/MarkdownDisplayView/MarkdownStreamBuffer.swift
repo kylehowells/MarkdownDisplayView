@@ -30,6 +30,39 @@ final class MarkdownStreamBuffer {
         let pendingType: PendingStructureType?
     }
 
+    // MARK: - 分隔符增量计数
+
+    /// 贪婪不重叠地增量统计某个分隔符出现了多少次。
+    ///
+    /// 分隔符可能被 chunk 边界切断（上一片段结尾是 "``"、本片段开头是 "`"），
+    /// 因此保留一段"未被任何匹配消耗掉"的尾巴，与下一片段拼接后再扫。尾巴长度取
+    /// `pattern.count - 1`，短于分隔符本身，所以其中不可能藏着已经计过数的匹配。
+    ///
+    /// 计数语义必须与原先 `NSString.range(of:)` 逐次跳过匹配长度的写法一致：
+    /// 4 个连续反引号只算 1 个围栏，6 个算 2 个。
+    private struct DelimiterCounter {
+        private let pattern: String
+        private var count = 0
+        private var carry = ""
+
+        init(pattern: String) {
+            self.pattern = pattern
+        }
+
+        /// 奇数次出现意味着结构未闭合
+        var isBalanced: Bool { count % 2 == 0 }
+
+        mutating func consume(_ chunk: String) {
+            let segment = carry + chunk
+            var searchStart = segment.startIndex
+            while let found = segment.range(of: pattern, range: searchStart..<segment.endIndex) {
+                count += 1
+                searchStart = found.upperBound
+            }
+            carry = String(segment[searchStart...].suffix(pattern.count - 1))
+        }
+    }
+
     // MARK: - Properties
 
     /// 累积的缓存文本
@@ -41,8 +74,32 @@ final class MarkdownStreamBuffer {
     /// 已提交渲染的元素数量
     private(set) var committedElementCount: Int = 0
 
-    /// 上次检测到的模块边界位置列表
-    private var moduleBoundaries: [Int] = []
+    // MARK: - 增量扫描状态
+    //
+    // 已提交前缀 [0, lastSafePosition) 不会再变化，因此它对检测结果的贡献可以一次性固化，
+    // 之后每次 append 只需要扫描未提交的尾部。尾部长度由模块大小决定、与整段回复的总长度
+    // 无关 —— 这是把"每个 token 重扫全文"降为常量级的关键。
+    //
+    // 分隔符奇偶与"最后一个非空行"连未提交尾部都不用整段重扫：它们只依赖新到达的片段，
+    // 于是未闭合代码块这种"尾部会一直变长"的场景也不会退化。
+
+    /// 未提交的尾部文本，即 accumulatedText 中 [lastSafePosition, 末尾) 的部分
+    private var uncommittedText: String = ""
+
+    /// 已提交前缀结束处是否正处于代码块内部
+    private var isInsideCodeBlockAtSafePosition = false
+
+    /// 全文中 ``` 的出现次数（增量维护，奇数表示代码块未闭合）
+    private var fenceCounter = DelimiterCounter(pattern: "```")
+
+    /// 全文中 $$ 的出现次数（增量维护，奇数表示公式块未闭合）
+    private var dollarCounter = DelimiterCounter(pattern: "$$")
+
+    /// 尚未见到换行的尾部残段
+    private var currentLine = ""
+
+    /// 已换行收尾的行里最后一个非空行（表格检测只需要它）
+    private var lastNonEmptyCompletedLine = ""
 
     /// 最小模块长度（防止过于频繁的模块检测）
     private var minModuleLength: Int
@@ -72,7 +129,12 @@ final class MarkdownStreamBuffer {
         accumulatedText = ""
         lastSafePosition = 0
         committedElementCount = 0
-        moduleBoundaries = []
+        uncommittedText = ""
+        isInsideCodeBlockAtSafePosition = false
+        fenceCounter = DelimiterCounter(pattern: "```")
+        dollarCounter = DelimiterCounter(pattern: "$$")
+        currentLine = ""
+        lastNonEmptyCompletedLine = ""
         print("[StreamBuffer] 🔄 Buffer reset")
     }
 
@@ -91,7 +153,13 @@ final class MarkdownStreamBuffer {
     /// - Returns: 检测结果，包含可渲染的完整模块
     func append(_ text: String) -> ModuleDetectionResult {
         accumulatedText += text
-        print("[StreamBuffer] 📥 Appended \(text.count) chars, total: \(accumulatedText.count) chars")
+        uncommittedText += text
+        fenceCounter.consume(text)
+        dollarCounter.consume(text)
+        trackLines(text)
+        // 不打印累计长度：String.count 是 O(n) 的 grapheme 遍历，
+        // 仅为一行日志就在每个 token 上重走一遍全文
+        print("[StreamBuffer] 📥 Appended \(text.count) chars")
 
         return detectCompleteModules()
     }
@@ -99,9 +167,9 @@ final class MarkdownStreamBuffer {
     /// 强制提交所有剩余内容（流式结束时调用）
     /// - Returns: 剩余的所有文本
     func flush() -> String {
-        let remaining = String(accumulatedText.dropFirst(lastSafePosition))
+        let remaining = uncommittedText
         print("[StreamBuffer] 🚿 Flushing remaining: \(remaining.count) chars")
-        lastSafePosition = accumulatedText.count
+        advanceSafePosition(to: lastSafePosition + remaining.count)
         return remaining
     }
 
@@ -110,41 +178,79 @@ final class MarkdownStreamBuffer {
         return accumulatedText
     }
 
+    // MARK: - 增量状态维护
+
+    /// 从新到达的片段里切出已换行收尾的完整行，记住其中最后一个非空行。
+    ///
+    /// 残段留在 currentLine 里等下一片段拼接，因此分隔符与 grapheme 都不会被 chunk 边界切断。
+    private func trackLines(_ text: String) {
+        currentLine += text
+        while let newlineIndex = currentLine.firstIndex(where: { $0.isNewline }) {
+            let line = String(currentLine[currentLine.startIndex..<newlineIndex])
+            if !line.trimmingCharacters(in: .whitespaces).isEmpty {
+                lastNonEmptyCompletedLine = line
+            }
+            currentLine.removeSubrange(currentLine.startIndex...newlineIndex)
+        }
+    }
+
+    /// 前进安全位置，并把被提交掉的那段文本对检测结果的贡献固化下来。
+    ///
+    /// 模块边界总是落在行首（标题行起点 / 空行之后 / 全文末尾），所以行与分隔符都不会
+    /// 跨越边界被切断。
+    private func advanceSafePosition(to newPosition: Int) {
+        let delta = newPosition - lastSafePosition
+        guard delta > 0 else { return }
+
+        absorbIntoCommittedState(String(uncommittedText.prefix(delta)))
+        uncommittedText.removeFirst(min(delta, uncommittedText.count))
+        lastSafePosition = newPosition
+    }
+
+    /// 把一段即将离开扫描范围的文本折叠进"边界处是否位于代码块内"这一状态
+    private func absorbIntoCommittedState(_ committedChunk: String) {
+        for line in committedChunk.components(separatedBy: "\n")
+        where line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+            isInsideCodeBlockAtSafePosition.toggle()
+        }
+    }
+
     // MARK: - Module Detection
 
     /// 检测完整的 Markdown 模块
     private func detectCompleteModules() -> ModuleDetectionResult {
-        let textToAnalyze = accumulatedText
         let startPosition = lastSafePosition
 
-        // 1. 检测未完成的结构（代码块、表格等）
-        let pendingInfo = detectPendingStructure(in: textToAnalyze)
-
-        // 2. 如果有未闭合的结构，需要等待
-        if let pending = pendingInfo {
+        // 1. 检测未闭合的结构（代码块、表格等）
+        //
+        // 必须先判待闭合再算长度：未闭合的代码块会让尾部一直变长，而 String.count 是
+        // O(n) 的 grapheme 遍历，在这条提前返回的路径上算一次就等于每个 token 重走整段代码块。
+        if let pending = detectPendingStructure() {
             print("[StreamBuffer] ⏳ Pending structure detected: \(pending.rawValue)")
             // ⭐️ 移除频繁的状态回调，避免 UI 闪烁
             return ModuleDetectionResult(
                 completeModules: [],
-                pendingText: String(textToAnalyze.dropFirst(startPosition)),
+                pendingText: uncommittedText,
                 hasPendingStructure: true,
                 pendingType: pending
             )
         }
 
-        // 3. 查找模块边界（基于标题行）
-        let boundaries = findModuleBoundaries(in: textToAnalyze, from: startPosition)
+        let totalCount = startPosition + uncommittedText.count
 
-        // 4. 如果没有新的完整模块，继续等待
+        // 2. 查找模块边界（基于标题行）
+        let boundaries = findModuleBoundaries(from: startPosition, totalCount: totalCount)
+
+        // 3. 如果没有新的完整模块，继续等待
         if boundaries.isEmpty {
             // 检查是否有足够的纯文本内容（无标题的情况）
-            let remainingText = String(textToAnalyze.dropFirst(startPosition))
+            let remainingText = uncommittedText
             if remainingText.count > minModuleLength * 3 && remainingText.hasSuffix("\n\n")
                 || (isPlainText(remainingText) && remainingText.count > minModuleLength && remainingText.hasSuffix("\n")) {
                 // 有大量文本且以双换行结束，可以提交
                 let completeText = remainingText.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !completeText.isEmpty {
-                    lastSafePosition = textToAnalyze.count
+                    advanceSafePosition(to: totalCount)
                     print("[StreamBuffer] ✅ No heading found, but submitting text block: \(completeText.prefix(50))...")
                     return ModuleDetectionResult(
                         completeModules: [completeText],
@@ -158,19 +264,19 @@ final class MarkdownStreamBuffer {
             // ⭐️ 移除频繁的状态回调，避免 UI 闪烁
             return ModuleDetectionResult(
                 completeModules: [],
-                pendingText: String(textToAnalyze.dropFirst(startPosition)),
+                pendingText: uncommittedText,
                 hasPendingStructure: false,
                 pendingType: nil
             )
         }
 
-        // 5. 提取完整的模块
+        // 4. 提取完整的模块（偏移仍是全文口径，提取时换算成未提交尾部的相对偏移）
         var completeModules: [String] = []
         var lastBoundary = startPosition
 
         for boundary in boundaries {
             if boundary > lastBoundary {
-                let moduleText = extractModule(from: textToAnalyze, start: lastBoundary, end: boundary)
+                let moduleText = extractModule(start: lastBoundary, end: boundary, tailOrigin: startPosition)
                 if !moduleText.isEmpty {
                     completeModules.append(moduleText)
                     print("[StreamBuffer] ✅ Complete module found: \(moduleText.prefix(50))... (\(moduleText.count) chars)")
@@ -179,32 +285,28 @@ final class MarkdownStreamBuffer {
             lastBoundary = boundary
         }
 
-        // 更新安全位置
-        lastSafePosition = lastBoundary
-        moduleBoundaries = boundaries
+        // 更新安全位置（必须在提取之后：提取依赖尚未截断的尾部）
+        advanceSafePosition(to: lastBoundary)
 
         // ⭐️ 移除频繁的状态回调，避免 UI 闪烁
         // 当有内容渲染时，等待动画会被自然推开
 
-        let pendingText = String(textToAnalyze.dropFirst(lastSafePosition))
         return ModuleDetectionResult(
             completeModules: completeModules,
-            pendingText: pendingText,
+            pendingText: uncommittedText,
             hasPendingStructure: false,
             pendingType: nil
         )
     }
 
     /// 检测文本中是否有未完成的结构
-    private func detectPendingStructure(in text: String) -> PendingStructureType? {
-        let nsText = text as NSString
-
+    private func detectPendingStructure() -> PendingStructureType? {
         // ⭐️ 检测末尾是否有不完整的代码块标记（如 ` 或 ``）
-        // 这是数据流被随机分割导致的
-        let trimmedEnd = text.suffix(10)  // 检查末尾10个字符
+        // 这是数据流被随机分割导致的。suffix 从尾部反向取，代价与取的长度成正比。
+        let trimmedEnd = accumulatedText.suffix(10)  // 检查末尾10个字符
         if trimmedEnd.contains("`") {
             // 检查是否是完整的 ``` 开头或结尾
-            let backtickSuffix = String(text.suffix(5))
+            let backtickSuffix = String(accumulatedText.suffix(5))
             // 如果末尾有1-2个反引号但不是3个，可能是被截断了
             if backtickSuffix.hasSuffix("`") && !backtickSuffix.hasSuffix("```") {
                 let backtickCount = backtickSuffix.reversed().prefix(while: { $0 == "`" }).count
@@ -215,51 +317,33 @@ final class MarkdownStreamBuffer {
             }
         }
 
-        // 1. 检测未闭合的代码块 ```
-        let codeBlockPattern = "```"
-        var codeBlockCount = 0
-        var searchRange = NSRange(location: 0, length: nsText.length)
-
-        while searchRange.location < nsText.length {
-            let foundRange = nsText.range(of: codeBlockPattern, options: [], range: searchRange)
-            if foundRange.location == NSNotFound { break }
-            codeBlockCount += 1
-            searchRange.location = foundRange.location + foundRange.length
-            searchRange.length = nsText.length - searchRange.location
-        }
-
-        if codeBlockCount % 2 != 0 {
+        // 1. 检测未闭合的代码块 ```：计数在 append 时增量维护，这里只看奇偶
+        if !fenceCounter.isBalanced {
             return .codeBlock
         }
 
         // 2. 检测未闭合的 LaTeX 块 $$
-        let latexBlockPattern = "$$"
-        var latexBlockCount = 0
-        searchRange = NSRange(location: 0, length: nsText.length)
-
-        while searchRange.location < nsText.length {
-            let foundRange = nsText.range(of: latexBlockPattern, options: [], range: searchRange)
-            if foundRange.location == NSNotFound { break }
-            latexBlockCount += 1
-            searchRange.location = foundRange.location + foundRange.length
-            searchRange.length = nsText.length - searchRange.location
-        }
-
-        if latexBlockCount % 2 != 0 {
+        if !dollarCounter.isBalanced {
             return .latexBlock
         }
 
         // 3. 检测未完成的表格（末尾以 | 开头但无空行结束）
-        let lines = text.components(separatedBy: .newlines)
-        if let lastNonEmptyLine = lines.last(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
-            if lastNonEmptyLine.trimmingCharacters(in: .whitespaces).hasPrefix("|") {
-                if lastNonEmptyLine.contains("|") && !text.hasSuffix("\n\n") {
-                    return .table
-                }
+        if let lastNonEmptyLine = lastNonEmptyLine() {
+            let trimmedLine = lastNonEmptyLine.trimmingCharacters(in: .whitespaces)
+            if trimmedLine.hasPrefix("|") && trimmedLine.contains("|") && !accumulatedText.hasSuffix("\n\n") {
+                return .table
             }
         }
 
         return nil
+    }
+
+    /// 全文的最后一个非空行：优先看尚未换行的残段，否则回退到已收尾的行
+    private func lastNonEmptyLine() -> String? {
+        if !currentLine.trimmingCharacters(in: .whitespaces).isEmpty {
+            return currentLine
+        }
+        return lastNonEmptyCompletedLine.isEmpty ? nil : lastNonEmptyCompletedLine
     }
 
     /// 判断文本是否为纯文本（不包含 Markdown 块级/行级标记）
@@ -282,21 +366,25 @@ final class MarkdownStreamBuffer {
     /// 1. 如果有多个一级标题 → 按一级标题分割
     /// 2. 如果只有一个/没有一级标题但有多个二级标题 → 按二级标题分割
     /// 3. 如果都没有 → 按双换行分割段落
+    ///
+    /// 只扫描未提交尾部：原实现每次都从第 0 行遍历全文，但 startPosition 之前的行既不参与
+    /// 标题收集、也不参与段落切分，唯一会跨越边界的状态就是"是否在代码块内"，而它已在
+    /// `isInsideCodeBlockAtSafePosition` 里固化。
     /// - Parameters:
-    ///   - text: 完整文本
-    ///   - from: 起始搜索位置
+    ///   - startPosition: 未提交尾部在全文中的起始偏移
+    ///   - totalCount: 全文的 Character 总数
     /// - Returns: 模块边界位置数组（每个位置是模块的结束位置，即下一个模块的开始位置）
-    private func findModuleBoundaries(in text: String, from startPosition: Int) -> [Int] {
-        let lines = text.components(separatedBy: "\n")
-        var currentPosition = 0
+    private func findModuleBoundaries(from startPosition: Int, totalCount: Int) -> [Int] {
+        let lines = uncommittedText.components(separatedBy: "\n")
+        var currentPosition = startPosition
 
-        // 收集各级标题位置（只收集 startPosition 之后的标题）
+        // 收集各级标题位置（尾部之内的行天然都在搜索范围里）
         var h1Positions: [Int] = []  // # 一级标题
         var h2Positions: [Int] = []  // ## 二级标题
         var paragraphBoundaries: [Int] = []
 
         // 追踪代码块状态
-        var isInsideCodeBlock = false
+        var isInsideCodeBlock = isInsideCodeBlockAtSafePosition
         var paragraphStart = startPosition
         var hasRenderableContentSinceParagraphStart = false
 
@@ -304,35 +392,31 @@ final class MarkdownStreamBuffer {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
             let isFenceMarker = trimmedLine.hasPrefix("```")
             let isOutsideCodeBlock = !isInsideCodeBlock
+            // 最后一段没有换行符收尾，不计入那 1 个字符
             let nextPosition = currentPosition + line.count + (index < lines.count - 1 ? 1 : 0)
-            let isWithinSearchRange = currentPosition >= startPosition
 
-            let isH1 = isOutsideCodeBlock && isWithinSearchRange
+            let isH1 = isOutsideCodeBlock
                 && trimmedLine.hasPrefix("# ") && !trimmedLine.hasPrefix("## ")
-            let isH2 = isOutsideCodeBlock && isWithinSearchRange
+            let isH2 = isOutsideCodeBlock
                 && trimmedLine.hasPrefix("## ") && !trimmedLine.hasPrefix("### ")
 
-            // ⭐️ 关键修复：只收集 startPosition 之后的标题
-            // 这样避免重复处理已经解析过的标题
             if isH1 {
                 h1Positions.append(currentPosition)
             } else if isH2 {
                 h2Positions.append(currentPosition)
             }
 
-            if isWithinSearchRange {
-                if !trimmedLine.isEmpty && !isH1 && !isH2 {
-                    hasRenderableContentSinceParagraphStart = true
-                }
+            if !trimmedLine.isEmpty && !isH1 && !isH2 {
+                hasRenderableContentSinceParagraphStart = true
+            }
 
-                // fallback 段落切分只在代码块外生效，且标题后的第一个空行不会单独切出“只有标题”的模块
-                if isOutsideCodeBlock && trimmedLine.isEmpty && hasRenderableContentSinceParagraphStart {
-                    let moduleLength = nextPosition - paragraphStart
-                    if moduleLength >= minModuleLength {
-                        paragraphBoundaries.append(nextPosition)
-                        paragraphStart = nextPosition
-                        hasRenderableContentSinceParagraphStart = false
-                    }
+            // fallback 段落切分只在代码块外生效，且标题后的第一个空行不会单独切出“只有标题”的模块
+            if isOutsideCodeBlock && trimmedLine.isEmpty && hasRenderableContentSinceParagraphStart {
+                let moduleLength = nextPosition - paragraphStart
+                if moduleLength >= minModuleLength {
+                    paragraphBoundaries.append(nextPosition)
+                    paragraphStart = nextPosition
+                    hasRenderableContentSinceParagraphStart = false
                 }
             }
 
@@ -344,35 +428,17 @@ final class MarkdownStreamBuffer {
         }
 
         // ⭐️ 自适应选择分割级别
-        var headingLevel: String
+        let headingLevel: String
         var boundaries: [Int] = []
 
         if h1Positions.count >= 2 {
             // 策略1：有多个一级标题，按一级标题分割
             headingLevel = "H1"
-            for boundary in h1Positions.dropFirst() where boundary > startPosition {
-                boundaries.append(boundary)
-            }
-
-            if let lastHeadingPos = h1Positions.last {
-                let contentAfterLast = text.count - lastHeadingPos
-                if contentAfterLast > minModuleLength && text.hasSuffix("\n\n") {
-                    boundaries.append(text.count)
-                }
-            }
+            boundaries = headingBoundaries(h1Positions, startPosition: startPosition, totalCount: totalCount)
         } else if h2Positions.count >= 2 {
             // 策略2：只有一个/没有一级标题，但有多个二级标题，按二级标题分割
             headingLevel = "H2"
-            for boundary in h2Positions.dropFirst() where boundary > startPosition {
-                boundaries.append(boundary)
-            }
-
-            if let lastHeadingPos = h2Positions.last {
-                let contentAfterLast = text.count - lastHeadingPos
-                if contentAfterLast > minModuleLength && text.hasSuffix("\n\n") {
-                    boundaries.append(text.count)
-                }
-            }
+            boundaries = headingBoundaries(h2Positions, startPosition: startPosition, totalCount: totalCount)
         } else {
             // 策略3：没有足够的标题，按双换行分割段落
             headingLevel = "paragraph"
@@ -385,17 +451,42 @@ final class MarkdownStreamBuffer {
         return boundaries
     }
 
+    /// 把标题位置转成模块边界：第一个标题是当前模块的开头，不算边界；
+    /// 末尾内容够长且已用空行收尾时，把全文末尾也算作一个边界。
+    private func headingBoundaries(_ positions: [Int], startPosition: Int, totalCount: Int) -> [Int] {
+        var boundaries = positions.dropFirst().filter { $0 > startPosition }
+
+        if let lastHeadingPosition = positions.last {
+            let contentAfterLast = totalCount - lastHeadingPosition
+            if contentAfterLast > minModuleLength && accumulatedText.hasSuffix("\n\n") {
+                boundaries.append(totalCount)
+            }
+        }
+
+        return boundaries
+    }
+
     /// 提取模块文本
-    private func extractModule(from text: String, start: Int, end: Int) -> String {
-        guard start >= 0, start < end, end <= text.count else { return "" }
+    ///
+    /// 偏移是全文口径，但索引在未提交尾部上做：从全文开头 `offsetBy` 会随回复变长而变慢，
+    /// 而尾部长度只与模块大小相关。
+    /// - Parameters:
+    ///   - start: 模块起点（全文偏移）
+    ///   - end: 模块终点（全文偏移）
+    ///   - tailOrigin: 未提交尾部在全文中的起始偏移
+    private func extractModule(start: Int, end: Int, tailOrigin: Int) -> String {
+        let tail = uncommittedText
+        let relativeStart = start - tailOrigin
+        let relativeEnd = end - tailOrigin
+        guard relativeStart >= 0, relativeStart < relativeEnd, relativeEnd <= tail.count else { return "" }
 
         // 使用 limitedBy 安全获取索引，防止 Unicode 字符边界导致崩溃
-        guard let startIndex = text.index(text.startIndex, offsetBy: start, limitedBy: text.endIndex),
-              let endIndex = text.index(text.startIndex, offsetBy: end, limitedBy: text.endIndex),
+        guard let startIndex = tail.index(tail.startIndex, offsetBy: relativeStart, limitedBy: tail.endIndex),
+              let endIndex = tail.index(tail.startIndex, offsetBy: relativeEnd, limitedBy: tail.endIndex),
               startIndex < endIndex else {
             return ""
         }
 
-        return String(text[startIndex..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(tail[startIndex..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
