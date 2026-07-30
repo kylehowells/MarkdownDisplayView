@@ -37,24 +37,6 @@ class ViewController: UIViewController {
         return button
     }()
 
-    private lazy var smartStreamingButton: UIButton = {
-        let button = UIButton(type: .system)
-        button.setTitle("智能流式短文本", for: .normal)
-        button.titleLabel?.font = .systemFont(ofSize: 18, weight: .medium)
-        button.addTarget(self, action: #selector(openSmartStreamingDemo), for: .touchUpInside)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
-    }()
-
-    private lazy var smartStreamingCellButton: UIButton = {
-        let button = UIButton(type: .system)
-        button.setTitle("智能流式 Cell 演示", for: .normal)
-        button.titleLabel?.font = .systemFont(ofSize: 18, weight: .medium)
-        button.addTarget(self, action: #selector(openSmartStreamingCellDemo), for: .touchUpInside)
-        button.translatesAutoresizingMaskIntoConstraints = false
-        return button
-    }()
-
     private lazy var aiChatButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle("AI 对话", for: .normal)
@@ -78,8 +60,6 @@ class ViewController: UIViewController {
         view.addSubview(syncButton)
         view.addSubview(tableViewButton)
         view.addSubview(crashReproButton)
-        view.addSubview(smartStreamingButton)
-        view.addSubview(smartStreamingCellButton)
         view.addSubview(aiChatButton)
         NSLayoutConstraint.activate([
             titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
@@ -95,14 +75,8 @@ class ViewController: UIViewController {
             crashReproButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             crashReproButton.topAnchor.constraint(equalTo: tableViewButton.bottomAnchor, constant: 20),
 
-            smartStreamingButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            smartStreamingButton.topAnchor.constraint(equalTo: crashReproButton.bottomAnchor, constant: 20),
-
-            smartStreamingCellButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            smartStreamingCellButton.topAnchor.constraint(equalTo: smartStreamingButton.bottomAnchor, constant: 20),
-
             aiChatButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            aiChatButton.topAnchor.constraint(equalTo: smartStreamingCellButton.bottomAnchor, constant: 20)
+            aiChatButton.topAnchor.constraint(equalTo: crashReproButton.bottomAnchor, constant: 20)
 
         ])
     }
@@ -121,18 +95,6 @@ class ViewController: UIViewController {
 
     @objc private func openCrashReproDemo() {
         let vc = HistoryMDViewController()
-        vc.modalPresentationStyle = .fullScreen
-        self.present(vc, animated: true, completion: nil)
-    }
-
-    @objc private func openSmartStreamingDemo() {
-        let vc = SmartStreamingShortViewController()
-        vc.modalPresentationStyle = .fullScreen
-        self.present(vc, animated: true, completion: nil)
-    }
-
-    @objc private func openSmartStreamingCellDemo() {
-        let vc = SmartStreamingCellDemoViewController()
         vc.modalPresentationStyle = .fullScreen
         self.present(vc, animated: true, completion: nil)
     }
