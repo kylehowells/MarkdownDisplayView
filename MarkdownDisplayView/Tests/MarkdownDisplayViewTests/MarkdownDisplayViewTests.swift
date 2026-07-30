@@ -166,3 +166,55 @@ import UIKit
     #expect(currentText.intrinsicContentSize.height < 160)
     #expect(queuedText.intrinsicContentSize.height < 160)
 }
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func revealTypewriterRestoresOriginalAttributesRunByRun() async throws {
+    let url = try #require(URL(string: "https://example.com"))
+    let text = NSMutableAttributedString(
+        string: "plain",
+        attributes: [.font: UIFont.systemFont(ofSize: 16), .foregroundColor: UIColor.label]
+    )
+    text.append(NSAttributedString(
+        string: "link",
+        attributes: [
+            .font: UIFont.systemFont(ofSize: 16),
+            .foregroundColor: UIColor.systemBlue,
+            .link: url
+        ]
+    ))
+
+    let textView = MarkdownTextViewTK2()
+    textView.typewriterTextMode = .reveal
+    textView.attributedText = text
+    textView.textContainer.size = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+    textView.prepareForTypewriter()
+
+    // prepare 后整篇透明占位，且 .link 被移除（否则系统会强制渲染链接色，文字藏不住）
+    let prepared = textView.displayedAttributedString
+    #expect(prepared.length == text.length)
+    for index in 0..<prepared.length {
+        #expect(prepared.attribute(.foregroundColor, at: index, effectiveRange: nil) as? UIColor == UIColor.clear)
+        #expect(prepared.attribute(.link, at: index, effectiveRange: nil) == nil)
+    }
+
+    let heightAfterPrepare = textView.intrinsicContentSize.height
+
+    // 揭示范围跨越两个属性 run，两个 run 的原始属性都要按 run 还原
+    let revealed = textView.revealCharacter(upto: 7)
+    #expect(revealed.didReveal)
+    #expect(revealed.didChangeHeight == false)
+    #expect(textView.intrinsicContentSize.height == heightAfterPrepare)
+
+    let afterReveal = textView.displayedAttributedString
+    #expect(afterReveal.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor == UIColor.label)
+    #expect(afterReveal.attribute(.foregroundColor, at: 5, effectiveRange: nil) as? UIColor == UIColor.systemBlue)
+    #expect(afterReveal.attribute(.link, at: 6, effectiveRange: nil) as? URL == url)
+
+    // 未揭示部分仍是透明占位
+    #expect(afterReveal.attribute(.foregroundColor, at: 8, effectiveRange: nil) as? UIColor == UIColor.clear)
+    #expect(afterReveal.attribute(.link, at: 8, effectiveRange: nil) == nil)
+
+    #expect(textView.revealCharacter(upto: 7).didReveal == false)
+    #expect(textView.revealCharacter(upto: text.length + 1).didReveal == false)
+}

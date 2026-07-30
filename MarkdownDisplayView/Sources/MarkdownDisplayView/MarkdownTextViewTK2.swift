@@ -18,10 +18,25 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     private let textContentStorage: NSTextContentStorage
     let textContainer: NSTextContainer
 
+    /// 自己持有的 textStorage。
+    ///
+    /// `NSTextContentStorage` 默认不创建 textStorage，而给 `attributedString` 赋值是整篇替换、
+    /// 会失效全文布局。显式持有一个 storage 后，增量修改就有了稳定的作用目标：
+    /// 在 `performEditingTransaction` 里改它，TextKit 2 只失效被改动的范围。
+    private let textStorage = NSTextStorage()
+
     var attributedText: NSAttributedString? {
         didSet {
             updateContent()
         }
+    }
+
+    /// 当前实际参与排版的文本快照。
+    ///
+    /// 打字机播放期间 storage 是中间态（append 模式只有已显示前缀、reveal 模式尚未显示的部分是
+    /// 透明占位），与 `attributedText` 持有的原文并不相同，故单独暴露以便断言增量修改的结果。
+    var displayedAttributedString: NSAttributedString {
+        NSAttributedString(attributedString: textStorage)
     }
 
     var linkTextAttributes: [NSAttributedString.Key: Any] = [:]
@@ -40,6 +55,12 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     private var lastHeightUpdateIndex: Int = 0
     private var cachedOriginalAttributedString: NSAttributedString?
     private var isAppendingTypewriterText = false
+
+    /// 当前内容是否含附件，用于跳过无附件时的全文片段遍历
+    private var contentHasAttachments = false
+
+    /// 上次触发重绘时的尺寸，避免 layoutSubviews 无条件整篇重绘
+    private var lastDisplayedBoundsSize: CGSize = .zero
 
     override init(frame: CGRect) {
         textContentStorage = NSTextContentStorage()
@@ -77,6 +98,7 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     }
 
     private func setupTextKit2() {
+        textContentStorage.textStorage = textStorage
         textContentStorage.addTextLayoutManager(textLayoutManager)
         textLayoutManager.textContainer = textContainer
         textLayoutManager.delegate = self  // 接管链接渲染属性，控制下划线等样式
@@ -107,22 +129,22 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         }
 
         if force || widthChanged || calculatedHeight == 0 {
+            // ensureLayout 内部只重排失效的片段；配合增量文本更新，
+            // 流式追加时的代价与新增内容成正比而非与全文长度成正比。
             textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
 
-            var height: CGFloat = 0
-            textLayoutManager.enumerateTextLayoutFragments(from: textLayoutManager.documentRange.location, options: [.ensuresLayout]) { fragment in
-                let fragmentFrame = fragment.layoutFragmentFrame
-                height = max(height, fragmentFrame.maxY)
-                return true
-            }
+            // 用 usageBounds 一次读出已排版内容的高度。
+            // 原先逐个 enumerate 全部 fragment 取 maxY，是 O(全文片段数)，
+            // 而打字机每 20 字符就调一次，累积成 O(n²)。
+            let height = textLayoutManager.usageBoundsForTextContainer.maxY
 
             // ⭐️ 核心修复：直接更新高度约束
             // 加 1pt 安全 buffer，避免某些字体/行距组合在边界值时被裁剪
             var newHeight = ceil(height + 1)
 
             // Fallback: 如果 TextKit 2 计算为 0 但有文本，使用 boundingRect 估算
-            if newHeight == 0, let attrText = textContentStorage.attributedString, attrText.length > 0 {
-                let fallbackSize = attrText.boundingRect(
+            if newHeight == 0, textStorage.length > 0 {
+                let fallbackSize = textStorage.boundingRect(
                     with: CGSize(width: width, height: .greatestFiniteMagnitude),
                     options: [.usesLineFragmentOrigin, .usesFontLeading],
                     context: nil
@@ -193,8 +215,9 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         isAppendingTypewriterText = false
 
         guard let attributedText = attributedText else {
-            textContentStorage.attributedString = nil
+            setStorageContent(nil)
             calculatedHeight = 0
+            contentHasAttachments = false
 
             // 清理所有附件视图
             attachmentProviders.values.forEach { $0.view?.removeFromSuperview() }
@@ -205,8 +228,13 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
             return
         }
 
+        // 只在内容替换时算一次；打字机播放期间显示的是它的前缀，附件集合不会变多
+        contentHasAttachments = attributedText.containsAttachments(
+            in: NSRange(location: 0, length: attributedText.length)
+        )
+
         // 1. 更新 TextKit 存储
-        textContentStorage.attributedString = attributedText
+        setStorageContent(attributedText)
 
         // 2. 标记需要重绘 (但不立即触发布局，等待外部显式调用 applyLayout 或 layoutSubviews)
         // 这里的关键是：不要使用 bounds.width 进行猜测性布局，防止"旧宽度"导致的高度跳变
@@ -214,6 +242,13 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
 
         // 注意：这里不立即调用 layoutAttachments，因为 TextKit 可能还没布局
         // layoutAttachments 会在 applyLayout 或 layoutSubviews 中被调用
+    }
+
+    /// 全量替换文本内容。所有写入都走同一个 storage，保证增量修改有确定的作用目标。
+    private func setStorageContent(_ newValue: NSAttributedString?) {
+        textContentStorage.performEditingTransaction {
+            textStorage.setAttributedString(newValue ?? NSAttributedString())
+        }
     }
 
     private func layoutText() {
@@ -229,7 +264,11 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     }
 
     private func layoutAttachments() {
-        guard let attrString = textContentStorage.attributedString else { return }
+        let attrString = textStorage
+
+        // 绝大多数文本不含附件。该遍历是 O(全文片段数)，而 applyLayout 每次
+        // 测高都会调用它，流式播放下会累积成 O(n²)。
+        guard contentHasAttachments || !attachmentProviders.isEmpty else { return }
 
         var usedAttachments = Set<NSTextAttachment>()
 
@@ -288,14 +327,19 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         super.layoutSubviews()
 
         // ⭐️ 修复 2: 确保视图有尺寸时触发布局检查
-        if textContentStorage.attributedString != nil {
+        if textStorage.length > 0 {
             layoutText()
         }
 
-        // ⭐️ 修复 3: 强制重绘
-        // 当 StackView 展开时，bounds 从 0 变为有值，但 TextKit 可能需要一个显式的重绘信号
-        // 尤其是在 backgroundColor 为 clear 的情况下
-        setNeedsDisplay()
+        // ⭐️ 修复 3: 尺寸变化时强制重绘
+        // 当 StackView 展开时，bounds 从 0 变为有值，但 TextKit 可能需要一个显式的重绘信号，
+        // 尤其是在 backgroundColor 为 clear 的情况下。
+        // 仅在尺寸真的变了时才重绘：内容变化的重绘由 updateContent / applyLayout /
+        // revealCharacter 各自显式触发，此处无条件重绘会让流式期间每次布局都整篇 draw 一遍。
+        if bounds.size != lastDisplayedBoundsSize {
+            lastDisplayedBoundsSize = bounds.size
+            setNeedsDisplay()
+        }
     }
 
     override func draw(_ rect: CGRect) {
@@ -305,15 +349,20 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
 
         var hasFragments = false
         textLayoutManager.enumerateTextLayoutFragments(from: textLayoutManager.documentRange.location, options: [.ensuresLayout]) { fragment in
-            fragment.draw(at: fragment.layoutFragmentFrame.origin, in: context)
             hasFragments = true
-            return true
+            let frame = fragment.layoutFragmentFrame
+            // 只绘制与脏矩形相交的片段；片段按文档顺序自上而下，
+            // 越过脏矩形底边后即可停止枚举
+            if frame.intersects(rect) {
+                fragment.draw(at: frame.origin, in: context)
+            }
+            return frame.minY <= rect.maxY
         }
 
         // Fallback: 如果 TextKit 2 没有生成任何片段（但有文本），说明布局引擎在视图隐藏时可能未正确更新
         // 使用 NSAttributedString 直接绘制以确保内容可见
-        if !hasFragments, let attrText = textContentStorage.attributedString, attrText.length > 0 {
-            attrText.draw(in: rect)
+        if !hasFragments, textStorage.length > 0 {
+            textStorage.draw(in: rect)
         }
     }
 
@@ -349,10 +398,9 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         guard let location = caretLocation else { return }
         let offset = textLayoutManager.offset(from: textLayoutManager.documentRange.location, to: location)
 
-        guard let attributedText = textContentStorage.attributedString,
-              offset >= 0 && offset < attributedText.length else { return }
+        guard offset >= 0 && offset < textStorage.length else { return }
 
-        let attributes = attributedText.attributes(at: offset, effectiveRange: nil)
+        let attributes = textStorage.attributes(at: offset, effectiveRange: nil)
 
         if let attachment = attributes[.attachment] as? MarkdownImageAttachment,
            let urlString = attachment.imageURL {
@@ -370,19 +418,8 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
 @available(iOS 15.0, *)
 extension MarkdownTextViewTK2 {
 
-    // 缓存一个 mutable copy，避免每次 run loop 都深拷贝整个文档
     private struct AssociatedKeys {
-        static var cachedMutableString = "cachedMutableString"
         static var lastRevealedIndex = "lastRevealedIndex"  // ⭐️ 新增：追踪上次显示位置
-    }
-
-    private var cachedMutableString: NSMutableAttributedString? {
-        get {
-            return objc_getAssociatedObject(self, &AssociatedKeys.cachedMutableString) as? NSMutableAttributedString
-        }
-        set {
-            objc_setAssociatedObject(self, &AssociatedKeys.cachedMutableString, newValue, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
-        }
     }
 
     // ⭐️ 新增：追踪上次显示到哪个位置
@@ -395,12 +432,26 @@ extension MarkdownTextViewTK2 {
         }
     }
 
+    /// 在编辑事务内就地修改 textStorage。
+    ///
+    /// 给 `textContentStorage.attributedString` 赋值是整篇替换，TextKit 2 会失效全文布局；
+    /// 打字机每一步都这么做就退化成 O(n²)。事务内改 storage 只会失效被改动的范围。
+    private func editTextStorage(_ body: (NSTextStorage) -> Void) {
+        textContentStorage.performEditingTransaction {
+            body(textStorage)
+        }
+    }
+
     /// 准备打字机效果：将所有文字设为透明，但保留布局占位
     func prepareForTypewriter() {
-        guard let attr = textContentStorage.attributedString else {
-            print("[TYPEWRITER] ⚠️ prepareForTypewriter 失败: textContentStorage.attributedString 为 nil")
+        guard textStorage.length > 0 else {
+            print("[TYPEWRITER] ⚠️ prepareForTypewriter 失败: textStorage 为空")
             return
         }
+
+        // 必须是不可变快照：textStorage 接下来会被就地增量修改，
+        // 直接持有它会让"原文"随播放一起变化。
+        let attr = NSAttributedString(attributedString: textStorage)
 
         print("[TYPEWRITER] 🎯 prepareForTypewriter 开始, 文本长度: \(attr.length), 内容: \(attr.string.prefix(50))...")
 
@@ -416,9 +467,7 @@ extension MarkdownTextViewTK2 {
 
         if typewriterTextMode == .append {
             isAppendingTypewriterText = true
-            let mutable = NSMutableAttributedString()
-            cachedMutableString = mutable
-            textContentStorage.attributedString = mutable
+            setStorageContent(nil)
             // createTextView 可能使用了整段文本的预计算高度。开始 append 播放时必须
             // 丢弃这个最终高度，否则根视图 show 时会先暴露一块尚未显示的空白区域。
             heightConstraint?.constant = 1
@@ -430,7 +479,7 @@ extension MarkdownTextViewTK2 {
             return
         }
 
-        // 初始化缓存
+        // reveal 模式：整篇先置为透明占位，后续按范围恢复原属性
         let mutable = NSMutableAttributedString(attributedString: attr)
         let fullRange = NSRange(location: 0, length: attr.length)
 
@@ -441,12 +490,7 @@ extension MarkdownTextViewTK2 {
         // 防止系统（或TextKit）强制渲染链接颜色，导致文字无法隐藏
         mutable.removeAttribute(.link, range: fullRange)
 
-        cachedMutableString = mutable
-
-        // 赋值给 storage
-        // 注意：这里 copy 一份是为了避免引用问题，但在 TextKit 2 中，
-        // 给 textContentStorage 赋值本身就会触发某些处理。
-        textContentStorage.attributedString = mutable
+        setStorageContent(mutable)
 
         // ⭐️ 关键修复：强制 TextKit 2 重新布局，确保透明属性立即生效
         textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
@@ -475,12 +519,10 @@ extension MarkdownTextViewTK2 {
             let range = NSRange(location: startIndex, length: endIndex - startIndex)
             let segment = originalAttr.attributedSubstring(from: range)
 
-            let workingAttr = cachedMutableString ?? NSMutableAttributedString()
-            workingAttr.append(segment)
-            cachedMutableString = workingAttr
+            // 只把新增片段追加进 storage，让 TextKit 2 仅失效末尾布局
+            editTextStorage { $0.append(segment) }
 
             lastRevealedIndex = endIndex
-            textContentStorage.attributedString = workingAttr
 
             let interval = max(1, typewriterHeightUpdateInterval)
             let shouldUpdateLayout = segment.string.contains("\n")
@@ -500,15 +542,15 @@ extension MarkdownTextViewTK2 {
                 }
             } else {
                 // ⭐️ 方案 A：即使不更新布局，也强制重绘以实现匀速显示
-                setNeedsDisplay()
+                setNeedsDisplayForTail()
             }
 
             return (true, false)
         }
 
         guard let originalAttr = attributedText,
-              let workingAttr = cachedMutableString else {
-            print("[TYPEWRITER] ⚠️ revealCharacter 提前返回: attributedText=\(attributedText != nil), cachedMutableString=\(cachedMutableString != nil), index=\(index)")
+              cachedOriginalAttributedString != nil else {
+            print("[TYPEWRITER] ⚠️ revealCharacter 提前返回: attributedText=\(attributedText != nil), prepared=\(cachedOriginalAttributedString != nil), index=\(index)")
             return (false, false)
         }
 
@@ -522,29 +564,64 @@ extension MarkdownTextViewTK2 {
         // 如果没有新字符需要显示，直接返回
         guard endIndex > startIndex else { return (false, false) }
 
-        // 遍历需要显示的每个字符，恢复其原始属性
-        for charIndex in startIndex..<endIndex {
-            let range = NSRange(location: charIndex, length: 1)
-
-            // 从原始文本中获取该位置的属性（包含颜色）
-            let originalAttributes = originalAttr.attributes(at: charIndex, effectiveRange: nil)
-
-            // 先移除 .clear 颜色，再应用原始属性
-            workingAttr.removeAttribute(.foregroundColor, range: range)
-            workingAttr.addAttributes(originalAttributes, range: range)
+        // 按属性 run 恢复原始属性（含被 prepare 移除的 .link 与被覆盖的前景色）。
+        // setAttributes 会整块替换该范围的属性，效果等价于原先逐字符
+        // removeAttribute(.foregroundColor) + addAttributes(原属性)，但调用次数
+        // 从字符数降为 run 数，且改动就地发生、不再整篇替换 storage。
+        let revealedRange = NSRange(location: startIndex, length: endIndex - startIndex)
+        editTextStorage { storage in
+            originalAttr.enumerateAttributes(in: revealedRange, options: []) { attributes, subrange, _ in
+                storage.setAttributes(attributes, range: subrange)
+            }
         }
 
         // 更新上次显示位置
         lastRevealedIndex = endIndex
 
-        // 更新显示
-        textContentStorage.attributedString = workingAttr
-
-        // 强制重绘
-        setNeedsDisplay()
+        // 强制重绘：只脏化被揭示范围所在的区域
+        setNeedsDisplay(dirtyRect(for: revealedRange))
 
         // reveal 模式预先保留完整布局，显示字符不会改变高度。
         return (true, false)
+    }
+
+    /// append 模式下只有末尾会变化，把重绘范围收敛到"最后一个片段顶部 ~ 视图底部"。
+    /// 高度真的变了时 applyLayout / layoutSubviews 会各自触发整篇重绘，故此处无需兜全。
+    private func setNeedsDisplayForTail() {
+        let contentHeight = heightConstraint?.constant ?? calculatedHeight
+        guard contentHeight > 0, bounds.width > 0,
+              let lastFragment = textLayoutManager.textLayoutFragment(
+                  for: CGPoint(x: 0, y: max(0, contentHeight - 1))
+              ) else {
+            setNeedsDisplay()
+            return
+        }
+
+        let top = max(0, lastFragment.layoutFragmentFrame.minY)
+        setNeedsDisplay(CGRect(x: 0, y: top, width: bounds.width, height: max(0, bounds.maxY - top)))
+    }
+
+    /// 把字符范围换算成需要重绘的矩形；换算不出来时退回整篇。
+    private func dirtyRect(for range: NSRange) -> CGRect {
+        let documentStart = textLayoutManager.documentRange.location
+        guard bounds.width > 0,
+              let start = textLayoutManager.location(documentStart, offsetBy: range.location),
+              let startFragment = textLayoutManager.textLayoutFragment(for: start) else {
+            return bounds
+        }
+
+        var minY = startFragment.layoutFragmentFrame.minY
+        var maxY = startFragment.layoutFragmentFrame.maxY
+
+        if let end = textLayoutManager.location(documentStart, offsetBy: max(range.location, NSMaxRange(range) - 1)),
+           let endFragment = textLayoutManager.textLayoutFragment(for: end) {
+            minY = min(minY, endFragment.layoutFragmentFrame.minY)
+            maxY = max(maxY, endFragment.layoutFragmentFrame.maxY)
+        } else {
+            maxY = bounds.maxY
+        }
+
+        return CGRect(x: 0, y: minY, width: bounds.width, height: max(0, maxY - minY))
     }
 }
 
