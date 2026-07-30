@@ -46,7 +46,7 @@ final public class ImageCacheManager {
         do {
             try self.fileManager.createDirectory(atPath: self.cacheDirectory, withIntermediateDirectories: true, attributes: nil)
         } catch {
-            print("Failed to create cache directory: \(error)")
+            mdLog("Failed to create cache directory: \(error)")
         }
     }
     

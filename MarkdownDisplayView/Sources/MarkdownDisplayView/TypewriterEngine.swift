@@ -76,7 +76,7 @@ class TypewriterEngine {
             // 🆕 根视图初始设为透明，通过 .show 任务渐显
             view.alpha = 0
             taskQueue.append(.show(view))
-            print("[TYPEWRITER] 🎬 enqueue root: \(type(of: view)), subviews: \(view.subviews.count)")
+            mdLog("[TYPEWRITER] 🎬 enqueue root: \(type(of: view)), subviews: \(view.subviews.count)")
         }
 
         if isAtomicRoot {
@@ -85,7 +85,7 @@ class TypewriterEngine {
 
         // 1. 文本组件
         if let textView = view as? MarkdownTextViewTK2 {
-            print("[TYPEWRITER] ✅ 识别到 MarkdownTextViewTK2, 字符数: \(textView.attributedText?.length ?? 0)")
+            mdLog("[TYPEWRITER] ✅ 识别到 MarkdownTextViewTK2, 字符数: \(textView.attributedText?.length ?? 0)")
             textView.prepareForTypewriter()
             taskQueue.append(.text(textView))
             return
@@ -118,7 +118,7 @@ class TypewriterEngine {
             // 1. 先添加容器显示任务（显示背景色）
             view.alpha = 0
             taskQueue.append(.show(view))
-            print("[TYPEWRITER] 🎨 代码块容器: 先显示背景，再递归子视图")
+            mdLog("[TYPEWRITER] 🎨 代码块容器: 先显示背景，再递归子视图")
 
             // 2. 递归处理内部的 MarkdownTextViewTK2
             for subview in view.subviews {
@@ -135,7 +135,7 @@ class TypewriterEngine {
                             (view.accessibilityIdentifier?.hasPrefix("latex_") == true) ||
                             (view.accessibilityIdentifier == "FootnoteContainer")
         if view.subviews.count > 0 && !isAtomicBlock {
-            print("[TYPEWRITER] 📦 递归容器: \(type(of: view)), 子视图数: \(view.subviews.count), 子视图类型: \(view.subviews.map { type(of: $0) })")
+            mdLog("[TYPEWRITER] 📦 递归容器: \(type(of: view)), 子视图数: \(view.subviews.count), 子视图类型: \(view.subviews.map { type(of: $0) })")
             for subview in view.subviews {
                 enqueue(view: subview, isRoot: false)
             }
@@ -143,7 +143,7 @@ class TypewriterEngine {
         }
 
         // 6. 原子 Block
-        print("[TYPEWRITER] ⬛️ 原子块: \(type(of: view)), id: \(view.accessibilityIdentifier ?? "nil")")
+        mdLog("[TYPEWRITER] ⬛️ 原子块: \(type(of: view)), id: \(view.accessibilityIdentifier ?? "nil")")
         view.alpha = 0
         taskQueue.append(.block(view))
     }
@@ -209,35 +209,35 @@ class TypewriterEngine {
                     newView.alpha = 0
                     taskQueue[i] = .show(newView)
                     replacedCount += 1
-                    print("[TYPEWRITER] 🔄 Replaced .show task view")
+                    mdLog("[TYPEWRITER] 🔄 Replaced .show task view")
                 }
             case .text(let tv):
                 if tv === oldView, let newTv = newView.subviews.compactMap({ $0 as? MarkdownTextViewTK2 }).first ?? (newView as? MarkdownTextViewTK2) {
                     newTv.prepareForTypewriter()
                     taskQueue[i] = .text(newTv)
                     replacedCount += 1
-                    print("[TYPEWRITER] 🔄 Replaced .text task view")
+                    mdLog("[TYPEWRITER] 🔄 Replaced .text task view")
                 }
             case .label(let lbl):
                 if lbl === oldView, let newLbl = newView as? UILabel {
                     taskQueue[i] = .label(newLbl)
                     replacedCount += 1
-                    print("[TYPEWRITER] 🔄 Replaced .label task view")
+                    mdLog("[TYPEWRITER] 🔄 Replaced .label task view")
                 }
             case .block(let bv):
                 if bv === oldView {
                     newView.alpha = 0
                     taskQueue[i] = .block(newView)
                     replacedCount += 1
-                    print("[TYPEWRITER] 🔄 Replaced .block task view")
+                    mdLog("[TYPEWRITER] 🔄 Replaced .block task view")
                 }
             }
         }
 
         if replacedCount == 0 {
-            print("[TYPEWRITER] ⚠️ View not found in queue for replacement")
+            mdLog("[TYPEWRITER] ⚠️ View not found in queue for replacement")
         } else {
-            print("[TYPEWRITER] ✅ Replaced \(replacedCount) tasks for view")
+            mdLog("[TYPEWRITER] ✅ Replaced \(replacedCount) tasks for view")
         }
     }
 
@@ -255,7 +255,7 @@ class TypewriterEngine {
             guard let self else { return }
             // ⚡️ 超时 4.0 秒，为复杂渲染（如 LaTeX）卡顿留出余量
             guard CFAbsoluteTimeGetCurrent() - self.lastFeedTimestamp > Self.watchdogTimeout else { return }
-            print("🐶 [Watchdog] Task timed out, forcing completion...")
+            mdLog("🐶 [Watchdog] Task timed out, forcing completion...")
             self.forceFinishCurrentTask()
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -332,11 +332,11 @@ class TypewriterEngine {
 
             // ⭐️ 添加日志：追踪视图显示时机
             let viewType = view.accessibilityIdentifier ?? String(describing: type(of: view))
-            print("[STREAM] 👁️ 视图开始显示: \(viewType), tag=\(view.tag)")
+            mdLog("[STREAM] 👁️ 视图开始显示: \(viewType), tag=\(view.tag)")
 
             // [CODEBLOCK_DEBUG] 特殊日志：追踪代码块显示
             if view.accessibilityIdentifier == "CodeBlockContainer" {
-                print("[CODEBLOCK_DEBUG] 🎬 CodeBlock .show task executing: frame=\(view.frame), subviews=\(view.subviews.count)")
+                mdLog("[CODEBLOCK_DEBUG] 🎬 CodeBlock .show task executing: frame=\(view.frame), subviews=\(view.subviews.count)")
             }
 
             // ⚡️ 关键修复：视图显示后立即通知高度变化
@@ -348,7 +348,7 @@ class TypewriterEngine {
             UIView.animate(withDuration: 0.15, animations: {
                 view.alpha = 1.0
             }) { _ in
-                print("[STREAM] 👁️ 视图显示完成: \(viewType), 动画耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - showStartTime) * 1000))ms")
+                mdLog("[STREAM] 👁️ 视图显示完成: \(viewType), 动画耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - showStartTime) * 1000))ms")
                 self.finishCurrentTask()
             }
 
@@ -359,7 +359,7 @@ class TypewriterEngine {
 
             // [CODEBLOCK_DEBUG] 特殊日志：追踪代码块显示
             if view.accessibilityIdentifier == "CodeBlockContainer" {
-                print("[CODEBLOCK_DEBUG] 🎬 CodeBlock .block task executing: alpha=\(view.alpha), isHidden=\(view.isHidden), frame=\(view.frame)")
+                mdLog("[CODEBLOCK_DEBUG] 🎬 CodeBlock .block task executing: alpha=\(view.alpha), isHidden=\(view.isHidden), frame=\(view.frame)")
             }
 
             // 解析时间戳
@@ -384,13 +384,13 @@ class TypewriterEngine {
                 }
             }
 
-            print("[STREAM] 📦 块视图开始显示: \(blockViewType), tag=\(view.tag)\(delayInfo)")
+            mdLog("[STREAM] 📦 块视图开始显示: \(blockViewType), tag=\(view.tag)\(delayInfo)")
             let blockStartTime = now
 
             UIView.animate(withDuration: 0.2, animations: {
                 view.alpha = 1.0
             }, completion: { [weak self] _ in
-                print("[STREAM] 📦 块视图显示完成: \(blockViewType), 动画耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - blockStartTime) * 1000))ms")
+                mdLog("[STREAM] 📦 块视图显示完成: \(blockViewType), 动画耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - blockStartTime) * 1000))ms")
                 // 块级元素动画完成时触发震动反馈
                 self?.onTypewriterStep?()
                 self?.finishCurrentTask()
@@ -407,7 +407,7 @@ class TypewriterEngine {
         case .text(let textView):
             let textLen = textView.attributedText?.length ?? 0
             let textPreview = textView.attributedText?.string.prefix(30) ?? ""
-            print("[TYPEWRITER] 📝 开始执行 .text 任务, 文本长度: \(textLen), 内容: \(textPreview)...")
+            mdLog("[TYPEWRITER] 📝 开始执行 .text 任务, 文本长度: \(textLen), 内容: \(textPreview)...")
             if textLen == 0 {
                 _ = textView.revealCharacter(upto: 0)
                 finishCurrentTask()

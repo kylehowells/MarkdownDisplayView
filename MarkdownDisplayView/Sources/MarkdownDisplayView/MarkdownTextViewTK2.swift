@@ -445,7 +445,7 @@ extension MarkdownTextViewTK2 {
     /// 准备打字机效果：将所有文字设为透明，但保留布局占位
     func prepareForTypewriter() {
         guard textStorage.length > 0 else {
-            print("[TYPEWRITER] ⚠️ prepareForTypewriter 失败: textStorage 为空")
+            mdLog("[TYPEWRITER] ⚠️ prepareForTypewriter 失败: textStorage 为空")
             return
         }
 
@@ -453,7 +453,7 @@ extension MarkdownTextViewTK2 {
         // 直接持有它会让"原文"随播放一起变化。
         let attr = NSAttributedString(attributedString: textStorage)
 
-        print("[TYPEWRITER] 🎯 prepareForTypewriter 开始, 文本长度: \(attr.length), 内容: \(attr.string.prefix(50))...")
+        mdLog("[TYPEWRITER] 🎯 prepareForTypewriter 开始, 文本长度: \(attr.length), 内容: \(attr.string.prefix(50))...")
 
         // ⭐️ 重置显示位置
         lastRevealedIndex = 0
@@ -475,7 +475,7 @@ extension MarkdownTextViewTK2 {
             invalidateIntrinsicContentSize()
             textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
             setNeedsDisplay()
-            print("[TYPEWRITER] 🎯 prepareForTypewriter 完成 (append)")
+            mdLog("[TYPEWRITER] 🎯 prepareForTypewriter 完成 (append)")
             return
         }
 
@@ -496,7 +496,7 @@ extension MarkdownTextViewTK2 {
         textLayoutManager.ensureLayout(for: textLayoutManager.documentRange)
         setNeedsDisplay()
 
-        print("[TYPEWRITER] 🎯 prepareForTypewriter 完成")
+        mdLog("[TYPEWRITER] 🎯 prepareForTypewriter 完成")
     }
 
     /// 揭示前 N 个字符（支持批量显示）。
@@ -550,7 +550,7 @@ extension MarkdownTextViewTK2 {
 
         guard let originalAttr = attributedText,
               cachedOriginalAttributedString != nil else {
-            print("[TYPEWRITER] ⚠️ revealCharacter 提前返回: attributedText=\(attributedText != nil), prepared=\(cachedOriginalAttributedString != nil), index=\(index)")
+            mdLog("[TYPEWRITER] ⚠️ revealCharacter 提前返回: attributedText=\(attributedText != nil), prepared=\(cachedOriginalAttributedString != nil), index=\(index)")
             return (false, false)
         }
 

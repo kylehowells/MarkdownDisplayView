@@ -1,0 +1,18 @@
+//
+//  MarkdownLog.swift
+//  MarkdownDisplayView
+//
+
+import Foundation
+
+/// 调试日志。
+///
+/// 使用 `@autoclosure` 而非直接把 `print` 包进 `#if DEBUG`：字符串插值是 eager 求值的，
+/// 若只守卫 `print` 本身，release 下插值里的表达式（如流式缓存的 `text.count`，
+/// 对 grapheme 串是 O(n) 遍历）仍会在热路径上每 token 执行一次。
+@inline(__always)
+func mdLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    print(message())
+    #endif
+}

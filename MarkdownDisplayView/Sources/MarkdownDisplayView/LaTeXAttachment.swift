@@ -47,7 +47,7 @@ public final class LaTeXAttachment: NSTextAttachment {
         backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5)
     ) {
         let initStart = CFAbsoluteTimeGetCurrent()
-        print("[STREAM] 📐📐📐 LaTeXAttachment 初始化开始: \(latex.prefix(40))...")
+        mdLog("[STREAM] 📐📐📐 LaTeXAttachment 初始化开始: \(latex.prefix(40))...")
 
         self.latex = latex
         self.fontSize = fontSize
@@ -70,8 +70,8 @@ public final class LaTeXAttachment: NSTextAttachment {
             fontSize: fontSize,
             padding: padding
         )
-        print("[STREAM] 📐📐📐 LaTeXAttachment 尺寸计算耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - calcStart) * 1000))ms")
-        print("[STREAM] 📐📐📐 LaTeXAttachment 初始化完成，总耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - initStart) * 1000))ms")
+        mdLog("[STREAM] 📐📐📐 LaTeXAttachment 尺寸计算耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - calcStart) * 1000))ms")
+        mdLog("[STREAM] 📐📐📐 LaTeXAttachment 初始化完成，总耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - initStart) * 1000))ms")
     }
 
     /// 提供自定义 ViewProvider（缓存实例避免重复创建）
@@ -142,7 +142,7 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
 
         // ⚡️ 如果已经加载过，直接返回（避免重复创建）
         if isViewLoaded {
-            print("[STREAM] 📐📐📐 loadView() 已缓存，跳过创建")
+            mdLog("[STREAM] 📐📐📐 loadView() 已缓存，跳过创建")
             return
         }
 
@@ -151,7 +151,7 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
             return
         }
 
-        print("[STREAM] 📐📐📐 loadView() 开始创建公式视图: \(attachment.latex.prefix(30))...")
+        mdLog("[STREAM] 📐📐📐 loadView() 开始创建公式视图: \(attachment.latex.prefix(30))...")
 
         // 创建视图并复用其内容尺寸 —— createScrollableView 内部已解析过公式，
         // 再单独调 calculateSize 会把同一个公式重复解析一遍。
@@ -163,7 +163,7 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
             padding: attachment.padding,
             backgroundColor: attachment.backgroundColor
         )
-        print("[STREAM] 📐📐📐 loadView 视图创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - viewStart) * 1000))ms")
+        mdLog("[STREAM] 📐📐📐 loadView 视图创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - viewStart) * 1000))ms")
 
         // ⚡️ 设置明确的 frame（NSTextAttachmentViewProvider 需要）
         let width = min(formulaSize.width, attachment.maxWidth)
@@ -173,7 +173,7 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
         self.view = formulaView
         isViewLoaded = true
 
-        print("[STREAM] 📐📐📐 loadView() 完成，总耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - loadStart) * 1000))ms")
+        mdLog("[STREAM] 📐📐📐 loadView() 完成，总耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - loadStart) * 1000))ms")
     }
 
     

@@ -23,14 +23,14 @@ public extension Array {
     
     func jsonString() -> String {
         if (!JSONSerialization.isValidJSONObject(self)) {
-            print("无法解析出JSONString")
+            mdLog("无法解析出JSONString")
             return ""
         }
         do {
             let data = try JSONSerialization.data(withJSONObject: self, options: [])
             return String(data: data, encoding: .utf8) ?? ""
         } catch {
-            print("parser failed: \(error.localizedDescription)")
+            mdLog("parser failed: \(error.localizedDescription)")
         }
         return ""
     }
