@@ -559,8 +559,11 @@ ___
 
 - 所有 Markdown 语法的渲染效果
 - 自定义配置示例
+- 视频、Mermaid 和 ECharts 自定义扩展示例
 - 事件回调处理
 - 性能测试
+
+使用 CocoaPods 集成时，可查看包含相同自定义扩展的 [`CocoapodsMDExample`](CocoapodsMDExample/) 示例工程。
 
 运行示例项目：
 
@@ -714,12 +717,33 @@ scrollableMarkdownView.markdownView.configuration = config
 
 MarkdownDisplayKit 支持自定义扩展，可以添加自己的 Markdown 语法和渲染。
 
-### 内置视频扩展
+### 示例位置与能力
+
+自定义扩展实现位于示例工程中，不会随 `MarkdownDisplayView` 库 target 自动注册。两个 Demo 包含相同的实现：
+
+- Swift Package 示例：[`Example/ExampleForMarkdown/ExampleForMarkdown`](Example/ExampleForMarkdown/ExampleForMarkdown/)
+- CocoaPods 示例：[`CocoapodsMDExample/CocoapodsMDExample`](CocoapodsMDExample/CocoapodsMDExample/)
+- 注册入口：[`AppDelegate.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/AppDelegate.swift)
+- 完整 Markdown 用法：[`MarkdownExampleViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift) 中的“十二、自定义样式测试”
+
+| 示例 | 扩展方式 | 语法 | 当前能力 |
+|------|----------|------|----------|
+| 视频 | `MarkdownCustomParser` + `MarkdownCustomViewProvider` + `MarkdownCustomActionHandler` | `[video:文件名]` | 缩略图、时长、QuickLook 播放，支持 `.mov`、`.mp4`、`.m4v` |
+| Mermaid | `MarkdownCodeBlockRenderer` | `` ```mermaid `` | 流程图、时序图、类图、状态图、甘特图、思维导图 |
+| ECharts | `MarkdownCustomParser` + `MarkdownCustomViewProvider` | `<echarts height="320">JSON</echarts>` | 柱状图、饼图、折线图、散点图、堆叠面积图、K 线图、直方图、关系图、热力图 |
+
+对应源码：
+
+- [`MarkdownVideoExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownVideoExtension.swift)
+- [`MermaidRenderer.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MermaidRenderer.swift)
+- [`MarkdownEChartsExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownEChartsExtension.swift)
+
+### 视频自定义扩展示例
 
 在 `AppDelegate` 中注册视频扩展：
 
 ```swift
-import MarkdownDisplayKit
+import MarkdownDisplayView
 
 func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
     // 注册视频扩展
@@ -827,10 +851,12 @@ manager.register(actionHandler: MentionActionHandler())
 | 扩展 | 语法 | 说明 |
 |------|------|------|
 | 视频 | `[video:文件名]` | 嵌入视频，支持 QuickLook 播放 |
+| Mermaid | `` ```mermaid `` | 使用自定义代码块渲染器展示 Mermaid 图表 |
+| ECharts | `<echarts height="320">JSON</echarts>` | 使用 HTML 风格自定义标签展示 ECharts 图表 |
 | @提及* | `@username` | 用户提及（示例） |
 | 表情* | `::emoji_name::` | 自定义表情（示例） |
 
-*示例实现，默认未包含
+视频、Mermaid 和 ECharts 实现在 Demo 中；`@提及` 和表情仅为协议用法示意，默认未包含实际实现。
 
 ### 代码块渲染器
 
@@ -877,6 +903,36 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 - 状态图 (stateDiagram)
 - 甘特图 (gantt)
 - 思维导图 (mindmap)
+
+### ECharts 自定义标签示例
+
+ECharts 示例使用 HTML 风格标签，但底层仍由 `MarkdownCustomParser` 识别，并通过 `MarkdownCustomViewProvider` 返回 `WKWebView`，不会开启通用 HTML 或任意 `<script>` 渲染。
+
+在 `AppDelegate` 中注册：
+
+```swift
+MarkdownCustomExtensionManager.shared.registerEChartsExtension()
+```
+
+传入纯 JSON 格式的 ECharts `option`：
+
+```markdown
+<echarts height="320">
+{
+  "xAxis": { "type": "category", "data": ["周一", "周二", "周三"] },
+  "yAxis": { "type": "value" },
+  "series": [{ "type": "bar", "data": [120, 200, 150] }]
+}
+</echarts>
+```
+
+`height` 可选，默认 320pt，示例会将高度限制在 220～640pt。配置必须是 JSON 对象，不支持 JavaScript 函数；非法 JSON、脚本加载失败或渲染失败时会显示错误提示。当前 Demo 展示：
+
+- 柱状图、饼图、折线图、散点图
+- 堆叠面积图、K 线图、直方图
+- 关系图、热力图
+
+ECharts 和 Mermaid 示例通过 CDN 加载脚本，首次展示需要网络。如产品要求完全离线，可将固定版本的 JavaScript 文件加入 App Bundle，并在对应 Demo Renderer 中改为加载本地资源。
 
 ## 故障排除
 

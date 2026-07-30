@@ -541,8 +541,11 @@ Check out the complete example project in the `Example/ExampleForMarkdown` direc
 
 - All Markdown syntax rendering effects
 - Custom configuration examples
+- Video, Mermaid, and ECharts custom extension examples
 - Event callback handling
 - Performance testing
+
+For CocoaPods integration, see the [`CocoapodsMDExample`](CocoapodsMDExample/) project, which contains the same custom extensions.
 
 Run the example project:
 
@@ -696,12 +699,33 @@ scrollableMarkdownView.markdownView.configuration = config
 
 MarkdownDisplayKit supports custom extensions to add your own Markdown syntax and rendering.
 
-### Built-in Video Extension
+### Example Locations and Capabilities
+
+The custom extension implementations live in the example projects and are not registered automatically by the `MarkdownDisplayView` library target. Both demos contain the same implementations:
+
+- Swift Package example: [`Example/ExampleForMarkdown/ExampleForMarkdown`](Example/ExampleForMarkdown/ExampleForMarkdown/)
+- CocoaPods example: [`CocoapodsMDExample/CocoapodsMDExample`](CocoapodsMDExample/CocoapodsMDExample/)
+- Registration entry point: [`AppDelegate.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/AppDelegate.swift)
+- Complete Markdown usage: the “Custom Style Tests” section in [`MarkdownExampleViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift)
+
+| Example | Extension mechanism | Syntax | Current capabilities |
+|---------|---------------------|--------|----------------------|
+| Video | `MarkdownCustomParser` + `MarkdownCustomViewProvider` + `MarkdownCustomActionHandler` | `[video:filename]` | Thumbnail, duration, QuickLook playback; supports `.mov`, `.mp4`, and `.m4v` |
+| Mermaid | `MarkdownCodeBlockRenderer` | `` ```mermaid `` | Flowcharts, sequence diagrams, class diagrams, state diagrams, Gantt charts, and mind maps |
+| ECharts | `MarkdownCustomParser` + `MarkdownCustomViewProvider` | `<echarts height="320">JSON</echarts>` | Bar, pie, line, scatter, stacked area, candlestick, histogram, graph, and heatmap examples |
+
+Source files:
+
+- [`MarkdownVideoExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownVideoExtension.swift)
+- [`MermaidRenderer.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MermaidRenderer.swift)
+- [`MarkdownEChartsExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownEChartsExtension.swift)
+
+### Video Custom Extension Example
 
 Register the video extension in `AppDelegate`:
 
 ```swift
-import MarkdownDisplayKit
+import MarkdownDisplayView
 
 func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
     // Register video extension
@@ -809,10 +833,12 @@ manager.register(actionHandler: MentionActionHandler())
 | Extension | Syntax | Description |
 |-----------|--------|-------------|
 | Video | `[video:filename]` | Embed video with QuickLook playback |
+| Mermaid | `` ```mermaid `` | Render Mermaid diagrams with a custom code block renderer |
+| ECharts | `<echarts height="320">JSON</echarts>` | Render ECharts with an HTML-style custom tag |
 | Mention* | `@username` | User mention (example) |
 | Emoji* | `::emoji_name::` | Custom emoji (example) |
 
-*Example implementations, not included by default
+Video, Mermaid, and ECharts are implemented in the demos. Mention and Emoji only illustrate the extension protocols and do not have bundled implementations.
 
 ### Code Block Renderers
 
@@ -859,6 +885,36 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 - State Diagram (stateDiagram)
 - Gantt Chart (gantt)
 - Mind Map (mindmap)
+
+### ECharts Custom Tag Example
+
+The ECharts example uses an HTML-style tag, but it is still recognized by `MarkdownCustomParser` and rendered by a `MarkdownCustomViewProvider` that returns a `WKWebView`. It does not enable general-purpose HTML or arbitrary `<script>` rendering.
+
+Register it in `AppDelegate`:
+
+```swift
+MarkdownCustomExtensionManager.shared.registerEChartsExtension()
+```
+
+Pass an ECharts `option` as pure JSON:
+
+```markdown
+<echarts height="320">
+{
+  "xAxis": { "type": "category", "data": ["Mon", "Tue", "Wed"] },
+  "yAxis": { "type": "value" },
+  "series": [{ "type": "bar", "data": [120, 200, 150] }]
+}
+</echarts>
+```
+
+`height` is optional and defaults to 320pt; the example clamps it to 220–640pt. The configuration must be a JSON object and cannot contain JavaScript functions. Invalid JSON, script loading failures, and rendering failures produce a visible error message. The current demos cover:
+
+- Bar, pie, line, and scatter charts
+- Stacked area, candlestick, and histogram charts
+- Graph and heatmap charts
+
+The ECharts and Mermaid examples load their scripts from a CDN, so the first render requires network access. For fully offline products, bundle a fixed JavaScript version with the app and update the corresponding demo renderer to load the local resource.
 
 ## Troubleshooting
 
