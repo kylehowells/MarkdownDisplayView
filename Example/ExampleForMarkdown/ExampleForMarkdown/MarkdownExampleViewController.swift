@@ -27,6 +27,7 @@ class MarkdownExampleViewController: UIViewController {
         titleLabel.text = "Sync Markdown Preview"
         titleLabel.backgroundColor = .systemBackground
         titleLabel.textColor = .systemBlue
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(titleLabel)
         
         let backButton = UIButton(type: .system)

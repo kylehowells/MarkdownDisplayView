@@ -90,7 +90,7 @@ Config.local.json structure:
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.5")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.6")
 ]
 ```
 
@@ -100,7 +100,7 @@ dependencies: [
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 1.8.5'
+pod 'MarkdownDisplayKit', '~> 1.8.6'
 ```
 
 Then run:
@@ -945,6 +945,12 @@ The ECharts and Mermaid examples load their scripts from a CDN, so the first ren
 **Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
 
 ## Changelog
+
+### 1.8.6 (2026-07-31)
+
+- 🐛 **Fixed Initial Details-Block Whitespace** - Long ordered lists no longer leave a large blank area before the following heading or collapsible `<details>` block when a Markdown screen first appears. The list wrapper is now constrained to its actual content height instead of being allowed to stretch vertically.
+- 📏 **Synchronized Deferred Layout Without User Interaction** - After off-screen elements are appended, the Markdown view now propagates its final height through the outer scroll view's `contentLayoutGuide` and `contentSize`; users no longer need to swipe once to correct the layout.
+- 📍 **Preserved Scroll Position During Append-Only Rendering** - Deferred elements appended below the current viewport no longer add their entire height to `contentOffset`, preventing incorrect jumps and stale-offset clamping during the first render.
 
 ### 1.8.5 (2026-07-30)
 

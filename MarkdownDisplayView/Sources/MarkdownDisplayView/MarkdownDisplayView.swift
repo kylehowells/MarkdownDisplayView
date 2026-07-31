@@ -1694,40 +1694,56 @@ public final class MarkdownViewTextKit: UIView {
 
             mdLog("📏 [FirstScreen] Estimated: \(String(format: "%.1f", estimatedFirstScreenHeight))pt, Actual: \(String(format: "%.1f", actualFirstScreenHeight))pt, Error: \(String(format: "%.1f", firstScreenHeightError))pt")
 
-            // ⚡️ 添加占位视图，预留离屏内容空间，避免布局跳动
-            let baseEstimatedHeight = offscreenElements.reduce(CGFloat(0)) { total, element in
-                total + estimateElementHeight(element, containerWidth: containerWidth)
+            // ⭐️ 是否需要占位视图取决于用户当前是否已经滚动离开顶部。
+            // 用户刚进入页面时 offset≈0，内容向下增长不会引起任何可见跳动，
+            // 此时插入一个几千 pt 的空白占位视图纯粹是制造"大段空白 + 二次跳变"（估算误差越大越明显）。
+            // 只有当用户已经滚动到内容中间时，才需要占位撑住高度，避免离屏内容加载完成后
+            // 页面在其视口内发生突兀的回缩/前跳。
+            let scrollViewForPlacement = findParentScrollView()
+            let currentScrollOffset = scrollViewForPlacement?.contentOffset.y ?? 0
+
+            if currentScrollOffset > 50 {
+                // ⚡️ 添加占位视图，预留离屏内容空间，避免布局跳动
+                let baseEstimatedHeight = offscreenElements.reduce(CGFloat(0)) { total, element in
+                    total + estimateElementHeight(element, containerWidth: containerWidth)
+                }
+
+                // ⭐️ 改进：基于首屏误差比例来调整离屏估算
+                // 如果首屏估算偏低10%，假设离屏也会偏低类似比例
+                let errorRatio = estimatedFirstScreenHeight > 0 ? actualFirstScreenHeight / estimatedFirstScreenHeight : 1.0
+                let adjustedOffscreenHeight = baseEstimatedHeight * errorRatio
+
+                // 额外增加 5% 缓冲（比之前的10%少，因为已经用误差比例校准了）
+                let estimatedOffscreenHeight = adjustedOffscreenHeight * 1.05
+
+                mdLog("📦 [Placeholder] Creating placeholder: base=\(String(format: "%.1f", baseEstimatedHeight))pt, adjusted=\(String(format: "%.1f", adjustedOffscreenHeight))pt (ratio=\(String(format: "%.2f", errorRatio))), final=\(String(format: "%.1f", estimatedOffscreenHeight))pt")
+
+                // 创建占位视图
+                placeholderView?.removeFromSuperview()
+                let placeholder = UIView()
+                placeholder.backgroundColor = .clear
+                placeholder.translatesAutoresizingMaskIntoConstraints = false
+                contentStackView.addArrangedSubview(placeholder)
+
+                NSLayoutConstraint.activate([
+                    placeholder.heightAnchor.constraint(equalToConstant: estimatedOffscreenHeight)
+                ])
+
+                placeholderView = placeholder
+
+                // 强制立即布局，确保占位视图生效
+                contentStackView.layoutIfNeeded()
+
+                // ⚡️ 现在通知父视图完整高度（首屏内容 + 占位视图）
+                mdLog("🎬 [FirstScreen] Calling notifyHeightChange() after adding placeholder")
+                notifyHeightChange()
+            } else {
+                // 用户在顶部：不占位，直接上报首屏真实高度，避免出现空白区域
+                mdLog("📦 [Placeholder] Skipped (user at top, offset=\(String(format: "%.1f", currentScrollOffset))) - reporting real first-screen height only")
+                placeholderView?.removeFromSuperview()
+                placeholderView = nil
+                notifyHeightChange()
             }
-
-            // ⭐️ 改进：基于首屏误差比例来调整离屏估算
-            // 如果首屏估算偏低10%，假设离屏也会偏低类似比例
-            let errorRatio = estimatedFirstScreenHeight > 0 ? actualFirstScreenHeight / estimatedFirstScreenHeight : 1.0
-            let adjustedOffscreenHeight = baseEstimatedHeight * errorRatio
-
-            // 额外增加 5% 缓冲（比之前的10%少，因为已经用误差比例校准了）
-            let estimatedOffscreenHeight = adjustedOffscreenHeight * 1.05
-
-            mdLog("📦 [Placeholder] Creating placeholder: base=\(String(format: "%.1f", baseEstimatedHeight))pt, adjusted=\(String(format: "%.1f", adjustedOffscreenHeight))pt (ratio=\(String(format: "%.2f", errorRatio))), final=\(String(format: "%.1f", estimatedOffscreenHeight))pt")
-
-            // 创建占位视图
-            placeholderView?.removeFromSuperview()
-            let placeholder = UIView()
-            placeholder.backgroundColor = .clear
-            placeholder.translatesAutoresizingMaskIntoConstraints = false
-            contentStackView.addArrangedSubview(placeholder)
-
-            NSLayoutConstraint.activate([
-                placeholder.heightAnchor.constraint(equalToConstant: estimatedOffscreenHeight)
-            ])
-
-            placeholderView = placeholder
-
-            // 强制立即布局，确保占位视图生效
-            contentStackView.layoutIfNeeded()
-
-            // ⚡️ 现在通知父视图完整高度（首屏内容 + 占位视图）
-            mdLog("🎬 [FirstScreen] Calling notifyHeightChange() after adding placeholder")
-            notifyHeightChange()
 
             // 🎯 阶段2: 延迟渲染离屏元素
             offscreenRenderWorkItem?.cancel()
@@ -1809,26 +1825,21 @@ public final class MarkdownViewTextKit: UIView {
                 self.loadImages()
                 self.invalidateIntrinsicContentSize()
 
-                // ⭐️ 计算高度差异并补偿滚动位置
+                // ⭐️ 计算追加前后的高度变化，供诊断使用。
+                // 离屏元素始终追加在现有内容末尾，不会改变当前视口之前的内容位置，
+                // 因此无论用户是否已经滚动，都不应该把整段新增高度加到 contentOffset。
                 self.contentStackView.layoutIfNeeded()
                 let contentHeightAfterRender = self.contentStackView.bounds.height
                 let heightDiff = contentHeightAfterRender - contentHeightBeforeRender
 
                 mdLog("📏 [Offscreen] Height before: \(String(format: "%.1f", contentHeightBeforeRender))pt, after: \(String(format: "%.1f", contentHeightAfterRender))pt, diff: \(String(format: "%.1f", heightDiff))pt")
 
-                if let scrollView = scrollView, abs(heightDiff) > 1 {
-                    if scrollOffsetBeforeRender > 50 {
-                        let newOffset = scrollOffsetBeforeRender + heightDiff
-                        mdLog("📍 [Scroll Compensation] Adjusting offset: \(String(format: "%.1f", scrollOffsetBeforeRender)) -> \(String(format: "%.1f", newOffset))")
-                        UIView.performWithoutAnimation {
-                            scrollView.contentOffset.y = max(0, newOffset)
-                        }
-                    } else {
-                        mdLog("📍 [Scroll Compensation] Skipped (user at top, offset=\(String(format: "%.1f", scrollOffsetBeforeRender)))")
-                    }
+                // ⭐️ force: true，绕过 9pt 防抖门槛，确保离屏内容加载完成后高度变化一定会通知出去，
+                // 并沿约束链刷新父 ScrollView 的 contentLayoutGuide/contentSize，不依赖用户触摸。
+                self.notifyHeightChange(force: true)
+                if let scrollView {
+                    mdLog("📍 [Scroll Preservation] Appended content below viewport; offset remains \(String(format: "%.1f", scrollOffsetBeforeRender)), contentSize=\(String(format: "%.1f", scrollView.contentSize.height))")
                 }
-
-                self.notifyHeightChange()
                 mdLog("⚡️ [Offscreen] Completed in \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - offscreenStartTime) * 1000))ms")
             }
             offscreenRenderWorkItem = workItem
@@ -2519,12 +2530,14 @@ public final class MarkdownViewTextKit: UIView {
         indentWrapper.setContentCompressionResistancePriority(.required, for: .vertical)
         indentWrapper.addSubview(container)
 
-        // 关键：只限制“不要超出 wrapper 底部”，不强制 container 贴底。
-        // 避免外层把 wrapper 拉高时，内部 list stack 被迫拉伸首项来填充高度。
+        // wrapper 本身没有 intrinsicContentSize，必须同时约束顶部和底部，
+        // 才能让它的高度严格由列表内容决定。若底部仅使用 lessThanOrEqual，
+        // Auto Layout 可以把 wrapper 任意拉高，额外高度会表现为列表后的大段留白，
+        // 直到 UIScrollView 因用户滚动再次触发布局才可能被压回真实高度。
         let topConstraint = container.topAnchor.constraint(equalTo: indentWrapper.topAnchor, constant: resolvedListTopPadding())
         topConstraint.identifier = Self.listWrapperTopConstraintIdentifier
 
-        let bottomConstraint = container.bottomAnchor.constraint(lessThanOrEqualTo: indentWrapper.bottomAnchor, constant: -resolvedListBottomPadding())
+        let bottomConstraint = container.bottomAnchor.constraint(equalTo: indentWrapper.bottomAnchor, constant: -resolvedListBottomPadding())
         bottomConstraint.priority = .required
         bottomConstraint.identifier = Self.listWrapperBottomConstraintIdentifier
 
@@ -3939,6 +3952,27 @@ public final class MarkdownViewTextKit: UIView {
             mdLog("📏 [Height] ✅ Notifying parent: \(String(format: "%.1f", lastReportedHeight)) -> \(String(format: "%.1f", newHeight))")
             lastReportedHeight = newHeight
             self.onHeightChange?(newHeight)
+
+            // ⭐️ 关键修复：上面的 layoutIfNeeded() 只解算了 self（markdownView）这一层。
+            // 当宿主是 ScrollableMarkdownViewTextKit 时，真正持有 contentSize 的是外层
+            // UIScrollView，它的 bottomAnchor 通过 contentLayoutGuide 依赖 markdownView 的高度。
+            // 在异步（离屏渲染 / 打字机）路径里手动调 layoutIfNeeded() 会让 markdownView 自己
+            // 提前解算完毕，但不会顺带触发祖先 scrollView 的布局 —— 于是 scrollView 的
+            // contentSize 和内部子视图 frame 停留在旧状态，直到用户触屏滚动、系统才被动调用
+            // UIScrollView.layoutSubviews() 重新从约束里取值。这里主动把父 scrollView 也
+            // 一起刷新，消除"必须手动滑一下才能恢复正常布局"的问题。
+            //
+            // ⚠️ 注意：嵌在 UITableView/UICollectionView cell 里时不能这样做 —— UITableView
+            // 本身也是 UIScrollView，findParentScrollView() 会一路找到它。流式打字机期间
+            // notifyHeightChange 每秒触发几十次，若每次都强制整张表 layoutIfNeeded()，
+            // 代价是对全表重新布局而非仅这一行 cell，且可能与 self-sizing cell 自身的
+            // 高度计算产生时序冲突。这类场景已经通过 cell 侧的 onHeightChange 回调
+            // （tableView.beginUpdates/endUpdates 或 performBatchUpdates）来驱动高度变化，
+            // 不需要也不应该在这里代劳。
+            if !isEmbeddedInReusableCell(), let scrollView = findParentScrollView() {
+                scrollView.setNeedsLayout()
+                scrollView.layoutIfNeeded()
+            }
         } else {
             mdLog("📏 [Height] ⚠️ Skipped notification (diff < 9.0pt)")
         }

@@ -79,6 +79,12 @@ class ViewController: UIViewController {
             aiChatButton.topAnchor.constraint(equalTo: crashReproButton.bottomAnchor, constant: 20)
 
         ])
+
+        if ProcessInfo.processInfo.arguments.contains("-AutoOpenSyncDemo") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.openSyncDemo()
+            }
+        }
     }
 
     @objc private func openSyncDemo() {

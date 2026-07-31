@@ -97,7 +97,7 @@ Config.local.json 结构如下：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.5")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.6")
 ]
 ```
 
@@ -118,7 +118,7 @@ dependencies: [
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 1.8.5'
+pod 'MarkdownDisplayKit', '~> 1.8.6'
 ```
 
 然后运行:
@@ -963,6 +963,12 @@ ECharts 和 Mermaid 示例通过 CDN 加载脚本，首次展示需要网络。�
 **解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
 
 ## 更新日志
+
+### 1.8.6 (2026-07-31)
+
+- 🐛 **修复首次进入时折叠模块前大段留白** - 长有序列表不再在后续标题或 `<details>` 折叠模块前产生整屏空白；列表 wrapper 改为严格跟随真实内容高度，避免被 Auto Layout 任意纵向拉伸。
+- 📏 **无需用户滑动即可同步延迟布局** - 离屏元素追加完成后，Markdown 最终高度会主动沿外层 ScrollView 的 `contentLayoutGuide` 和 `contentSize` 完成同步，不再依赖用户先滑动一次触发布局刷新。
+- 📍 **追加式渲染保持当前滚动位置** - 延迟内容追加在当前视口下方时，不再把全部新增高度错误累加到 `contentOffset`，避免首次渲染期间发生错误跳转或被旧滚动范围截断。
 
 ### 1.8.5 (2026-07-30)
 
