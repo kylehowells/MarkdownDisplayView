@@ -6,7 +6,7 @@
 //
 
 import UIKit
-import MarkdownDisplayView
+import MarkdownDisplayKit
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
 

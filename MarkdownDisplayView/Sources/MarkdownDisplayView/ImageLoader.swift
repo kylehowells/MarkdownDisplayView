@@ -6,9 +6,9 @@
 //
 
 import Foundation
-
 import UIKit
 import Combine
+import Kingfisher
 
 /**
  private var cancellables = Set<AnyCancellable>()
@@ -24,34 +24,35 @@ import Combine
 /// An Image loader
 public struct ImageLoader {
     public static let shared = ImageLoader()
-    private let cache = ImageCacheManager.shared
     
     /// Load image from url.
     /// - Parameter url: image url
     /// - Returns: An
     /// - How to user? See above the ImageLoader.
     public func loadImage(from url: URL) -> AnyPublisher<UIImage?, Never> {
-        if let cachedImage = cache.image(for: url.absoluteString) {
-            return Just(cachedImage).eraseToAnyPublisher()
-        } else {
-            return URLSession.shared.dataTaskPublisher(for: url)
-                .map({
-                    if ($0.response as? HTTPURLResponse)?.statusCode ?? 0 != 200 {
-                        return  UIImage()
-                    } else {
-                        return UIImage(data: $0.data) ?? UIImage()
+        Deferred {
+            let subject = PassthroughSubject<UIImage?, Never>()
+            var downloadTask: DownloadTask?
+            var hasStarted = false
+
+            return subject
+                .handleEvents(
+                    receiveCancel: {
+                        downloadTask?.cancel()
+                    },
+                    receiveRequest: { _ in
+                        guard !hasStarted else { return }
+                        hasStarted = true
+                        downloadTask = KingfisherManager.shared.retrieveImage(with: url) { result in
+                            let image = try? result.get().image
+                            subject.send(image ?? UIImage())
+                            subject.send(completion: .finished)
+                        }
                     }
-                })
-                .map({ image in
-                    if image.size != .zero {
-                        self.cache.cacheImage(image, for: url.absoluteString)
-                        return image
-                    }
-                    return UIImage()
-                })
-                .replaceError(with: UIImage())
-                .receive(on: DispatchQueue.main)
+                )
                 .eraseToAnyPublisher()
         }
+        .receive(on: DispatchQueue.main)
+        .eraseToAnyPublisher()
     }
 }

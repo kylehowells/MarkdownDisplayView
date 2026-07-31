@@ -73,10 +73,6 @@ class MarkdownExampleViewController: UIViewController {
         scrollableMarkdownView.onLinkTap = { [weak self] url in
             self?.handleLinkTap(url)
         }
-        scrollableMarkdownView.onImageTap = { imageURL in
-            //获取图片,如果已经加载出来
-            _ = ImageCacheManager.shared.image(for: imageURL)
-        }
         scrollableMarkdownView.onTOCItemTap = { item in
             print("title:\(item.title), level:\(item.level), id:\(item.id)")
         }

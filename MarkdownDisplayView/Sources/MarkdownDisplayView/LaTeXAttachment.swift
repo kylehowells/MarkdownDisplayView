@@ -26,8 +26,8 @@ public final class LaTeXAttachment: NSTextAttachment {
     /// 背景颜色
     let backgroundColor: UIColor
 
-    /// 公式视图的计算尺寸
-    private var calculatedSize: CGSize = .zero
+    /// 测量和绘制全链路共享的唯一渲染结果。
+    let renderResult: LatexRenderResult
 
     /// 缓存的 ViewProvider 实例（避免重复创建）
     private var cachedViewProvider: LaTeXAttachmentViewProvider?
@@ -39,12 +39,38 @@ public final class LaTeXAttachment: NSTextAttachment {
     ///   - maxWidth: 最大宽度
     ///   - padding: 内边距
     ///   - backgroundColor: 背景颜色
-    public init(
+    public convenience init(
         latex: String,
         fontSize: CGFloat = 22,
         maxWidth: CGFloat,
         padding: CGFloat = 20,
         backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5)
+    ) {
+        let calcStart = CFAbsoluteTimeGetCurrent()
+        let renderResult = LatexRenderResult.parse(
+            latex: latex,
+            fontSize: fontSize,
+            padding: padding,
+            maxWidth: maxWidth
+        )
+        mdLog("[STREAM] 📐📐📐 LaTeXAttachment 解析与尺寸计算耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - calcStart) * 1000))ms")
+        self.init(
+            latex: latex,
+            fontSize: fontSize,
+            maxWidth: maxWidth,
+            padding: padding,
+            backgroundColor: backgroundColor,
+            renderResult: renderResult
+        )
+    }
+
+    init(
+        latex: String,
+        fontSize: CGFloat,
+        maxWidth: CGFloat,
+        padding: CGFloat,
+        backgroundColor: UIColor,
+        renderResult: LatexRenderResult
     ) {
         let initStart = CFAbsoluteTimeGetCurrent()
         mdLog("[STREAM] 📐📐📐 LaTeXAttachment 初始化开始: \(latex.prefix(40))...")
@@ -54,6 +80,7 @@ public final class LaTeXAttachment: NSTextAttachment {
         self.maxWidth = maxWidth
         self.padding = padding
         self.backgroundColor = backgroundColor
+        self.renderResult = renderResult
 
         super.init(data: nil, ofType: nil)
 
@@ -63,14 +90,6 @@ public final class LaTeXAttachment: NSTextAttachment {
         // ⚡️ 注册 ViewProvider 类
         self.lineLayoutPadding = 0
 
-        // 计算公式尺寸
-        let calcStart = CFAbsoluteTimeGetCurrent()
-        self.calculatedSize = LatexMathView.calculateSize(
-            latex: latex,
-            fontSize: fontSize,
-            padding: padding
-        )
-        mdLog("[STREAM] 📐📐📐 LaTeXAttachment 尺寸计算耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - calcStart) * 1000))ms")
         mdLog("[STREAM] 📐📐📐 LaTeXAttachment 初始化完成，总耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - initStart) * 1000))ms")
     }
 
@@ -108,10 +127,7 @@ public final class LaTeXAttachment: NSTextAttachment {
         characterIndex charIndex: Int
     ) -> CGRect {
         // 返回独立一行的尺寸
-        let width = min(calculatedSize.width, maxWidth)
-        let height = calculatedSize.height
-
-        return CGRect(x: 0, y: 0, width: width, height: height)
+        CGRect(origin: .zero, size: renderResult.displaySize)
     }
 }
 
@@ -153,21 +169,16 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
 
         mdLog("[STREAM] 📐📐📐 loadView() 开始创建公式视图: \(attachment.latex.prefix(30))...")
 
-        // 创建视图并复用其内容尺寸 —— createScrollableView 内部已解析过公式，
-        // 再单独调 calculateSize 会把同一个公式重复解析一遍。
+        // 直接复用 Attachment 初始化时的解析树和尺寸，不再解析或重新测量。
         let viewStart = CFAbsoluteTimeGetCurrent()
-        let (formulaView, formulaSize) = LatexMathView.createScrollableView(
-            latex: attachment.latex,
-            fontSize: attachment.fontSize,
-            maxWidth: attachment.maxWidth,
-            padding: attachment.padding,
+        let (formulaView, _) = LatexMathView.createScrollableView(
+            renderResult: attachment.renderResult,
             backgroundColor: attachment.backgroundColor
         )
         mdLog("[STREAM] 📐📐📐 loadView 视图创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - viewStart) * 1000))ms")
 
         // ⚡️ 设置明确的 frame（NSTextAttachmentViewProvider 需要）
-        let width = min(formulaSize.width, attachment.maxWidth)
-        formulaView.frame = CGRect(x: 0, y: 0, width: width, height: formulaSize.height)
+        formulaView.frame = CGRect(origin: .zero, size: attachment.renderResult.displaySize)
 
         // 设置视图并标记已加载
         self.view = formulaView

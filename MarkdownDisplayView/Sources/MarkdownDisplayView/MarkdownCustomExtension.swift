@@ -121,6 +121,12 @@ public final class MarkdownCustomExtensionManager {
 
     public static let shared = MarkdownCustomExtensionManager()
 
+    /// 保护扩展注册表的并发读写。
+    ///
+    /// Markdown 解析会在各 MarkdownView 的后台 renderQueue 上执行，而业务方可能在
+    /// 运行期间注册扩展；Swift Dictionary 不支持这种并发读写。这里只保护注册表本身，
+    /// 不在锁内调用第三方 parser/provider，避免长时间占锁或回调 manager 时死锁。
+    private let registryLock = NSLock()
     private var parsers: [String: MarkdownCustomParser] = [:]
     private var viewProviders: [String: MarkdownCustomViewProvider] = [:]
     private var actionHandlers: [String: MarkdownCustomActionHandler] = [:]
@@ -128,48 +134,70 @@ public final class MarkdownCustomExtensionManager {
 
     private init() {}
 
+    private func withRegistryLock<T>(_ body: () throws -> T) rethrows -> T {
+        registryLock.lock()
+        defer { registryLock.unlock() }
+        return try body()
+    }
+
     // MARK: - Registration
 
     /// 注册自定义解析器
     public func register(parser: MarkdownCustomParser) {
-        parsers[parser.identifier] = parser
+        withRegistryLock {
+            parsers[parser.identifier] = parser
+        }
     }
 
     /// 注册自定义视图提供者
     public func register(viewProvider: MarkdownCustomViewProvider) {
-        viewProviders[viewProvider.supportedType] = viewProvider
+        withRegistryLock {
+            viewProviders[viewProvider.supportedType] = viewProvider
+        }
     }
 
     /// 注册自定义事件处理器
     public func register(actionHandler: MarkdownCustomActionHandler) {
-        actionHandlers[actionHandler.supportedType] = actionHandler
+        withRegistryLock {
+            actionHandlers[actionHandler.supportedType] = actionHandler
+        }
     }
 
     /// 注册代码块渲染器
     public func register(codeBlockRenderer: MarkdownCodeBlockRenderer) {
-        codeBlockRenderers[codeBlockRenderer.supportedLanguage.lowercased()] = codeBlockRenderer
+        withRegistryLock {
+            codeBlockRenderers[codeBlockRenderer.supportedLanguage.lowercased()] = codeBlockRenderer
+        }
     }
 
     // MARK: - Access
 
     /// 获取所有解析器
     public var allParsers: [MarkdownCustomParser] {
-        return Array(parsers.values)
+        withRegistryLock {
+            Array(parsers.values)
+        }
     }
 
     /// 获取视图提供者
     public func viewProvider(for type: String) -> MarkdownCustomViewProvider? {
-        return viewProviders[type]
+        withRegistryLock {
+            viewProviders[type]
+        }
     }
 
     /// 获取事件处理器
     public func actionHandler(for type: String) -> MarkdownCustomActionHandler? {
-        return actionHandlers[type]
+        withRegistryLock {
+            actionHandlers[type]
+        }
     }
 
     /// 获取代码块渲染器
     public func codeBlockRenderer(for language: String) -> MarkdownCodeBlockRenderer? {
-        return codeBlockRenderers[language.lowercased()]
+        withRegistryLock {
+            codeBlockRenderers[language.lowercased()]
+        }
     }
 
     // MARK: - Parsing
@@ -180,8 +208,10 @@ public final class MarkdownCustomExtensionManager {
     ) -> [(range: NSRange, data: CustomElementData)] {
         var results: [(range: NSRange, data: CustomElementData)] = []
         let nsText = text as NSString
+        // 只在锁内复制快照。parser.parse 是第三方代码，必须在解锁后调用。
+        let parserSnapshot = allParsers
 
-        for parser in parsers.values {
+        for parser in parserSnapshot {
             guard let regex = try? NSRegularExpression(pattern: parser.pattern, options: []) else {
                 continue
             }

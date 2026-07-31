@@ -22,7 +22,8 @@ import Kingfisher
 
     public static func normalizedImageURL(from url: String) -> URL? {
         var urlString = ""
-        if url.hasSuffix(".png") || url.hasSuffix(".jpg") || url.hasSuffix(".jpeg") {
+        let lowercaseURL = url.lowercased()
+        if lowercaseURL.hasSuffix(".png") || lowercaseURL.hasSuffix(".jpg") || lowercaseURL.hasSuffix(".jpeg") {
             urlString = url
         } else {
             if url.contains("?") {

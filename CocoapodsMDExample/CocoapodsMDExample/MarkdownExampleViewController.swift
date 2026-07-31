@@ -6,7 +6,7 @@
 //
 
 import UIKit
-import MarkdownDisplayView
+import MarkdownDisplayKit
 
 /// 示例 ViewController，展示 MarkdownView 的使用方法
 class MarkdownExampleViewController: UIViewController {
@@ -71,10 +71,6 @@ class MarkdownExampleViewController: UIViewController {
         // 设置链接点击回调
         scrollableMarkdownView.onLinkTap = { [weak self] url in
             self?.handleLinkTap(url)
-        }
-        scrollableMarkdownView.onImageTap = { imageURL in
-            //获取图片,如果已经加载出来
-            _ = ImageCacheManager.shared.image(for: imageURL)
         }
         scrollableMarkdownView.onTOCItemTap = { item in
             print("title:\(item.title), level:\(item.level), id:\(item.id)")

@@ -90,7 +90,7 @@ Config.local.json structure:
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.6")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.9")
 ]
 ```
 
@@ -100,7 +100,7 @@ dependencies: [
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 1.8.6'
+pod 'MarkdownDisplayKit', '~> 1.8.9'
 ```
 
 Then run:
@@ -945,6 +945,13 @@ The ECharts and Mermaid examples load their scripts from a CDN, so the first ren
 **Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
 
 ## Changelog
+
+### 1.8.9 (2026-07-31)
+
+- 🔒 **Thread-Safe Custom Extension Registry** - Parser, view-provider, action-handler, and code-block-renderer registration and lookup are now synchronized. Third-party parser callbacks execute outside the registry lock to avoid re-entrant deadlocks.
+- 🖼 **Unified Kingfisher Image Pipeline** - Removed the redundant in-house memory/disk image cache and routed loading, caching, request cancellation, and cache hits through Kingfisher.
+- ⚡ **Single-Pass LaTeX Rendering** - A formula is parsed once into a reusable render result shared by measurement, attachment layout, and view creation, eliminating duplicate parse work without introducing artificial IDs.
+- 🧩 **Modularized Markdown Renderer** - Split the monolithic `MarkdownDisplayView.swift` into focused `MarkdownViewTextKit` extension files while preserving the public API and existing rendering behavior.
 
 ### 1.8.6 (2026-07-31)
 

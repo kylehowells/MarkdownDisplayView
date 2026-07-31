@@ -7,7 +7,7 @@
 
 import UIKit
 import WebKit
-import MarkdownDisplayView
+import MarkdownDisplayKit
 
 // MARK: - ECharts Parser
 

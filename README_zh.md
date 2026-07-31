@@ -97,7 +97,7 @@ Config.local.json 结构如下：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.6")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.9")
 ]
 ```
 
@@ -118,7 +118,7 @@ dependencies: [
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 1.8.6'
+pod 'MarkdownDisplayKit', '~> 1.8.9'
 ```
 
 然后运行:
@@ -963,6 +963,13 @@ ECharts 和 Mermaid 示例通过 CDN 加载脚本，首次展示需要网络。�
 **解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
 
 ## 更新日志
+
+### 1.8.9 (2026-07-31)
+
+- 🔒 **自定义扩展注册表线程安全** - Parser、ViewProvider、ActionHandler 与代码块 Renderer 的注册和读取现已加锁；第三方 Parser 回调在锁外执行，避免重入死锁。
+- 🖼 **统一使用 Kingfisher 图片管线** - 删除重复的自研内存/磁盘图片缓存，图片加载、缓存命中和请求取消统一交由 Kingfisher 处理。
+- ⚡ **LaTeX 公式真正单次解析** - 公式只解析一次，并由尺寸测量、Attachment 布局和视图创建共享同一个渲染结果，无需引入人为唯一 ID。
+- 🧩 **Markdown 渲染器模块化拆分** - 将超长的 `MarkdownDisplayView.swift` 拆分为职责清晰的 `MarkdownViewTextKit` Extension 文件，同时保持公开 API 和既有渲染行为不变。
 
 ### 1.8.6 (2026-07-31)
 
