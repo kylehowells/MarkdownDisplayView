@@ -8,6 +8,104 @@
 import UIKit
 import Foundation
 
+/// FIFO storage whose dequeue cost is amortized O(1).
+///
+/// Keeping a logical head avoids `Array.removeFirst()` shifting every remaining
+/// typewriter task. The consumed prefix is compacted only occasionally.
+struct TypewriterPendingQueue<Element> {
+    private var storage: [Element] = []
+    private var head = 0
+
+    var isEmpty: Bool { head >= storage.count }
+    var count: Int { storage.count - head }
+
+    mutating func append(_ element: Element) {
+        storage.append(element)
+    }
+
+    mutating func popFirst() -> Element? {
+        guard !isEmpty else { return nil }
+
+        let element = storage[head]
+        head += 1
+
+        if head == storage.count {
+            storage.removeAll(keepingCapacity: true)
+            head = 0
+        } else if head >= 64, head * 2 >= storage.count {
+            storage.removeFirst(head)
+            head = 0
+        }
+
+        return element
+    }
+
+    func forEach(_ body: (Element) -> Void) {
+        guard !isEmpty else { return }
+        for index in head..<storage.count {
+            body(storage[index])
+        }
+    }
+
+    func contains(where predicate: (Element) -> Bool) -> Bool {
+        guard !isEmpty else { return false }
+        return storage[head...].contains(where: predicate)
+    }
+
+    mutating func updateEach(_ body: (inout Element) -> Void) {
+        guard !isEmpty else { return }
+        for index in head..<storage.count {
+            body(&storage[index])
+        }
+    }
+
+    mutating func removeAll() {
+        storage.removeAll(keepingCapacity: true)
+        head = 0
+    }
+}
+
+/// Task-local punctuation classification indexed in UTF-16 coordinates.
+///
+/// `NSAttributedString.length` and `revealCharacter(upto:)` both use UTF-16
+/// offsets. Building this lookup once keeps every animation tick O(1) and avoids
+/// mixing those offsets with Swift grapheme-cluster indices.
+struct TypewriterPunctuationProfile {
+    private static let commaLikeUnits: Set<UInt16> = [0xFF0C, 0x002C, 0x3001] // ， , 、
+    private static let sentenceEndUnits: Set<UInt16> = [
+        0x3002, // 。
+        0xFF01, // ！
+        0xFF1F, // ？
+        0x0021, // !
+        0x003F, // ?
+        0x003B, // ;
+        0xFF1B, // ；
+        0x000A, // newline
+    ]
+
+    private let extraDelays: [Int: TimeInterval]
+
+    init(text: String) {
+        var delays: [Int: TimeInterval] = [:]
+        delays.reserveCapacity(max(1, text.utf16.count / 16))
+
+        for (offset, codeUnit) in text.utf16.enumerated() {
+            if Self.commaLikeUnits.contains(codeUnit) {
+                delays[offset] = 0.03
+            } else if Self.sentenceEndUnits.contains(codeUnit) {
+                delays[offset] = 0.08
+            }
+        }
+
+        extraDelays = delays
+    }
+
+    func extraDelay(atUTF16Offset offset: Int) -> TimeInterval {
+        guard offset >= 0 else { return 0 }
+        return extraDelays[offset] ?? 0
+    }
+}
+
 // MARK: - Typewriter Engine
 
 @available(iOS 15.0, *)
@@ -20,7 +118,7 @@ class TypewriterEngine {
         case block(UIView)
     }
 
-    private var taskQueue: [TaskType] = []
+    private var taskQueue = TypewriterPendingQueue<TaskType>()
     private var isRunning = false
     private var isPaused = false
 
@@ -35,6 +133,7 @@ class TypewriterEngine {
     // 追踪当前正在执行的任务，以便超时后强制完成
     private var currentTask: TaskType?
     private var currentTaskToken: UUID?
+    private var currentPunctuationProfile: TypewriterPunctuationProfile?
 
     // 基础耗时
     // ⭐️ 优化：降低基础延迟，加快打字速度
@@ -163,7 +262,7 @@ class TypewriterEngine {
         if case .text(let textView) = currentTask {
             textView.finishAppendTypewriterPlayback()
         }
-        for task in taskQueue {
+        taskQueue.forEach { task in
             if case .text(let textView) = task {
                 textView.finishAppendTypewriterPlayback()
             }
@@ -173,6 +272,7 @@ class TypewriterEngine {
         isRunning = false
         currentTask = nil
         currentTaskToken = nil
+        currentPunctuationProfile = nil
         lastTaskWasBlock = false  // ⭐️ 重置状态
     }
 
@@ -183,51 +283,50 @@ class TypewriterEngine {
 
     /// ⭐️ 检查视图是否在队列中
     func isViewInQueue(_ view: UIView) -> Bool {
-        for task in taskQueue {
+        return taskQueue.contains { task in
             switch task {
             case .show(let v):
-                if v === view { return true }
+                return v === view
             case .text(let tv):
-                if tv === view { return true }
+                return tv === view
             case .label(let lbl):
-                if lbl === view { return true }
+                return lbl === view
             case .block(let bv):
-                if bv === view { return true }
+                return bv === view
             }
         }
-        return false
     }
 
     /// ⭐️ 替换队列中的视图（替换所有匹配的任务）
     func replaceView(_ oldView: UIView, with newView: UIView) {
         var replacedCount = 0
 
-        for i in 0..<taskQueue.count {
-            switch taskQueue[i] {
+        taskQueue.updateEach { task in
+            switch task {
             case .show(let v):
                 if v === oldView {
                     newView.alpha = 0
-                    taskQueue[i] = .show(newView)
+                    task = .show(newView)
                     replacedCount += 1
                     mdLog("[TYPEWRITER] 🔄 Replaced .show task view")
                 }
             case .text(let tv):
                 if tv === oldView, let newTv = newView.subviews.compactMap({ $0 as? MarkdownTextViewTK2 }).first ?? (newView as? MarkdownTextViewTK2) {
                     newTv.prepareForTypewriter()
-                    taskQueue[i] = .text(newTv)
+                    task = .text(newTv)
                     replacedCount += 1
                     mdLog("[TYPEWRITER] 🔄 Replaced .text task view")
                 }
             case .label(let lbl):
                 if lbl === oldView, let newLbl = newView as? UILabel {
-                    taskQueue[i] = .label(newLbl)
+                    task = .label(newLbl)
                     replacedCount += 1
                     mdLog("[TYPEWRITER] 🔄 Replaced .label task view")
                 }
             case .block(let bv):
                 if bv === oldView {
                     newView.alpha = 0
-                    taskQueue[i] = .block(newView)
+                    task = .block(newView)
                     replacedCount += 1
                     mdLog("[TYPEWRITER] 🔄 Replaced .block task view")
                 }
@@ -316,7 +415,7 @@ class TypewriterEngine {
         isRunning = true
         isPaused = false
 
-        let task = taskQueue.removeFirst()
+        guard let task = taskQueue.popFirst() else { return }
         currentTask = task
 
         let token = UUID()
@@ -408,6 +507,7 @@ class TypewriterEngine {
             let textLen = textView.attributedText?.length ?? 0
             let textPreview = textView.attributedText?.string.prefix(30) ?? ""
             mdLog("[TYPEWRITER] 📝 开始执行 .text 任务, 文本长度: \(textLen), 内容: \(textPreview)...")
+            currentPunctuationProfile = TypewriterPunctuationProfile(text: textView.attributedText?.string ?? "")
             if textLen == 0 {
                 _ = textView.revealCharacter(upto: 0)
                 finishCurrentTask()
@@ -447,7 +547,7 @@ class TypewriterEngine {
             onTypewriterStep?()
         }
 
-        let delay = calculateDelay(at: currentIndex, text: textView.attributedText?.string ?? "")
+        let delay = calculateDelay(atUTF16Offset: currentIndex)
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             self?.typeNextCharacter(textView, currentIndex: nextIndex, token: token)
@@ -486,6 +586,7 @@ class TypewriterEngine {
         if case .text(let textView) = currentTask {
             textView.finishAppendTypewriterPlayback()
         }
+        currentPunctuationProfile = nil
 
         isRunning = false
         // ⭐️ 优化：如果上一个任务是块级任务，添加额外延迟，让元素之间有明显间隔
@@ -498,16 +599,9 @@ class TypewriterEngine {
         }
     }
 
-    private func calculateDelay(at index: Int, text: String) -> TimeInterval {
-        var delay = baseDuration
-        // 使用 limitedBy 安全获取索引，防止 Unicode 字符边界导致崩溃
-        if index >= 0,
-           index < text.count,
-           let charIndex = text.index(text.startIndex, offsetBy: index, limitedBy: text.endIndex) {
-            let char = text[charIndex]
-            if "，,、".contains(char) { delay += 0.03 }
-            else if "。！？!?;；\n".contains(char) { delay += 0.08 }
-        }
-        return delay + Double.random(in: 0...0.005)
+    private func calculateDelay(atUTF16Offset offset: Int) -> TimeInterval {
+        baseDuration
+            + (currentPunctuationProfile?.extraDelay(atUTF16Offset: offset) ?? 0)
+            + Double.random(in: 0...0.005)
     }
 }

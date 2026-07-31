@@ -10,6 +10,35 @@ import Foundation
 import Combine
 import NaturalLanguage
 
+/// Immutable, shared regex set for streaming atomic ranges.
+///
+/// The order and overlap behavior intentionally match the original implementation:
+/// results are sorted by location but overlapping image/link and math ranges are not merged.
+enum AtomicRangeMatcher {
+    private static let patterns = [
+        "(?s)\\$\\$.*?\\$\\$", // block math
+        "\\$[^\\n\\$]+?\\$",  // inline math
+        "!\\[.*?\\]\\(.*?\\)", // image
+        "\\[.*?\\]\\(.*?\\)",  // link
+    ]
+
+    private static let regularExpressions: [NSRegularExpression] = patterns.compactMap {
+        try? NSRegularExpression(pattern: $0, options: [])
+    }
+
+    static func ranges(in text: String) -> [NSRange] {
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        var ranges: [NSRange] = []
+
+        for regex in regularExpressions {
+            ranges.append(contentsOf: regex.matches(in: text, options: [], range: fullRange).map(\.range))
+        }
+
+        ranges.sort { $0.location < $1.location }
+        return ranges
+    }
+}
+
 @available(iOS 15.0, *)
 extension MarkdownViewTextKit {
     // MARK: - Table View
@@ -169,8 +198,10 @@ extension MarkdownViewTextKit {
     func createFootnoteView(footnotes: [MarkdownFootnote], width: CGFloat) -> UIView {
         // [FOOTNOTE_DEBUG] 脚注视图创建
         mdLog("[FOOTNOTE_DEBUG] 🎨 createFootnoteView called! count=\(footnotes.count), isRealStreamingMode=\(isRealStreamingMode)")
+        #if DEBUG
         let callStack = Thread.callStackSymbols.prefix(6).joined(separator: "\n")
         mdLog("[FOOTNOTE_DEBUG] 🎨 Call stack:\n\(callStack)")
+        #endif
 
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -490,35 +521,7 @@ extension MarkdownViewTextKit {
     //MARK: - streaming method
     /// 计算需要原子化输出的区间（公式、图片、链接）
         func calculateAtomicRanges(in text: String) -> [NSRange] {
-            var ranges: [NSRange] = []
-            let nsString = text as NSString
-
-            // 定义正则表达式模式
-            // 1. 块级公式 $$...$$ (允许换行 (?s))
-            let blockMathPattern = "(?s)\\$\\$.*?\\$\\$"
-            // 2. 行内公式 $...$ (不允许换行)
-            let inlineMathPattern = "\\$[^\\n\\$]+?\\$"
-            // 3. 图片 ![alt](url)
-            let imagePattern = "!\\[.*?\\]\\(.*?\\)"
-            // 4. 链接 [text](url) - 如果你也希望链接整体出现，加上这个
-            let linkPattern = "\\[.*?\\]\\(.*?\\)"
-
-            // 合并正则 (注意顺序，块级优先于行内)
-            // 这里为了演示，把链接也加上去了，你可以根据需要注释掉 linkPattern
-            let patterns = [blockMathPattern, inlineMathPattern, imagePattern,linkPattern]
-
-            for pattern in patterns {
-                if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-                    let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-                    for match in matches {
-                        ranges.append(match.range)
-                    }
-                }
-            }
-
-            // 排序并合并重叠区间（虽然正则通常分开写，但为了保险）
-            ranges.sort { $0.location < $1.location }
-            return ranges
+            AtomicRangeMatcher.ranges(in: text)
         }
 
 }

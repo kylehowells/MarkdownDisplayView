@@ -165,6 +165,9 @@ import UIKit
 
     #expect(currentText.intrinsicContentSize.height < 160)
     #expect(queuedText.intrinsicContentSize.height < 160)
+    #expect(engine.isIdle)
+    #expect(engine.isViewInQueue(currentText) == false)
+    #expect(engine.isViewInQueue(queuedText) == false)
 }
 
 @available(iOS 15.0, *)
