@@ -606,11 +606,27 @@ class TableViewStreamingViewController: UIViewController {
     private func splitMarkdownBySection(_ markdown: String) -> [String] {
         var blocks: [String] = []
         var currentBlock = ""
+        var activeFence: String?
 
         let lines = markdown.components(separatedBy: "\n")
 
         for line in lines {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+
+            // 代码块内的 “# comment” 不是 Markdown 标题。旧切分器会在 Python/Shell
+            // 注释处截断 fenced code，随后把两个不完整块交给 appendBlock。
+            if let fence = activeFence {
+                currentBlock += line + "\n"
+                if trimmedLine.hasPrefix(fence) {
+                    activeFence = nil
+                }
+                continue
+            }
+            if let marker = markdownFenceMarker(in: trimmedLine) {
+                activeFence = marker
+                currentBlock += line + "\n"
+                continue
+            }
 
             // 检测是否是标题行（# 或 ## 开头）
             let isHeading = trimmedLine.hasPrefix("# ") ||
@@ -634,6 +650,13 @@ class TableViewStreamingViewController: UIViewController {
 
         print("📦 [RealStream] Split markdown into \(blocks.count) blocks")
         return blocks
+    }
+
+    private func markdownFenceMarker(in trimmedLine: String) -> String? {
+        guard let first = trimmedLine.first, first == "`" || first == "~" else { return nil }
+        let count = trimmedLine.prefix { $0 == first }.count
+        guard count >= 3 else { return nil }
+        return String(repeating: first, count: count)
     }
 
     // MARK: - 真流式发送
