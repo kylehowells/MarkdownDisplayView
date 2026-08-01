@@ -133,6 +133,51 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
+@Test func completeBlockStreamingPreservesOrderWithoutDuplicateViews() async throws {
+    let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+    view.enableTypewriterEffect = false
+    view.beginRealStreaming(useSmartBuffer: false)
+
+    let blocks = [
+        "# 目录\n\n1. [第一章](#第一章)\n2. [第二章](#第二章)\n",
+        "## 第一章\n\n第一章正文。\n",
+        "## 第二章\n\n第二章正文。\n",
+    ]
+    for block in blocks {
+        view.appendBlock(block)
+    }
+
+    await withCheckedContinuation { continuation in
+        view.endRealStreaming {
+            continuation.resume()
+        }
+    }
+
+    let headingTitles = view.tableOfContents.map(\.title)
+    let headingIDs = view.tableOfContents.map(\.id)
+    let viewTags = view.contentStackView.arrangedSubviews.map(\.tag)
+    #expect(headingTitles.contains("目录"))
+    #expect(headingTitles.contains("第一章"))
+    #expect(headingTitles.contains("第二章"))
+    #expect(Set(headingIDs).count == headingIDs.count)
+    #expect(view.headingViews.count == headingIDs.count)
+    #expect(view.tocSectionId == headingIDs.first)
+    #expect(view.tocSectionView === view.headingViews[headingIDs[0]])
+    #expect(view.oldElements.count == view.contentStackView.arrangedSubviews.count)
+    #expect(Set(viewTags).count == viewTags.count)
+    #expect(view.markdown == blocks.joined())
+
+    view.beginRealStreaming(useSmartBuffer: false)
+    view.appendBlock("# 新目录\n\n新内容。\n")
+    await withCheckedContinuation { continuation in
+        view.endRealStreaming { continuation.resume() }
+    }
+    #expect(view.tableOfContents.map(\.title) == ["新目录"])
+    #expect(view.imageAttachments.isEmpty)
+}
+
+@available(iOS 15.0, *)
+@MainActor
 @Test func appendTypewriterSeparatesCharacterRevealFromHeightChanges() async throws {
     let textView = MarkdownTextViewTK2()
     textView.typewriterTextMode = .append

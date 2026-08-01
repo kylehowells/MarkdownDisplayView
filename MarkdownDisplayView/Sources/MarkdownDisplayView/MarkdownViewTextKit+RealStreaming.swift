@@ -62,6 +62,9 @@ extension MarkdownViewTextKit {
         contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
         headingViews.removeAll()
         tocSectionView = nil
+        tableOfContents.removeAll()
+        tocSectionId = nil
+        imageAttachments.removeAll()
 
         // 重置 TypewriterEngine
         typewriterEngine.stop()
@@ -121,11 +124,12 @@ extension MarkdownViewTextKit {
     }
 
     /// 串行后台解析模块。renderQueue 保证完成顺序与输入顺序一致；UIKit 更新只回到主线程执行。
-    func enqueueSmartStreamModule(_ moduleText: String) {
+    func enqueueSmartStreamModule(_ moduleText: String, appendSeparator: Bool = true) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard isRealStreamingMode else { return }
 
-        realStreamAccumulatedText += moduleText + "\n\n"
+        realStreamAccumulatedText += moduleText
+        if appendSeparator { realStreamAccumulatedText += "\n\n" }
         realStreamParseInFlightCount += 1
         renderVersionLock.lock()
         let currentRenderVersion = renderVersion
@@ -169,7 +173,12 @@ extension MarkdownViewTextKit {
                 self.realStreamParseInFlightCount = max(0, self.realStreamParseInFlightCount - 1)
                 guard self.isRealStreamingMode else { return }
 
-                let (elements, attachments, tocItems, tocId) = result
+                let (parsedElements, attachments, parsedTOCItems, parsedTOCId) = result
+                let (elements, tocItems, tocId) = self.rebaseRealStreamHeadingIDs(
+                    elements: parsedElements,
+                    tocItems: parsedTOCItems,
+                    tocSectionId: parsedTOCId
+                )
                 let previousElementCount = self.realStreamParsedElementCount
                 self.realStreamParsedElementCount += elements.count
                 self.imageAttachments.append(contentsOf: attachments)
@@ -184,6 +193,47 @@ extension MarkdownViewTextKit {
                 self.tryFinishRealStreamDrain()
             }
         }
+    }
+
+    /// 每个完整模块都会使用新的 MarkdownParser，局部标题 ID 会从 heading-0 重新开始。
+    /// 合并模块前将标题及 TOC ID 重定位到当前文档的全局序号，避免 headingViews 被覆盖。
+    func rebaseRealStreamHeadingIDs(
+        elements: [MarkdownRenderElement],
+        tocItems: [MarkdownTOCItem],
+        tocSectionId: String?
+    ) -> (elements: [MarkdownRenderElement], tocItems: [MarkdownTOCItem], tocSectionId: String?) {
+        let offset = tableOfContents.count
+        let idMap = Dictionary(uniqueKeysWithValues: tocItems.enumerated().map { index, item in
+            (item.id, "heading-\(offset + index)")
+        })
+
+        func remap(_ element: MarkdownRenderElement) -> MarkdownRenderElement {
+            switch element {
+            case .heading(let id, let text):
+                return .heading(id: idMap[id] ?? id, text: text)
+            case .quote(let children, let level):
+                return .quote(children: children.map(remap), level: level)
+            case .details(let summary, let children):
+                return .details(summary: summary, children: children.map(remap))
+            case .list(let items, let level):
+                let remappedItems = items.map { item in
+                    ListNodeItem(marker: item.marker, children: item.children.map(remap))
+                }
+                return .list(items: remappedItems, level: level)
+            default:
+                return element
+            }
+        }
+
+        let rebasedTOCItems = tocItems.enumerated().map { index, item in
+            MarkdownTOCItem(level: item.level, title: item.title, id: "heading-\(offset + index)")
+        }
+
+        return (
+            elements.map(remap),
+            rebasedTOCItems,
+            tocSectionId.flatMap { idMap[$0] }
+        )
     }
 
     /// 追加一个完整的 Markdown 块（保持向后兼容）
@@ -206,84 +256,10 @@ extension MarkdownViewTextKit {
 
         mdLog("📝 [RealStream] Appending block: \(block.prefix(50))... (\(block.count) chars)")
 
-        // 累积文本
-        realStreamAccumulatedText += block
-
-        // 异步解析新增内容
-        parseAndDisplayNewContent()
-    }
-
-    /// 解析并显示新增内容
-    func parseAndDisplayNewContent() {
-        let textToParse = realStreamAccumulatedText
-        let previousElementCount = realStreamParsedElementCount
-        let containerWidth = currentContainerWidthForParsing()
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            guard let self = self, self.isRealStreamingMode else { return }
-
-            let parseStart = CFAbsoluteTimeGetCurrent()
-
-            // ⭐️ 关键修复：必须预处理脚注，移除脚注定义（如 [^1]: xxx）
-            // 否则脚注定义会被 MarkdownParser 当作普通文本解析并渲染
-            // 注意：这里只移除脚注定义，不保存脚注用于渲染
-            // 脚注的实际渲染在 endRealStreaming() 中进行
-            let (processedText, removedFootnotes) = self.preprocessFootnotes(textToParse)
-
-            // [FOOTNOTE_DEBUG] 检查脚注预处理
-            if !removedFootnotes.isEmpty {
-                mdLog("[FOOTNOTE_DEBUG] 📋 parseAndDisplayNewContent: preprocessFootnotes removed \(removedFootnotes.count) footnotes")
-                mdLog("[FOOTNOTE_DEBUG] 📋 Original length: \(textToParse.count), Processed length: \(processedText.count)")
-            }
-
-            // 解析 Markdown
-            let config = self.configuration
-            let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
-            let (elements, attachments, tocItems, tocId) = renderer.render(processedText)
-
-            let parseDuration = (CFAbsoluteTimeGetCurrent() - parseStart) * 1000
-
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.isRealStreamingMode else { return }
-
-                // 计算新增的元素
-                let newElementCount = elements.count
-                let addedElements = Array(elements.dropFirst(previousElementCount))
-
-                mdLog("✅ [RealStream] Parsed: +\(addedElements.count) elements (total: \(newElementCount)), time: \(String(format: "%.1f", parseDuration))ms")
-
-                // [CODEBLOCK_DEBUG] 打印新增元素类型
-                for (idx, elem) in addedElements.enumerated() {
-                    switch elem {
-                    case .codeBlock(let lang, _):
-                        mdLog("[CODEBLOCK_DEBUG] 🟢 Added codeBlock[\(previousElementCount + idx)]: lang=\(lang ?? "nil")")
-                    case .heading(let id, let attr):
-                        mdLog("[CODEBLOCK_DEBUG] 📌 Added heading[\(previousElementCount + idx)]: id=\(id), text=\(attr.string.prefix(30))")
-                    case .attributedText(let attr):
-                        let preview = attr.string.prefix(50).replacingOccurrences(of: "\n", with: "⏎")
-                        mdLog("[CODEBLOCK_DEBUG] 📝 Added text[\(previousElementCount + idx)]: \(preview)")
-                    default:
-                        mdLog("[CODEBLOCK_DEBUG] ➕ Added element[\(previousElementCount + idx)]: \(String(describing: elem).prefix(50))")
-                    }
-                }
-
-                // ⭐️ 关键修复：检测已有元素内容变化并更新视图
-                // 解决代码块分块到达时第一次为空、后续内容不更新的问题
-                self.updateExistingElementsIfNeeded(elements: elements, previousCount: previousElementCount)
-
-                // 更新状态（不更新脚注，脚注在 endRealStreaming 中处理）
-                self.realStreamParsedElementCount = newElementCount
-                // self.streamParsedFootnotes = footnotes  // ⚠️ 移除，不在这里处理脚注
-                self.imageAttachments = attachments
-                self.tableOfContents = tocItems
-                self.tocSectionId = tocId
-
-                // 显示新增元素
-                if !addedElements.isEmpty {
-                    self.displayRealStreamElements(addedElements, startIndex: previousElementCount)
-                }
-            }
-        }
+        // 完整块也必须进入串行解析队列。旧实现会为每个块并发重解析累计全文，
+        // 多个结果可能使用相同的 previousElementCount 并乱序回写，造成 View 重复、
+        // tag 冲突及目录状态被旧结果覆盖。
+        enqueueSmartStreamModule(block, appendSeparator: false)
     }
 
     /// 显示真流式新增的元素
@@ -420,95 +396,6 @@ extension MarkdownViewTextKit {
         if !realStreamBackpressureActive { scheduleRealStreamRenderPump() }
         startNextSmartStreamParseIfPossible()
         tryFinishRealStreamDrain()
-    }
-
-    /// 检测并更新已有元素的内容变化
-    /// 解决代码块、LaTeX 等块级元素分块到达时内容不更新的问题
-    func updateExistingElementsIfNeeded(elements: [MarkdownRenderElement], previousCount: Int) {
-        let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
-
-        // 分帧创建期间，解析结果可能先更新尚未建 View 的元素。直接合并到待创建命令，
-        // 避免先创建旧版本、下一轮又找不到对应 arrangedSubview。
-        pendingRealStreamElements.updateEach { pending in
-            guard pending.globalIndex < min(previousCount, elements.count) else { return }
-            pending.element = elements[pending.globalIndex]
-        }
-
-        // 只检查已有的元素（索引 < previousCount）
-        for i in 0..<min(previousCount, elements.count, oldElements.count) {
-            let newElement = elements[i]
-            let oldElement = oldElements[i]
-
-            // 检查代码块内容是否有变化（长度增加）
-            if case .codeBlock(let newLang, let newAttr) = newElement,
-               case .codeBlock(_, let oldAttr) = oldElement {
-                // 如果新内容比旧内容长，需要更新视图
-                if newAttr.length > oldAttr.length {
-                    mdLog("[CODEBLOCK_DEBUG] 🔄 Updating codeBlock[\(i)]: \(oldAttr.length) -> \(newAttr.length) chars, lang=\(newLang ?? "nil")")
-                    updateElementView(at: i, with: newElement, containerWidth: containerWidth)
-                    oldElements[i] = newElement
-                }
-            }
-
-            // 检查 LaTeX 内容是否有变化
-            if case .latex(let newLatex) = newElement,
-               case .latex(let oldLatex) = oldElement {
-                if newLatex.count > oldLatex.count {
-                    mdLog("[CODEBLOCK_DEBUG] 🔄 Updating latex[\(i)]: \(oldLatex.count) -> \(newLatex.count) chars")
-                    updateElementView(at: i, with: newElement, containerWidth: containerWidth)
-                    oldElements[i] = newElement
-                }
-            }
-
-            // 检查 attributedText 内容变化
-            if case .attributedText(let newAttr) = newElement,
-               case .attributedText(let oldAttr) = oldElement {
-                let newInline = newAttr.attribute(inlineSegmentAttributeKey, at: 0, effectiveRange: nil) != nil
-                let oldInline = oldAttr.attribute(inlineSegmentAttributeKey, at: 0, effectiveRange: nil) != nil
-                if newAttr.string != oldAttr.string || newInline != oldInline {
-                    mdLog("[CODEBLOCK_DEBUG] 🔄 Updating text[\(i)]: \(oldAttr.length) -> \(newAttr.length) chars")
-                    updateElementView(at: i, with: newElement, containerWidth: containerWidth)
-                    oldElements[i] = newElement
-                }
-            }
-        }
-    }
-
-    /// 更新指定索引处的元素视图
-    func updateElementView(at index: Int, with element: MarkdownRenderElement, containerWidth: CGFloat) {
-        let viewTag = 1000 + index
-
-        // 查找对应的视图
-        guard let oldView = contentStackView.arrangedSubviews.first(where: { $0.tag == viewTag }) else {
-            mdLog("[CODEBLOCK_DEBUG] ⚠️ Cannot find view with tag \(viewTag) for update")
-            return
-        }
-
-        // 获取旧视图在 StackView 中的索引
-        guard let stackIndex = contentStackView.arrangedSubviews.firstIndex(of: oldView) else {
-            mdLog("[CODEBLOCK_DEBUG] ⚠️ Cannot find stackIndex for view with tag \(viewTag)")
-            return
-        }
-
-        // 创建新视图
-        let newView = createView(for: element, containerWidth: containerWidth)
-        newView.tag = viewTag
-
-        // 检查旧视图是否在 TypewriterEngine 队列中
-        let wasInQueue = typewriterEngine.isViewInQueue(oldView)
-        let wasHidden = oldView.isHidden
-
-        // 替换视图
-        oldView.removeFromSuperview()
-        contentStackView.insertArrangedSubview(newView, at: stackIndex)
-
-        // 如果启用打字机效果且原视图还在队列中，将新视图加入队列
-        if enableTypewriterEffect && wasInQueue {
-            newView.isHidden = wasHidden
-            typewriterEngine.replaceView(oldView, with: newView)
-        }
-
-        mdLog("[CODEBLOCK_DEBUG] ✅ View[\(index)] updated at stackIndex=\(stackIndex)")
     }
 
     /// 结束真流式模式
