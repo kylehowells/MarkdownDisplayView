@@ -418,6 +418,25 @@ extension MarkdownViewTextKit {
         return max(0, totalHeight)
     }
 
+    /// 合并同一轮 RunLoop 内的测高请求，避免 Typewriter、建 View 和外层列表连续触发布局。
+    func scheduleHeightChangeNotification(force: Bool = false) {
+        pendingForcedHeightNotification = pendingForcedHeightNotification || force
+        guard !heightNotificationScheduled else { return }
+        heightNotificationScheduled = true
+        let now = CACurrentMediaTime()
+        let frameInterval = 1.0 / 60.0
+        let delay = max(0, frameInterval - (now - lastHeightNotificationTimestamp))
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            self.heightNotificationScheduled = false
+            self.lastHeightNotificationTimestamp = CACurrentMediaTime()
+            let shouldForce = self.pendingForcedHeightNotification
+            self.pendingForcedHeightNotification = false
+            self.notifyHeightChange(force: shouldForce)
+        }
+    }
+
     func notifyHeightChange(force: Bool = false) {
         let start = CFAbsoluteTimeGetCurrent()
         defer {
@@ -515,7 +534,7 @@ extension MarkdownViewTextKit {
         // ⭐️ 关键修复：在布局完成后检查高度是否需要修正
         // 这解决了"初始宽度不准导致高度计算错误"的问题（Chicken & Egg problem）
         // 通过对比 lastReportedHeight，我们只在真正需要时触发更新，从而避免死循环
-        notifyHeightChange()
+        scheduleHeightChangeNotification()
     }
     
     //MARK: - streaming method

@@ -46,6 +46,15 @@ extension MarkdownViewTextKit {
         realStreamParsedElementCount = 0
         realStreamBlockQueue = []
         realStreamOnComplete = onComplete
+        realStreamRenderGeneration += 1
+        pendingRealStreamElements.removeAll()
+        realStreamRenderPumpScheduled = false
+        realStreamParseInFlightCount = 0
+        pendingSmartStreamModules.removeAll()
+        smartStreamParseActive = false
+        realStreamDrainCompletion = nil
+        isEndingRealStream = false
+        realStreamBackpressureActive = false
 
         // 清空现有内容
         markdown = ""
@@ -87,6 +96,7 @@ extension MarkdownViewTextKit {
             mdLog("⚠️ [RealStream] Not in real streaming mode, call beginRealStreaming() first")
             return
         }
+        guard !isEndingRealStream else { return }
 
         // ⭐️ 标记收到新数据，用于等待动画检测
         markDataReceived()
@@ -96,12 +106,11 @@ extension MarkdownViewTextKit {
         // 使用 StreamBuffer 检测完整模块
         let result = streamBuffer.append(data)
 
-        // ⭐️ 关键修复：按顺序同步处理检测到的完整模块
-        // 使用串行队列确保模块按顺序解析和渲染
+        // 串行后台队列保持模块顺序，同时避免 Markdown 解析阻塞主线程。
         if !result.completeModules.isEmpty {
             for (index, moduleText) in result.completeModules.enumerated() {
                 mdLog("📦 [SmartBuffer] Processing module \(index + 1)/\(result.completeModules.count): \(moduleText.prefix(50))...")
-                parseAndRenderModuleSync(moduleText)
+                enqueueSmartStreamModule(moduleText)
             }
         }
 
@@ -111,78 +120,77 @@ extension MarkdownViewTextKit {
         }
     }
 
-    /// ⭐️ 同步解析并渲染单个模块（保证顺序）
-    /// 串行队列的作用是保证多个模块按到达顺序解析，而非把工作卸载到后台
-    /// —— `.sync` 会完整阻塞调用方（主线程）直到解析完成。
-    func parseAndRenderModuleSync(_ moduleText: String) {
-        // 记录当前元素数量（在主线程上）
-        let previousElementCount = realStreamParsedElementCount
+    /// 串行后台解析模块。renderQueue 保证完成顺序与输入顺序一致；UIKit 更新只回到主线程执行。
+    func enqueueSmartStreamModule(_ moduleText: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isRealStreamingMode else { return }
 
-        // UIKit 状态必须在进入队列前于主线程取快照
-        let containerWidth = currentContainerWidthForParsing()
-
-        var elements: [MarkdownRenderElement] = []
-        var attachments: [(attachment: MarkdownImageAttachment, urlString: String)] = []
-        var tocItems: [MarkdownTOCItem] = []
-        var tocId: String? = nil
-        var parseDuration: Double = 0
-
-        // 使用串行队列同步解析，确保顺序
-        renderQueue.sync { [weak self] in
-            guard let self = self, self.isRealStreamingMode else { return }
-
-            let parseStart = CFAbsoluteTimeGetCurrent()
-
-            // 预处理脚注
-            let (processedText, _) = self.preprocessFootnotes(moduleText)
-
-            // 解析 Markdown
-            let config = self.configuration
-            let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
-            let result = renderer.render(processedText)
-
-            elements = result.0
-            attachments = result.1
-            tocItems = result.2
-            tocId = result.3
-
-            parseDuration = (CFAbsoluteTimeGetCurrent() - parseStart) * 1000
-        }
-
-        // ⭐️ 回到主线程更新 UI（不使用 sync 避免死锁）
-        guard self.isRealStreamingMode, !elements.isEmpty || !attachments.isEmpty else { return }
-
-        mdLog("✅ [SmartBuffer] Parsed module: \(elements.count) elements, time: \(String(format: "%.1f", parseDuration))ms")
-
-        // 累积到完整文本（用于最终的 markdown 属性）
-        self.realStreamAccumulatedText += moduleText + "\n\n"
-
-        // 更新状态
-        let newCount = self.realStreamParsedElementCount + elements.count
-        self.realStreamParsedElementCount = newCount
-        self.imageAttachments.append(contentsOf: attachments)
-        self.tableOfContents.append(contentsOf: tocItems)
-        if let id = tocId {
-            self.tocSectionId = id
-        }
-
-        // 显示元素
-        if !elements.isEmpty {
-            self.displayRealStreamElements(elements, startIndex: previousElementCount)
-        }
+        realStreamAccumulatedText += moduleText + "\n\n"
+        realStreamParseInFlightCount += 1
+        renderVersionLock.lock()
+        let currentRenderVersion = renderVersion
+        renderVersionLock.unlock()
+        pendingSmartStreamModules.append(PendingSmartStreamModule(
+            text: moduleText,
+            renderVersion: currentRenderVersion,
+            renderGeneration: realStreamRenderGeneration
+        ))
+        startNextSmartStreamParseIfPossible()
     }
 
-    /// 解析并渲染单个模块（旧版异步方法，保留向后兼容）
-    @available(*, deprecated, message: "Use parseAndRenderModuleSync instead")
-    func parseAndRenderModule(_ moduleText: String) {
-        parseAndRenderModuleSync(moduleText)
+    func startNextSmartStreamParseIfPossible() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isRealStreamingMode,
+              !smartStreamParseActive,
+              !realStreamBackpressureActive,
+              pendingRealStreamElements.count < realStreamTypewriterHighWatermark * 2,
+              let module = pendingSmartStreamModules.popFirst() else { return }
+
+        smartStreamParseActive = true
+        let containerWidth = currentContainerWidthForParsing()
+        let config = configuration
+
+        renderQueue.async { [weak self] in
+            guard let self else { return }
+            self.renderVersionLock.lock()
+            let isCurrentVersion = self.renderVersion == module.renderVersion
+            self.renderVersionLock.unlock()
+            guard isCurrentVersion else { return }
+
+            let parseStart = CFAbsoluteTimeGetCurrent()
+            let (processedText, _) = self.preprocessFootnotes(module.text)
+            let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
+            let result = renderer.render(processedText)
+            let parseDuration = (CFAbsoluteTimeGetCurrent() - parseStart) * 1000
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, module.renderGeneration == self.realStreamRenderGeneration else { return }
+                self.smartStreamParseActive = false
+                self.realStreamParseInFlightCount = max(0, self.realStreamParseInFlightCount - 1)
+                guard self.isRealStreamingMode else { return }
+
+                let (elements, attachments, tocItems, tocId) = result
+                let previousElementCount = self.realStreamParsedElementCount
+                self.realStreamParsedElementCount += elements.count
+                self.imageAttachments.append(contentsOf: attachments)
+                self.tableOfContents.append(contentsOf: tocItems)
+                if let tocId { self.tocSectionId = tocId }
+
+                mdLog("✅ [SmartBuffer] Parsed module: \(elements.count) elements, parse: \(String(format: "%.1f", parseDuration))ms, UI backlog: \(self.pendingRealStreamElements.count), typewriter: \(self.typewriterEngine.outstandingTaskCount)")
+                if !elements.isEmpty {
+                    self.displayRealStreamElements(elements, startIndex: previousElementCount)
+                }
+                self.startNextSmartStreamParseIfPossible()
+                self.tryFinishRealStreamDrain()
+            }
+        }
     }
 
     /// 追加一个完整的 Markdown 块（保持向后兼容）
     /// - Parameter block: 完整的 Markdown 块（如标题+内容、段落、代码块等）
     /// - Note: 每个块应该是完整的 Markdown 结构，不会在语法中间截断
     public func appendBlock(_ block: String) {
-        guard isRealStreamingMode else {
+        guard isRealStreamingMode, !isEndingRealStream else {
             mdLog("⚠️ [RealStream] Not in real streaming mode, call beginRealStreaming() first")
             return
         }
@@ -280,18 +288,91 @@ extension MarkdownViewTextKit {
 
     /// 显示真流式新增的元素
     func displayRealStreamElements(_ elements: [MarkdownRenderElement], startIndex: Int) {
-        let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
-
-        // ⭐️ 有新内容显示时，先隐藏等待动画（如果有的话）
-        // 新逻辑：等待动画只在 TypewriterEngine 空闲且无数据到达时显示
-        if isShowingWaitingIndicator {
-            hideWaitingIndicator()
+        guard useSmartBufferMode else {
+            displayLegacyRealStreamElements(elements, startIndex: startIndex)
+            return
         }
+
+        for (index, element) in elements.enumerated() {
+            pendingRealStreamElements.append(PendingRealStreamElement(element: element, globalIndex: startIndex + index))
+        }
+        scheduleRealStreamRenderPump()
+    }
+
+    private func displayLegacyRealStreamElements(_ elements: [MarkdownRenderElement], startIndex: Int) {
+        let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+        if isShowingWaitingIndicator { hideWaitingIndicator() }
 
         for (index, element) in elements.enumerated() {
             let globalIndex = startIndex + index
             let view = createView(for: element, containerWidth: containerWidth)
             view.tag = 1000 + globalIndex
+            if enableTypewriterEffect {
+                view.isHidden = true
+                contentStackView.addArrangedSubview(view)
+                typewriterEngine.enqueue(view: view)
+            } else {
+                contentStackView.addArrangedSubview(view)
+            }
+            if case .heading(let id, _) = element {
+                headingViews[id] = view
+                if id == tocSectionId { tocSectionView = view }
+            }
+            oldElements.append(element)
+        }
+
+        if enableTypewriterEffect { typewriterEngine.start() }
+        scheduleHeightChangeNotification()
+        handleAutoScroll()
+    }
+
+    func scheduleRealStreamRenderPump() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isRealStreamingMode,
+              !pendingRealStreamElements.isEmpty,
+              !realStreamRenderPumpScheduled else {
+            tryFinishRealStreamDrain()
+            return
+        }
+
+        if enableTypewriterEffect,
+           typewriterEngine.outstandingTaskCount >= realStreamTypewriterHighWatermark {
+            realStreamBackpressureActive = true
+            mdLog("⏸️ [SmartBuffer] UI backpressure: typewriter=\(typewriterEngine.outstandingTaskCount), pendingViews=\(pendingRealStreamElements.count)")
+            return
+        }
+
+        realStreamRenderPumpScheduled = true
+        let generation = realStreamRenderGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60.0) { [weak self] in
+            guard let self else { return }
+            self.realStreamRenderPumpScheduled = false
+            guard generation == self.realStreamRenderGeneration, self.isRealStreamingMode else { return }
+            self.processRealStreamRenderFrame()
+        }
+    }
+
+    func processRealStreamRenderFrame() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isRealStreamingMode else { return }
+
+        if isShowingWaitingIndicator { hideWaitingIndicator() }
+
+        let frameStart = CACurrentMediaTime()
+        let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+        var createdCount = 0
+
+        repeat {
+            guard let item = pendingRealStreamElements.popFirst() else { break }
+            guard item.globalIndex <= oldElements.count else {
+                assertionFailure("Real-stream element order gap: expected at most \(oldElements.count), got \(item.globalIndex)")
+                mdLog("❌ [SmartBuffer] Dropped out-of-order UI element: expected<=\(oldElements.count), actual=\(item.globalIndex)")
+                break
+            }
+            let createStart = CFAbsoluteTimeGetCurrent()
+            let view = createView(for: item.element, containerWidth: containerWidth)
+            let createDuration = (CFAbsoluteTimeGetCurrent() - createStart) * 1000
+            view.tag = 1000 + item.globalIndex
 
             if enableTypewriterEffect {
                 view.isHidden = true
@@ -301,31 +382,53 @@ extension MarkdownViewTextKit {
                 contentStackView.addArrangedSubview(view)
             }
 
-            // 注册 heading
-            if case .heading(let id, _) = element {
+            if case .heading(let id, _) = item.element {
                 headingViews[id] = view
                 if id == tocSectionId { tocSectionView = view }
             }
 
-            oldElements.append(element)
-        }
+            if item.globalIndex == oldElements.count {
+                oldElements.append(item.element)
+            } else if item.globalIndex < oldElements.count {
+                oldElements[item.globalIndex] = item.element
+            }
 
-        // 启动 TypewriterEngine
-        if enableTypewriterEffect {
+            createdCount += 1
+            mdLog("⚙️ [SmartBuffer] View created: index=\(item.globalIndex), type=\(elementTypeString(item.element)), cost=\(String(format: "%.1f", createDuration))ms")
+
+            if enableTypewriterEffect,
+               typewriterEngine.outstandingTaskCount >= realStreamTypewriterHighWatermark {
+                realStreamBackpressureActive = true
+                break
+            }
+        } while CACurrentMediaTime() - frameStart < realStreamFrameBudget
+
+        if enableTypewriterEffect, createdCount > 0 {
             typewriterEngine.start()
         }
 
-        // 通知高度变化
-        notifyHeightChange()
+        if createdCount > 0 {
+            scheduleHeightChangeNotification()
+            handleAutoScroll()
+            mdLog("⚙️ [SmartBuffer] UI frame: created=\(createdCount), cost=\(String(format: "%.1f", (CACurrentMediaTime() - frameStart) * 1000))ms, pendingViews=\(pendingRealStreamElements.count), typewriter=\(typewriterEngine.outstandingTaskCount)")
+        }
 
-        // 自动滚动
-        handleAutoScroll()
+        if !realStreamBackpressureActive { scheduleRealStreamRenderPump() }
+        startNextSmartStreamParseIfPossible()
+        tryFinishRealStreamDrain()
     }
 
     /// 检测并更新已有元素的内容变化
     /// 解决代码块、LaTeX 等块级元素分块到达时内容不更新的问题
     func updateExistingElementsIfNeeded(elements: [MarkdownRenderElement], previousCount: Int) {
         let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
+
+        // 分帧创建期间，解析结果可能先更新尚未建 View 的元素。直接合并到待创建命令，
+        // 避免先创建旧版本、下一轮又找不到对应 arrangedSubview。
+        pendingRealStreamElements.updateEach { pending in
+            guard pending.globalIndex < min(previousCount, elements.count) else { return }
+            pending.element = elements[pending.globalIndex]
+        }
 
         // 只检查已有的元素（索引 < previousCount）
         for i in 0..<min(previousCount, elements.count, oldElements.count) {
@@ -412,6 +515,8 @@ extension MarkdownViewTextKit {
             completion?()
             return
         }
+        guard !isEndingRealStream else { return }
+        isEndingRealStream = true
 
         mdLog("🎉 [RealStream] Ending real streaming mode")
 
@@ -426,24 +531,7 @@ extension MarkdownViewTextKit {
             let remainingText = streamBuffer.flush()
             if !remainingText.isEmpty {
                 mdLog("📦 [SmartBuffer] Flushing remaining content: \(remainingText.prefix(50))...")
-                // 同步解析剩余内容
-                let (processedText, _) = preprocessFootnotes(remainingText)
-                let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
-                let renderer = MarkdownRenderer(configuration: configuration, containerWidth: containerWidth)
-                let (elements, attachments, tocItems, tocId) = renderer.render(processedText)
-
-                // 累积到完整文本
-                realStreamAccumulatedText += remainingText
-
-                // 显示剩余元素
-                if !elements.isEmpty {
-                    let previousCount = realStreamParsedElementCount
-                    realStreamParsedElementCount += elements.count
-                    imageAttachments.append(contentsOf: attachments)
-                    tableOfContents.append(contentsOf: tocItems)
-                    if let id = tocId { tocSectionId = id }
-                    displayRealStreamElements(elements, startIndex: previousCount)
-                }
+                enqueueSmartStreamModule(remainingText)
             }
         }
 
@@ -495,23 +583,20 @@ extension MarkdownViewTextKit {
             mdLog("Full text is:\n\(self.realStreamAccumulatedText)")
         }
 
-        // ⭐️ 关键检查：如果 TypewriterEngine 已经空闲，直接执行收尾逻辑
-        if typewriterEngine.isIdle {
-            mdLog("[FOOTNOTE_DEBUG] 🔴 TypewriterEngine already idle, executing finishBlock immediately")
-            finishBlock()
-        } else {
-            // TypewriterEngine 还在运行，等待其完成
-            mdLog("[FOOTNOTE_DEBUG] 🔴 TypewriterEngine still running, waiting for completion")
-            let originalOnComplete = typewriterEngine.onComplete
-            typewriterEngine.onComplete = { [weak self] in
-                // 恢复原回调
-                self?.typewriterEngine.onComplete = originalOnComplete
-                originalOnComplete?()
+        realStreamDrainCompletion = finishBlock
+        scheduleRealStreamRenderPump()
+        tryFinishRealStreamDrain()
+    }
 
-                // 执行收尾逻辑
-                finishBlock()
-            }
-        }
+    func tryFinishRealStreamDrain() {
+        guard let completion = realStreamDrainCompletion,
+              realStreamParseInFlightCount == 0,
+              pendingRealStreamElements.isEmpty,
+              !realStreamRenderPumpScheduled,
+              typewriterEngine.isIdle else { return }
+
+        realStreamDrainCompletion = nil
+        completion()
     }
 
     // MARK: - ⭐️ 暂停/恢复显示 API

@@ -494,6 +494,18 @@ extension MarkdownViewTextKit {
 
         isStreaming = false
         isRealStreamingMode = false
+        realStreamRenderGeneration += 1
+        pendingRealStreamElements.removeAll()
+        realStreamRenderPumpScheduled = false
+        realStreamParseInFlightCount = 0
+        pendingSmartStreamModules.removeAll()
+        smartStreamParseActive = false
+        realStreamDrainCompletion = nil
+        isEndingRealStream = false
+        realStreamBackpressureActive = false
+        heightNotificationScheduled = false
+        pendingForcedHeightNotification = false
+        lastHeightNotificationTimestamp = 0
         streamPreParseCompleted = false
         streamDisplayedCount = 0
         streamParsedElements = []
@@ -557,10 +569,11 @@ extension MarkdownViewTextKit {
 
         let now = CFAbsoluteTimeGetCurrent()
         let timeSinceLastData = now - lastDataReceivedTime
-        let isEngineIdle = typewriterEngine.isIdle
+        let hasRenderBacklog = realStreamParseInFlightCount > 0 || !pendingRealStreamElements.isEmpty || realStreamRenderPumpScheduled
+        let isEngineIdle = typewriterEngine.isIdle && !hasRenderBacklog
 
         // ⭐️ 调试日志
-        mdLog("[WaitingIndicator] 检测: isEngineIdle=\(isEngineIdle), timeSinceLastData=\(String(format: "%.2f", timeSinceLastData))s, delay=\(waitingIndicatorDelay)s, isShowing=\(isShowingWaitingIndicator)")
+        mdLog("[WaitingIndicator] 检测: isEngineIdle=\(isEngineIdle), renderBacklog=\(hasRenderBacklog), timeSinceLastData=\(String(format: "%.2f", timeSinceLastData))s, delay=\(waitingIndicatorDelay)s, isShowing=\(isShowingWaitingIndicator)")
 
         // ⭐️ 核心逻辑：只有当 TypewriterEngine 空闲且超过延迟时间未收到数据时才显示
         if isEngineIdle && timeSinceLastData > waitingIndicatorDelay {

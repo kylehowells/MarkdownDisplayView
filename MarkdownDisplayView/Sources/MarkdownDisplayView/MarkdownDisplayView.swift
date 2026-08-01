@@ -29,10 +29,20 @@ public final class MarkdownViewTextKit: UIView {
 
             // ⚡️ 流式优化：打字机动画完成后渲染脚注
             self?.renderFootnotesIfPending()
+            self?.tryFinishRealStreamDrain()
         }
         // ⚡️ 核心修复：当打字机揭示了新视图（导致高度变化）时，立即通知父视图更新高度
         engine.onLayoutChange = { [weak self] in
-            self?.notifyHeightChange()
+            self?.scheduleHeightChangeNotification()
+        }
+        engine.onOutstandingTaskCountChange = { [weak self] count in
+            guard let self else { return }
+            if self.realStreamBackpressureActive, count <= self.realStreamTypewriterLowWatermark {
+                self.realStreamBackpressureActive = false
+                self.scheduleRealStreamRenderPump()
+                self.startNextSmartStreamParseIfPossible()
+            }
+            self.tryFinishRealStreamDrain()
         }
         // ⭐️ 震动反馈：每次输出内容时触发
         engine.onTypewriterStep = { [weak self] in
@@ -359,6 +369,31 @@ public final class MarkdownViewTextKit: UIView {
     var realStreamBlockQueue: [String] = []
     var realStreamOnComplete: (() -> Void)?
     var useSmartBufferMode = false
+    struct PendingRealStreamElement {
+        var element: MarkdownRenderElement
+        let globalIndex: Int
+    }
+    var pendingRealStreamElements = TypewriterPendingQueue<PendingRealStreamElement>()
+    var realStreamRenderPumpScheduled = false
+    var realStreamRenderGeneration = 0
+    var realStreamParseInFlightCount = 0
+    struct PendingSmartStreamModule {
+        let text: String
+        let renderVersion: Int
+        let renderGeneration: Int
+    }
+    var pendingSmartStreamModules = TypewriterPendingQueue<PendingSmartStreamModule>()
+    var smartStreamParseActive = false
+    var realStreamDrainCompletion: (() -> Void)?
+    var isEndingRealStream = false
+    var realStreamBackpressureActive = false
+    let realStreamTypewriterHighWatermark = 24
+    let realStreamTypewriterLowWatermark = 12
+    let realStreamFrameBudget: CFTimeInterval = 0.004
+
+    var heightNotificationScheduled = false
+    var pendingForcedHeightNotification = false
+    var lastHeightNotificationTimestamp: CFTimeInterval = 0
 
     // MARK: - Height reporting state
 

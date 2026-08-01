@@ -133,6 +133,7 @@ class TypewriterEngine {
     // 追踪当前正在执行的任务，以便超时后强制完成
     private var currentTask: TaskType?
     private var currentTaskToken: UUID?
+    private var playbackGeneration = 0
     private var currentPunctuationProfile: TypewriterPunctuationProfile?
 
     // 基础耗时
@@ -150,6 +151,7 @@ class TypewriterEngine {
 
     var onComplete: (() -> Void)?
     var onLayoutChange: (() -> Void)?
+    var onOutstandingTaskCountChange: ((Int) -> Void)?
     /// 每次输出内容时的回调（用于震动反馈等）
     var onTypewriterStep: (() -> Void)?
 
@@ -168,6 +170,9 @@ class TypewriterEngine {
     }
 
     func enqueue(view: UIView, isRoot: Bool = true) {
+        defer {
+            if isRoot { onOutstandingTaskCountChange?(outstandingTaskCount) }
+        }
         // 完整块只执行根视图的 show：先不占 StackView 高度，轮到它时整块插入并淡入。
         // 普通文本继续递归到 MarkdownTextViewTK2，保持逐字显示。
         let isAtomicRoot = isRoot && view.accessibilityIdentifier?.hasPrefix("MarkdownAtomic") == true
@@ -254,6 +259,7 @@ class TypewriterEngine {
     }
 
     func stop() {
+        playbackGeneration += 1
         isPaused = true
         stopWatchdog()
 
@@ -274,11 +280,16 @@ class TypewriterEngine {
         currentTaskToken = nil
         currentPunctuationProfile = nil
         lastTaskWasBlock = false  // ⭐️ 重置状态
+        onOutstandingTaskCountChange?(0)
     }
 
     /// ⭐️ 新增：检查 TypewriterEngine 是否已完成（队列为空且不在运行）
     var isIdle: Bool {
         return taskQueue.isEmpty && !isRunning
+    }
+
+    var outstandingTaskCount: Int {
+        taskQueue.count + (isRunning ? 1 : 0)
     }
 
     /// ⭐️ 检查视图是否在队列中
@@ -373,10 +384,7 @@ class TypewriterEngine {
 
     /// 超时强制完成当前任务
     private func forceFinishCurrentTask() {
-        guard let task = currentTask else {
-            finishCurrentTask()
-            return
-        }
+        guard let task = currentTask, let token = currentTaskToken else { return }
 
         switch task {
         case .text(let textView):
@@ -398,7 +406,7 @@ class TypewriterEngine {
             onLayoutChange?() // 强制完成时也要通知
         }
 
-        finishCurrentTask()
+        finishCurrentTask(token: token)
     }
 
     private func runNext() {
@@ -448,7 +456,7 @@ class TypewriterEngine {
                 view.alpha = 1.0
             }) { _ in
                 mdLog("[STREAM] 👁️ 视图显示完成: \(viewType), 动画耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - showStartTime) * 1000))ms")
-                self.finishCurrentTask()
+                self.finishCurrentTask(token: token)
             }
 
         case .block(let view):
@@ -492,7 +500,7 @@ class TypewriterEngine {
                 mdLog("[STREAM] 📦 块视图显示完成: \(blockViewType), 动画耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - blockStartTime) * 1000))ms")
                 // 块级元素动画完成时触发震动反馈
                 self?.onTypewriterStep?()
-                self?.finishCurrentTask()
+                self?.finishCurrentTask(token: token)
             })
 
         case .label(let label):
@@ -500,7 +508,7 @@ class TypewriterEngine {
             UIView.animate(withDuration: 0.1, animations: {
                 label.alpha = 1.0
             }, completion: { _ in
-                self.finishCurrentTask()
+                self.finishCurrentTask(token: token)
             })
 
         case .text(let textView):
@@ -510,7 +518,7 @@ class TypewriterEngine {
             currentPunctuationProfile = TypewriterPunctuationProfile(text: textView.attributedText?.string ?? "")
             if textLen == 0 {
                 _ = textView.revealCharacter(upto: 0)
-                finishCurrentTask()
+                finishCurrentTask(token: token)
             } else {
                 typeNextCharacter(textView, currentIndex: 0, token: token)
             }
@@ -524,7 +532,7 @@ class TypewriterEngine {
         feedWatchdog()
 
         guard let totalLen = textView.attributedText?.length else {
-            finishCurrentTask()
+            finishCurrentTask(token: token)
             return
         }
 
@@ -532,7 +540,7 @@ class TypewriterEngine {
             if textView.revealCharacter(upto: totalLen).didChangeHeight {
                 onLayoutChange?()
             }
-            finishCurrentTask()
+            finishCurrentTask(token: token)
             return
         }
 
@@ -554,7 +562,8 @@ class TypewriterEngine {
         }
     }
 
-    private func finishCurrentTask() {
+    private func finishCurrentTask(token: UUID) {
+        guard currentTaskToken == token else { return }
         // 任务间隔（elementGapDuration）不应计入超时，这里刷新时间戳而非停表；
         // 队列真正空了由 runNext 停掉常驻 Timer。
         lastFeedTimestamp = CFAbsoluteTimeGetCurrent()
@@ -574,25 +583,31 @@ class TypewriterEngine {
         lastTaskWasBlock = isBlockTask
 
         if Thread.isMainThread {
-            self._finish()
+            self._finish(token: token)
         } else {
-            DispatchQueue.main.async { self._finish() }
+            DispatchQueue.main.async { self._finish(token: token) }
         }
     }
 
-    private func _finish() {
+    private func _finish(token: UUID) {
+        guard currentTaskToken == token else { return }
         // 正常完成、空文本和 watchdog 强制完成最终都会汇聚到主线程的这里。
         // 此时最后一次字符测高已经结束，可以解除播放期的单调高度保护。
         if case .text(let textView) = currentTask {
             textView.finishAppendTypewriterPlayback()
         }
         currentPunctuationProfile = nil
+        currentTaskToken = nil
+        currentTask = nil
 
         isRunning = false
+        onOutstandingTaskCountChange?(outstandingTaskCount)
         // ⭐️ 优化：如果上一个任务是块级任务，添加额外延迟，让元素之间有明显间隔
         if lastTaskWasBlock && !taskQueue.isEmpty {
+            let generation = playbackGeneration
             DispatchQueue.main.asyncAfter(deadline: .now() + elementGapDuration) { [weak self] in
-                self?.runNext()
+                guard let self, self.playbackGeneration == generation else { return }
+                self.runNext()
             }
         } else {
             runNext()

@@ -73,6 +73,15 @@ private func pendingTypeSequence(_ chunks: [String], minModuleLength: Int = 10) 
     return types
 }
 
+private final class StreamBufferEChartsParser: MarkdownCustomParser {
+    let identifier = "echarts"
+    let pattern = #"(?i)<echarts(?:\s+[^>]*)?>([\s\S]*?)</echarts\s*>"#
+
+    func parse(match: NSTextCheckingResult, in text: String) -> CustomElementData? {
+        CustomElementData(type: identifier, rawText: (text as NSString).substring(with: match.range))
+    }
+}
+
 // MARK: - Samples
 
 private let multiHeadingSample = """
@@ -249,6 +258,152 @@ private let allSamples: [(name: String, text: String)] = [
 
     let closed = buffer.append("$$\n\nTail paragraph is here.\n\n")
     #expect(closed.hasPendingStructure == false)
+}
+
+@available(iOS 15.0, *)
+@Test func completedHeadingModuleIsReleasedBeforeUnclosedLatexTail() async throws {
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    let result = buffer.append("""
+    ## One
+
+    First formula is complete.
+
+    $$x = 1$$
+
+    ## Two
+
+    Second formula is still arriving.
+
+    $$y =
+    """)
+
+    #expect(result.completeModules == [
+        "## One\n\nFirst formula is complete.\n\n$$x = 1$$"
+    ])
+    let expectedTail = "## Two\n\nSecond formula is still arriving.\n\n$$y ="
+    #expect(result.pendingType == .latexBlock)
+    #expect(result.pendingText == expectedTail)
+    #expect(result.hasPendingStructure)
+    #expect(buffer.lastSafePosition == result.pendingText.count.distance(to: buffer.accumulatedText.count))
+}
+
+@available(iOS 15.0, *)
+@Test func completedHeadingModuleIsReleasedBeforeUnclosedCodeBlockTail() async throws {
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    let result = buffer.append("""
+    ## One
+
+    First section is complete and ready.
+
+    ## Two
+
+    ```swift
+    let value = 1
+    """)
+
+    #expect(result.completeModules == [
+        "## One\n\nFirst section is complete and ready."
+    ])
+    let expectedTail = "## Two\n\n```swift\nlet value = 1"
+    #expect(result.pendingType == .codeBlock)
+    #expect(result.pendingText == expectedTail)
+    #expect(result.hasPendingStructure)
+    #expect(buffer.lastSafePosition == result.pendingText.count.distance(to: buffer.accumulatedText.count))
+}
+
+@available(iOS 15.0, *)
+@Test func echartsBlockDoesNotSubmitInternalJSONBeforeClosingTag() async throws {
+    MarkdownCustomExtensionManager.shared.register(parser: StreamBufferEChartsParser())
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    let opened = buffer.append("""
+    ## Chart
+
+    <echarts>
+    {
+      "series": [
+        { "type": "bar", "data": [1, 2, 3] }
+      ]
+
+    """)
+
+    #expect(opened.completeModules.isEmpty)
+    #expect(opened.hasPendingStructure)
+    #expect(opened.pendingType == nil)
+
+    let closed = buffer.append("}\n</echarts>\n\n## Next\n\nNext section body.\n\n")
+    #expect(closed.hasPendingStructure == false)
+    #expect(closed.completeModules == [
+        "## Chart\n\n<echarts>\n{\n  \"series\": [\n    { \"type\": \"bar\", \"data\": [1, 2, 3] }\n  ]\n}\n</echarts>",
+        "## Next\n\nNext section body."
+    ])
+    #expect(closed.pendingText.isEmpty)
+}
+
+@available(iOS 15.0, *)
+@Test func echartsClosingTagSplitAcrossChunksStaysAtomic() async throws {
+    MarkdownCustomExtensionManager.shared.register(parser: StreamBufferEChartsParser())
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    let first = buffer.append("<echarts>\n{\"series\": [{\"type\": \"bar\"}]}\n")
+    let second = buffer.append("</ech")
+
+    #expect(first.completeModules.isEmpty)
+    #expect(first.hasPendingStructure)
+    #expect(second.completeModules.isEmpty)
+    #expect(second.hasPendingStructure)
+
+    let final = buffer.append("arts>\n\n")
+    #expect(final.completeModules == ["<echarts>\n{\"series\": [{\"type\": \"bar\"}]}\n</echarts>"])
+    #expect(final.pendingText.isEmpty)
+    #expect(final.hasPendingStructure == false)
+}
+
+@available(iOS 15.0, *)
+@Test func opaqueBlocksIgnoreMarkdownDelimitersInsideTheirPayload() async throws {
+    MarkdownCustomExtensionManager.shared.register(parser: StreamBufferEChartsParser())
+    let echarts = "<echarts>\n{\"title\": {\"text\": \"cost $$ and ``` markers\"}}\n</echarts>\n\n"
+    let chartModules = streamedModules(fixedChunks(echarts, size: 5))
+    #expect(chartModules == [echarts.trimmingCharacters(in: .whitespacesAndNewlines)])
+
+    let code = "```text\nprice is $$5\n```\n\n"
+    let codeModules = streamedModules(fixedChunks(code, size: 3))
+    #expect(codeModules == [code.trimmingCharacters(in: .whitespacesAndNewlines)])
+}
+
+@available(iOS 15.0, *)
+@Test func ignoredDelimiterDoesNotCancelFollowingRealLatexOpener() async throws {
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    _ = buffer.append("```text\nprice is $$5\n```\n\n")
+    let result = buffer.append("## Math\n\n$$\nx = 1")
+    #expect(result.hasPendingStructure)
+    #expect(result.pendingType == .latexBlock)
+}
+
+@available(iOS 15.0, *)
+@Test func customTagLiteralInsideCodeAndLatexDoesNotBecomePending() async throws {
+    MarkdownCustomExtensionManager.shared.register(parser: StreamBufferEChartsParser())
+    let code = "```html\n<echarts>\n```\n\n"
+    let latex = "$$\n\\text{<echarts>}\n$$\n\n"
+    #expect(streamedModules(fixedChunks(code, size: 3)) == [code.trimmingCharacters(in: .whitespacesAndNewlines)])
+    #expect(streamedModules(fixedChunks(latex, size: 3)) == [latex.trimmingCharacters(in: .whitespacesAndNewlines)])
+}
+
+@available(iOS 15.0, *)
+@Test func inlineOpaqueBlockPayloadDoesNotLeakLatexStateIntoFollowingHeading() async throws {
+    MarkdownCustomExtensionManager.shared.register(parser: StreamBufferEChartsParser())
+    let sample = "<echarts>{\"text\":\"$$\"}</echarts>\n\n## Next\n\nNext body is complete.\n\n"
+    let modules = streamedModules(fixedChunks(sample, size: 7))
+    #expect(modules == [
+        "<echarts>{\"text\":\"$$\"}</echarts>",
+        "## Next\n\nNext body is complete."
+    ])
+}
+
+@available(iOS 15.0, *)
+@Test func closedLatexBlockIgnoresInternalBlankLinesAndHeadingMarkers() async throws {
+    let latex = "$$\na + b\n\n## not a heading\n\nc + d\n$$\n\n"
+    #expect(streamedModules(fixedChunks(latex, size: 4)) == [
+        latex.trimmingCharacters(in: .whitespacesAndNewlines)
+    ])
 }
 
 // MARK: - Greedy Non-Overlapping Match Semantics
