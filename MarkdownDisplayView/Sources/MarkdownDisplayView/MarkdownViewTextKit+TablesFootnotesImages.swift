@@ -424,7 +424,9 @@ extension MarkdownViewTextKit {
         guard !heightNotificationScheduled else { return }
         heightNotificationScheduled = true
         let now = CACurrentMediaTime()
-        let frameInterval = 1.0 / 60.0
+        // 流式 Cell 的一次高度通知会触发 UITableView self-sizing/batch update。
+        // 30Hz 足以跟随打字机，同时避免对不断增长的 StackView 每帧完整测量。
+        let frameInterval = isStreaming ? 1.0 / 30.0 : 1.0 / 60.0
         let delay = max(0, frameInterval - (now - lastHeightNotificationTimestamp))
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
@@ -458,16 +460,23 @@ extension MarkdownViewTextKit {
             return fallbackWidth
         }()
 
-        let size = self.contentStackView.systemLayoutSizeFitting(
-            CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        )
-
         let frameBasedHeight = measuredVisibleContentStackHeight()
         let hasVisibleContent = contentStackView.arrangedSubviews.contains { !$0.isHidden }
 
-        var newHeight = size.height
+        // 流式阶段刚完成 layoutIfNeeded，arrangedSubview frame 已是当前可见内容的结果。
+        // 复用这些 frame，避免每次打字机高度变化都让 systemLayoutSizeFitting 再解一次整棵树。
+        let fittingHeight: CGFloat = {
+            if isStreaming, frameBasedHeight > 0, !force {
+                return frameBasedHeight
+            }
+            return contentStackView.systemLayoutSizeFitting(
+                CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }()
+
+        var newHeight = fittingHeight
         var usedFrameFallback = false
 
         if !newHeight.isFinite || newHeight <= 0 {
@@ -530,11 +539,18 @@ extension MarkdownViewTextKit {
     
     public override func layoutSubviews() {
         super.layoutSubviews()
-        
-        // ⭐️ 关键修复：在布局完成后检查高度是否需要修正
-        // 这解决了"初始宽度不准导致高度计算错误"的问题（Chicken & Egg problem）
-        // 通过对比 lastReportedHeight，我们只在真正需要时触发更新，从而避免死循环
-        scheduleHeightChangeNotification()
+
+        // layoutSubviews 也会由高度回调和 UITableView batch update 触发。只在测量宽度
+        // 真正变化时重新测高，切断 notify → table layout → layoutSubviews → notify 的反馈环。
+        if consumeLayoutWidthChange(bounds.width) {
+            scheduleHeightChangeNotification(force: true)
+        }
+    }
+
+    func consumeLayoutWidthChange(_ width: CGFloat) -> Bool {
+        guard width > 0, abs(width - lastLayoutWidthForHeightMeasurement) > 0.5 else { return false }
+        lastLayoutWidthForHeightMeasurement = width
+        return true
     }
     
     //MARK: - streaming method

@@ -394,6 +394,7 @@ public final class MarkdownViewTextKit: UIView {
     var heightNotificationScheduled = false
     var pendingForcedHeightNotification = false
     var lastHeightNotificationTimestamp: CFTimeInterval = 0
+    var lastLayoutWidthForHeightMeasurement: CGFloat = 0
 
     // MARK: - Height reporting state
 

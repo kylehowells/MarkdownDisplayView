@@ -408,7 +408,11 @@ extension MarkdownViewTextKit {
         }
 
         if createdCount > 0 {
-            scheduleHeightChangeNotification()
+            // 打字机模式下新 View 仍是 hidden，不会改变可见高度；真正 show/文字增高时
+            // TypewriterEngine.onLayoutChange 会统一触发测高。这里提前测只会空跑整棵布局树。
+            if !enableTypewriterEffect {
+                scheduleHeightChangeNotification()
+            }
             handleAutoScroll()
             mdLog("⚙️ [SmartBuffer] UI frame: created=\(createdCount), cost=\(String(format: "%.1f", (CACurrentMediaTime() - frameStart) * 1000))ms, pendingViews=\(pendingRealStreamElements.count), typewriter=\(typewriterEngine.outstandingTaskCount)")
         }

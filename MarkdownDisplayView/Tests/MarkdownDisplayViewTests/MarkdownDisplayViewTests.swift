@@ -85,6 +85,54 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
+@Test func repeatedLayoutAtSameWidthDoesNotRequestAnotherHeightMeasurement() async throws {
+    let view = MarkdownViewTextKit()
+
+    #expect(view.consumeLayoutWidthChange(320))
+    #expect(view.consumeLayoutWidthChange(320) == false)
+    #expect(view.consumeLayoutWidthChange(320.2) == false)
+    #expect(view.consumeLayoutWidthChange(321))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func atomicQuoteDoesNotEnqueueEachNestedTextView() async throws {
+    let markdownView = MarkdownViewTextKit()
+    let quote = markdownView.createQuoteView(children: [], width: 320)
+    let nestedText = MarkdownTextViewTK2()
+    nestedText.attributedText = NSAttributedString(string: "quoted text")
+    quote.addSubview(nestedText)
+
+    #expect(quote.accessibilityIdentifier == "MarkdownAtomicQuote")
+
+    let engine = TypewriterEngine()
+    engine.enqueue(view: quote)
+
+    #expect(engine.outstandingTaskCount == 1)
+    #expect(nestedText.displayedAttributedString.string == "quoted text")
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func tableLayoutReusesAttributesWhileGeometryIsUnchanged() async throws {
+    let layout = MarkdownTableLayout()
+    layout.columnWidths = [100, 120]
+    layout.rowHeights = [44, 60]
+
+    layout.prepare()
+    layout.prepare()
+
+    #expect(layout.layoutRebuildCount == 1)
+    #expect(layout.collectionViewContentSize == CGSize(width: 220, height: 104))
+
+    layout.rowHeights = [44, 80]
+    layout.prepare()
+    #expect(layout.layoutRebuildCount == 2)
+    #expect(layout.collectionViewContentSize == CGSize(width: 220, height: 124))
+}
+
+@available(iOS 15.0, *)
+@MainActor
 @Test func appendTypewriterSeparatesCharacterRevealFromHeightChanges() async throws {
     let textView = MarkdownTextViewTK2()
     textView.typewriterTextMode = .append

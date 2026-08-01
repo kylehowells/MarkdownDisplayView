@@ -96,15 +96,39 @@ struct MarkdownTableLayoutCalculator {
 // MARK: - Custom CollectionView Layout
 
 class MarkdownTableLayout: UICollectionViewLayout {
-    var columnWidths: [CGFloat] = []
-    var rowHeights: [CGFloat] = []
+    var columnWidths: [CGFloat] = [] {
+        didSet {
+            if columnWidths != oldValue { invalidateLayout() }
+        }
+    }
+    var rowHeights: [CGFloat] = [] {
+        didSet {
+            if rowHeights != oldValue { invalidateLayout() }
+        }
+    }
     
     private var layoutAttributes: [IndexPath: UICollectionViewLayoutAttributes] = [:]
     private var contentSize: CGSize = .zero
+    private var preparedColumnWidths: [CGFloat] = []
+    private var preparedRowHeights: [CGFloat] = []
+    private(set) var layoutRebuildCount = 0
     
     override func prepare() {
         super.prepare()
+
+        // UITableView 自适应高度和 TextKit attachment 可能多次要求同一张表布局。
+        // 表格几何只由列宽、行高决定；输入未变时复用 attributes，避免 O(rows × columns)
+        // 地重复创建 UICollectionViewLayoutAttributes。
+        if columnWidths == preparedColumnWidths,
+           rowHeights == preparedRowHeights,
+           !layoutAttributes.isEmpty {
+            return
+        }
+
         layoutAttributes.removeAll()
+        preparedColumnWidths = columnWidths
+        preparedRowHeights = rowHeights
+        layoutRebuildCount += 1
         
         guard !columnWidths.isEmpty && !rowHeights.isEmpty else {
             contentSize = .zero

@@ -129,6 +129,9 @@ extension MarkdownViewTextKit {
     func createQuoteView(children: [MarkdownRenderElement], width: CGFloat, level: Int = 1) -> UIView {
         let outerContainer = UIView()
         outerContainer.translatesAutoresizingMaskIntoConstraints = false
+        // 引用块内部可能包含多段文本、列表、表格甚至嵌套引用。流式打字时递归进入
+        // 每个子节点会反复改变整块高度并触发全局布局；把引用作为一个完整块淡入。
+        outerContainer.accessibilityIdentifier = "MarkdownAtomicQuote"
 
         let container = UIView()
         container.backgroundColor = configuration.blockquoteBackgroundColor

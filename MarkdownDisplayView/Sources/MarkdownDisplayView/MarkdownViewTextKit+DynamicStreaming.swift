@@ -506,6 +506,7 @@ extension MarkdownViewTextKit {
         heightNotificationScheduled = false
         pendingForcedHeightNotification = false
         lastHeightNotificationTimestamp = 0
+        lastLayoutWidthForHeightMeasurement = 0
         streamPreParseCompleted = false
         streamDisplayedCount = 0
         streamParsedElements = []
