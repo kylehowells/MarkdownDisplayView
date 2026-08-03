@@ -507,20 +507,20 @@ extension MarkdownTextViewTK2 {
 
     /// 揭示前 N 个字符（支持批量显示）。
     /// - Returns: 本次是否显示了新字符，以及重新测量后高度是否真的改变。
-    func revealCharacter(upto index: Int) -> (didReveal: Bool, didChangeHeight: Bool) {
-        guard index > 0 else { return (false, false) }
+    func revealCharacter(upto index: Int) -> (didReveal: Bool, didChangeHeight: Bool, heightDelta: CGFloat) {
+        guard index > 0 else { return (false, false, 0) }
 
         if typewriterTextMode == .append {
             guard let originalAttr = cachedOriginalAttributedString else {
-                return (false, false)
+                return (false, false, 0)
             }
 
             let length = originalAttr.length
-            if index > length { return (false, false) }
+            if index > length { return (false, false, 0) }
 
             let startIndex = lastRevealedIndex
             let endIndex = index
-            guard endIndex > startIndex else { return (false, false) }
+            guard endIndex > startIndex else { return (false, false, 0) }
 
             let range = NSRange(location: startIndex, length: endIndex - startIndex)
             let segment = originalAttr.attributedSubstring(from: range)
@@ -542,7 +542,8 @@ extension MarkdownTextViewTK2 {
                     let previousHeight = heightConstraint?.constant ?? calculatedHeight
                     applyLayout(width: layoutWidth, force: true)
                     let currentHeight = heightConstraint?.constant ?? calculatedHeight
-                    return (true, abs(currentHeight - previousHeight) > 0.5)
+                    let heightDelta = currentHeight - previousHeight
+                    return (true, abs(heightDelta) > 0.5, heightDelta)
                 } else {
                     setNeedsLayout()
                 }
@@ -551,24 +552,24 @@ extension MarkdownTextViewTK2 {
                 setNeedsDisplay()
             }
 
-            return (true, false)
+            return (true, false, 0)
         }
 
         guard let originalAttr = attributedText,
               cachedOriginalAttributedString != nil else {
             mdLog("[TYPEWRITER] ⚠️ revealCharacter 提前返回: attributedText=\(attributedText != nil), prepared=\(cachedOriginalAttributedString != nil), index=\(index)")
-            return (false, false)
+            return (false, false, 0)
         }
 
         let length = originalAttr.length
-        if index > length { return (false, false) }
+        if index > length { return (false, false, 0) }
 
         // ⭐️ 批量支持：从上次位置到当前位置，显示所有字符
         let startIndex = lastRevealedIndex
         let endIndex = index
 
         // 如果没有新字符需要显示，直接返回
-        guard endIndex > startIndex else { return (false, false) }
+        guard endIndex > startIndex else { return (false, false, 0) }
 
         // 按属性 run 恢复原始属性（含被 prepare 移除的 .link 与被覆盖的前景色）。
         // setAttributes 会整块替换该范围的属性，效果等价于原先逐字符
@@ -589,7 +590,7 @@ extension MarkdownTextViewTK2 {
         setNeedsDisplay()
 
         // reveal 模式预先保留完整布局，显示字符不会改变高度。
-        return (true, false)
+        return (true, false, 0)
     }
 }
 

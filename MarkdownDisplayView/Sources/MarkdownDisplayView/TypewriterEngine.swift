@@ -111,6 +111,11 @@ struct TypewriterPunctuationProfile {
 @available(iOS 15.0, *)
 class TypewriterEngine {
 
+    enum LayoutChange {
+        case rootBecameVisible(UIView)
+        case textHeightChanged(delta: CGFloat)
+    }
+
     enum TaskType {
         case show(UIView)
         case text(MarkdownTextViewTK2)
@@ -150,7 +155,7 @@ class TypewriterEngine {
     private var lastTaskWasBlock: Bool = false
 
     var onComplete: (() -> Void)?
-    var onLayoutChange: (() -> Void)?
+    var onLayoutChange: ((LayoutChange) -> Void)?
     var onOutstandingTaskCountChange: ((Int) -> Void)?
     /// 每次输出内容时的回调（用于震动反馈等）
     var onTypewriterStep: (() -> Void)?
@@ -389,8 +394,9 @@ class TypewriterEngine {
         switch task {
         case .text(let textView):
             if let len = textView.attributedText?.length {
-                if textView.revealCharacter(upto: len).didChangeHeight {
-                    onLayoutChange?()
+                let result = textView.revealCharacter(upto: len)
+                if result.didChangeHeight {
+                    onLayoutChange?(.textHeightChanged(delta: result.heightDelta))
                 }
             }
         case .block(let view):
@@ -403,7 +409,7 @@ class TypewriterEngine {
             view.layer.removeAllAnimations()
             view.isHidden = false
             view.alpha = 1.0
-            onLayoutChange?() // 强制完成时也要通知
+            onLayoutChange?(.rootBecameVisible(view)) // 强制完成时也要通知
         }
 
         finishCurrentTask(token: token)
@@ -447,7 +453,7 @@ class TypewriterEngine {
             }
 
             // ⚡️ 关键修复：视图显示后立即通知高度变化
-            onLayoutChange?()
+            onLayoutChange?(.rootBecameVisible(view))
 
             // 注意：.show 是容器/根视图渐显，不触发震动反馈
 
@@ -537,8 +543,9 @@ class TypewriterEngine {
         }
 
         if currentIndex >= totalLen {
-            if textView.revealCharacter(upto: totalLen).didChangeHeight {
-                onLayoutChange?()
+            let result = textView.revealCharacter(upto: totalLen)
+            if result.didChangeHeight {
+                onLayoutChange?(.textHeightChanged(delta: result.heightDelta))
             }
             finishCurrentTask(token: token)
             return
@@ -549,7 +556,7 @@ class TypewriterEngine {
         let revealResult = textView.revealCharacter(upto: nextIndex)
         if revealResult.didReveal {
             if revealResult.didChangeHeight {
-                onLayoutChange?()
+                onLayoutChange?(.textHeightChanged(delta: revealResult.heightDelta))
             }
             // 只在有实际内容显示时触发震动反馈
             onTypewriterStep?()

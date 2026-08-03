@@ -208,6 +208,7 @@ import UIKit
     let firstMeasurement = textView.revealCharacter(upto: 20)
     #expect(firstMeasurement.didReveal)
     #expect(firstMeasurement.didChangeHeight)
+    #expect(firstMeasurement.heightDelta > 0)
 
     let sameLineCharacter = textView.revealCharacter(upto: 21)
     #expect(sameLineCharacter.didReveal)
@@ -324,4 +325,60 @@ import UIKit
 
     #expect(textView.revealCharacter(upto: 7).didReveal == false)
     #expect(textView.revealCharacter(upto: text.length + 1).didReveal == false)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func streamingHeightAccumulatorAddsRootsAndTextDeltasWithoutDoubleCounting() async throws {
+    var accumulator = StreamingHeightAccumulator()
+    accumulator.reset(verticalMargins: 12)
+
+    let firstRoot = UIView()
+    let secondRoot = UIView()
+
+    #expect(accumulator.rootBecameVisible(firstRoot, measuredHeight: 20, spacing: 8) == 32)
+    #expect(accumulator.rootBecameVisible(firstRoot, measuredHeight: 20, spacing: 8) == 32)
+    #expect(accumulator.rootBecameVisible(secondRoot, measuredHeight: 30, spacing: 8) == 70)
+    #expect(accumulator.textHeightChanged(delta: 18) == 88)
+    #expect(accumulator.textHeightChanged(delta: 0.1) == nil)
+    #expect(accumulator.totalHeight == 88)
+    accumulator.synchronize(totalHeight: 120)
+    #expect(accumulator.textHeightChanged(delta: 10) == 130)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func realStreamIncrementalHeightMatchesFinalStackFitting() async throws {
+    let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+    view.enableTypewriterEffect = true
+    view.updateTypewriterSpeed(charsPerStep: 1_000, baseDuration: 0.001, elementGapDuration: 0)
+    view.layoutIfNeeded()
+    view.beginRealStreaming(useSmartBuffer: false)
+    view.appendBlock("""
+    # Height Test
+
+    A paragraph that wraps onto more than one line when rendered in a narrow container.
+
+    - first list item
+    - second list item
+
+    > atomic quote content
+
+    """)
+
+    await withCheckedContinuation { continuation in
+        view.endRealStreaming { continuation.resume() }
+    }
+
+    view.layoutIfNeeded()
+    view.contentStackView.layoutIfNeeded()
+    let finalFittingHeight = view.contentStackView.systemLayoutSizeFitting(
+        CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+        withHorizontalFittingPriority: .required,
+        verticalFittingPriority: .fittingSizeLevel
+    ).height
+    #expect(
+        abs(view.realStreamHeightAccumulator.totalHeight - finalFittingHeight) < 2,
+        "cached=\(view.realStreamHeightAccumulator.totalHeight), final=\(finalFittingHeight)"
+    )
 }

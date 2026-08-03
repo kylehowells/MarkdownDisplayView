@@ -412,6 +412,10 @@ extension MarkdownViewTextKit {
                         }
                         totalHeight += self.contentStackView.layoutMargins.top + self.contentStackView.layoutMargins.bottom
 
+                        if self.isRealStreamingMode {
+                            self.realStreamHeightAccumulator.synchronize(totalHeight: totalHeight)
+                            self.invalidateIntrinsicContentSize()
+                        }
                         self.lastReportedHeight = totalHeight
                         self.onHeightChange?(totalHeight)
                     }
@@ -444,6 +448,10 @@ extension MarkdownViewTextKit {
                     // 加上 insets (如果有)
                     totalHeight += self.contentStackView.layoutMargins.top + self.contentStackView.layoutMargins.bottom
                     
+                    if self.isRealStreamingMode {
+                        self.realStreamHeightAccumulator.synchronize(totalHeight: totalHeight)
+                        self.invalidateIntrinsicContentSize()
+                    }
                     // 强制通知
                     self.lastReportedHeight = totalHeight
                     self.onHeightChange?(totalHeight)

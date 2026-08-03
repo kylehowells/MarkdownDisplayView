@@ -418,9 +418,89 @@ extension MarkdownViewTextKit {
         return max(0, totalHeight)
     }
 
+    func handleTypewriterLayoutChange(_ change: TypewriterEngine.LayoutChange) {
+        guard isRealStreamingMode else {
+            scheduleHeightChangeNotification()
+            return
+        }
+
+        let knownHeight: CGFloat?
+        switch change {
+        case .rootBecameVisible(let root):
+            knownHeight = realStreamHeightAccumulator.rootBecameVisible(
+                root,
+                measuredHeight: measuredStreamingRootHeight(root),
+                spacing: contentStackView.spacing
+            )
+        case .textHeightChanged(let delta):
+            knownHeight = realStreamHeightAccumulator.textHeightChanged(delta: delta)
+        }
+
+        guard let knownHeight else { return }
+        invalidateIntrinsicContentSize()
+        scheduleHeightChangeNotification(knownStreamingHeight: knownHeight)
+    }
+
+    private func measuredStreamingRootHeight(_ root: UIView) -> CGFloat {
+        if let stack = root as? UIStackView {
+            let visible = stack.arrangedSubviews.filter { !$0.isHidden }
+            var height = visible.reduce(CGFloat.zero) {
+                $0 + measuredStreamingRootHeight($1)
+            }
+            if visible.count > 1 {
+                height += CGFloat(visible.count - 1) * stack.spacing
+            }
+            if stack.isLayoutMarginsRelativeArrangement {
+                height += stack.layoutMargins.top + stack.layoutMargins.bottom
+            }
+            if height.isFinite, height > 0 { return height }
+        }
+
+        let intrinsicHeight = root.intrinsicContentSize.height
+        if intrinsicHeight.isFinite,
+           intrinsicHeight != UIView.noIntrinsicMetric,
+           intrinsicHeight > 0 {
+            return intrinsicHeight
+        }
+
+        if let fixedHeight = root.constraints.first(where: {
+            $0.isActive
+                && $0.firstItem === root
+                && $0.firstAttribute == .height
+                && $0.relation == .equal
+        }), fixedHeight.constant > 0 {
+            return fixedHeight.constant
+        }
+
+        let fittingWidth = max(
+            1,
+            contentStackView.bounds.width > 0
+                ? contentStackView.bounds.width
+                : bounds.width
+        )
+        let height = root.systemLayoutSizeFitting(
+            CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        if height.isFinite, height > 0 { return height }
+        return max(0, root.bounds.height)
+    }
+
     /// 合并同一轮 RunLoop 内的测高请求，避免 Typewriter、建 View 和外层列表连续触发布局。
-    func scheduleHeightChangeNotification(force: Bool = false) {
+    func scheduleHeightChangeNotification(
+        force: Bool = false,
+        knownStreamingHeight: CGFloat? = nil
+    ) {
         streamPerformanceDiagnostics.recordHeightRequest()
+        // 只有 Typewriter 的 append 高度变化可以走 O(1) 增量值。图片回调、宽度变化和
+        // 强制测高都必须清空该值，回退到完整布局以保证最终正确性。
+        if knownStreamingHeight == nil || force {
+            pendingRequiresFullHeightMeasurement = true
+            pendingKnownStreamingHeight = nil
+        } else if !pendingRequiresFullHeightMeasurement {
+            pendingKnownStreamingHeight = knownStreamingHeight
+        }
         pendingForcedHeightNotification = pendingForcedHeightNotification || force
         guard !heightNotificationScheduled else { return }
         heightNotificationScheduled = true
@@ -429,21 +509,51 @@ extension MarkdownViewTextKit {
         // 30Hz 足以跟随打字机，同时避免对不断增长的 StackView 每帧完整测量。
         let frameInterval = isStreaming ? 1.0 / 30.0 : 1.0 / 60.0
         let delay = max(0, frameInterval - (now - lastHeightNotificationTimestamp))
+        let generation = heightNotificationGeneration
 
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
+            guard generation == self.heightNotificationGeneration else { return }
             self.heightNotificationScheduled = false
             self.lastHeightNotificationTimestamp = CACurrentMediaTime()
             let shouldForce = self.pendingForcedHeightNotification
             self.pendingForcedHeightNotification = false
-            self.notifyHeightChange(force: shouldForce)
+            let knownHeight = self.pendingRequiresFullHeightMeasurement
+                ? nil
+                : self.pendingKnownStreamingHeight
+            self.pendingKnownStreamingHeight = nil
+            self.pendingRequiresFullHeightMeasurement = false
+            self.notifyHeightChange(force: shouldForce, knownStreamingHeight: knownHeight)
         }
     }
 
-    func notifyHeightChange(force: Bool = false) {
+    func notifyHeightChange(
+        force: Bool = false,
+        knownStreamingHeight: CGFloat? = nil
+    ) {
         let start = CFAbsoluteTimeGetCurrent()
         defer {
             recordCost(for: "Layout Calculation", duration: CFAbsoluteTimeGetCurrent() - start)
+        }
+
+        if let knownStreamingHeight,
+           isRealStreamingMode,
+           !force,
+           knownStreamingHeight.isFinite {
+            let heightDiff = knownStreamingHeight - lastReportedHeight
+            let shouldNotifyParent = abs(heightDiff) > 9.0
+            if shouldNotifyParent {
+                lastReportedHeight = knownStreamingHeight
+                onHeightChange?(knownStreamingHeight)
+            }
+            streamPerformanceDiagnostics.recordHeightMeasurement(
+                durationMS: (CFAbsoluteTimeGetCurrent() - start) * 1000,
+                notified: shouldNotifyParent,
+                force: false,
+                source: "incremental",
+                arrangedSubviews: contentStackView.arrangedSubviews.count
+            )
+            return
         }
 
         // ⭐️ 强制 StackView 立即更新布局
@@ -502,6 +612,10 @@ extension MarkdownViewTextKit {
 
         // 🔍 诊断日志：打印高度变化
         let heightDiff = newHeight - lastReportedHeight
+        if isRealStreamingMode {
+            realStreamHeightAccumulator.synchronize(totalHeight: newHeight)
+            invalidateIntrinsicContentSize()
+        }
         mdLog("🔍 [Height] Current: \(String(format: "%.1f", newHeight))pt | Last: \(String(format: "%.1f", lastReportedHeight))pt | Diff: \(String(format: "%.1f", heightDiff))pt | Force: \(force) | Width: \(String(format: "%.1f", fittingWidth)) | Source: \(usedFrameFallback ? "frame" : "fitting")")
 
         // 只有高度变化超过阈值才通知，避免浮点数误差导致的死循环
@@ -545,6 +659,12 @@ extension MarkdownViewTextKit {
     }
     
     public override var intrinsicContentSize: CGSize {
+        if isRealStreamingMode, realStreamHeightAccumulator.totalHeight > 0 {
+            return CGSize(
+                width: UIView.noIntrinsicMetric,
+                height: realStreamHeightAccumulator.totalHeight
+            )
+        }
         let size = contentStackView.systemLayoutSizeFitting(
             CGSize(
                 width: bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32,

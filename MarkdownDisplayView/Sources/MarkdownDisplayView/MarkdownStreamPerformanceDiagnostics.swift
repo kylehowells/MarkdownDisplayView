@@ -20,6 +20,7 @@ final class MarkdownStreamPerformanceDiagnostics {
     }()
 
     private var generation = 0
+    private var active = false
     private var startedAt: CFTimeInterval = 0
     private var lastSummaryAt: CFTimeInterval = 0
 
@@ -52,6 +53,7 @@ final class MarkdownStreamPerformanceDiagnostics {
     func begin(generation: Int) {
         guard Self.enabled else { return }
         resetCounters()
+        active = true
         self.generation = generation
         startedAt = CACurrentMediaTime()
         lastSummaryAt = startedAt
@@ -86,14 +88,14 @@ final class MarkdownStreamPerformanceDiagnostics {
     }
 
     func recordReceive(characters: Int) {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         receivedChunks += 1
         receivedCharacters += characters
         reportIfNeeded()
     }
 
     func recordModuleQueued(pendingModules: Int) {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         modulesQueued += 1
         self.pendingModules = pendingModules
         reportIfNeeded()
@@ -107,7 +109,7 @@ final class MarkdownStreamPerformanceDiagnostics {
         pendingViews: Int,
         typewriter: Int
     ) {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         modulesParsed += 1
         parsedElements += elements
         parseTotalMS += durationMS
@@ -121,20 +123,21 @@ final class MarkdownStreamPerformanceDiagnostics {
         sequence: Int,
         index: Int,
         type: String,
-        durationMS: Double,
-        duplicate: Bool
+        durationMS: Double
     ) {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         viewsCreated += 1
         viewCreateTotalMS += durationMS
         viewCreateMaxMS = max(viewCreateMaxMS, durationMS)
-        if duplicate {
-            duplicateElements += 1
-            emit("[MDPERF][DUPLICATE] gen=\(generation) seq=\(sequence) index=\(index) type=\(type)")
-        }
         if durationMS >= 4 {
             emit("[MDPERF][SLOW_VIEW] gen=\(generation) seq=\(sequence) index=\(index) type=\(type) ms=\(format(durationMS))")
         }
+    }
+
+    func recordDuplicateElement(sequence: Int, index: Int, type: String) {
+        guard Self.enabled, active else { return }
+        duplicateElements += 1
+        emit("[MDPERF][DUPLICATE] gen=\(generation) seq=\(sequence) index=\(index) type=\(type)")
     }
 
     func recordRenderFrame(
@@ -145,7 +148,7 @@ final class MarkdownStreamPerformanceDiagnostics {
         typewriter: Int,
         arrangedSubviews: Int
     ) {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         renderFrames += 1
         renderFrameTotalMS += durationMS
         renderFrameMaxMS = max(renderFrameMaxMS, durationMS)
@@ -158,7 +161,7 @@ final class MarkdownStreamPerformanceDiagnostics {
     }
 
     func recordHeightRequest() {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         heightRequests += 1
         reportIfNeeded()
     }
@@ -170,7 +173,7 @@ final class MarkdownStreamPerformanceDiagnostics {
         source: String,
         arrangedSubviews: Int
     ) {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         heightMeasurements += 1
         heightTotalMS += durationMS
         heightMaxMS = max(heightMaxMS, durationMS)
@@ -183,7 +186,7 @@ final class MarkdownStreamPerformanceDiagnostics {
     }
 
     func recordTypewriterOutstanding(_ count: Int) {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         typewriterOutstanding = count
         typewriterPeak = max(typewriterPeak, count)
         reportIfNeeded()
@@ -195,10 +198,11 @@ final class MarkdownStreamPerformanceDiagnostics {
         typewriter: Int,
         arrangedSubviews: Int
     ) {
-        guard Self.enabled else { return }
+        guard Self.enabled, active else { return }
         self.arrangedSubviews = arrangedSubviews
         updateBacklog(pendingModules: pendingModules, pendingViews: pendingViews, typewriter: typewriter)
         emitSummary(label: "END")
+        active = false
     }
 
     private func updateBacklog(pendingModules: Int, pendingViews: Int, typewriter: Int) {

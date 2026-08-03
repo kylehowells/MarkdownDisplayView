@@ -56,6 +56,16 @@ extension MarkdownViewTextKit {
         isEndingRealStream = false
         realStreamBackpressureActive = false
         realStreamNextModuleSequence = 0
+        realStreamHeightAccumulator.reset(
+            verticalMargins: contentStackView.layoutMargins.top + contentStackView.layoutMargins.bottom
+        )
+        lastReportedHeight = 0
+        invalidateIntrinsicContentSize()
+        pendingKnownStreamingHeight = nil
+        pendingRequiresFullHeightMeasurement = false
+        heightNotificationGeneration += 1
+        heightNotificationScheduled = false
+        pendingForcedHeightNotification = false
         streamPerformanceDiagnostics.begin(generation: realStreamRenderGeneration)
 
         // 清空现有内容
@@ -329,7 +339,11 @@ extension MarkdownViewTextKit {
         }
 
         if enableTypewriterEffect { typewriterEngine.start() }
-        scheduleHeightChangeNotification()
+        // hidden 根视图尚未贡献可见高度；由 Typewriter 的 root/text 增量事件报告。
+        // 此处提前读取 StackView frame 会把容器初始高度误当成首个根视图高度。
+        if !enableTypewriterEffect {
+            scheduleHeightChangeNotification()
+        }
         handleAutoScroll()
     }
 
@@ -378,6 +392,13 @@ extension MarkdownViewTextKit {
             }
             let createStart = CFAbsoluteTimeGetCurrent()
             let duplicateElement = item.globalIndex < oldElements.count
+            if duplicateElement, MarkdownStreamPerformanceDiagnostics.enabled {
+                streamPerformanceDiagnostics.recordDuplicateElement(
+                    sequence: item.moduleSequence,
+                    index: item.globalIndex,
+                    type: elementTypeString(item.element)
+                )
+            }
             let view = createView(for: item.element, containerWidth: containerWidth)
             let createDuration = (CFAbsoluteTimeGetCurrent() - createStart) * 1000
             view.tag = 1000 + item.globalIndex
@@ -397,7 +418,7 @@ extension MarkdownViewTextKit {
 
             if item.globalIndex == oldElements.count {
                 oldElements.append(item.element)
-            } else if item.globalIndex < oldElements.count {
+            } else {
                 oldElements[item.globalIndex] = item.element
             }
 
@@ -407,8 +428,7 @@ extension MarkdownViewTextKit {
                     sequence: item.moduleSequence,
                     index: item.globalIndex,
                     type: elementTypeString(item.element),
-                    durationMS: createDuration,
-                    duplicate: duplicateElement
+                    durationMS: createDuration
                 )
             }
             mdLog("⚙️ [SmartBuffer] View created: index=\(item.globalIndex), type=\(elementTypeString(item.element)), cost=\(String(format: "%.1f", createDuration))ms")
@@ -505,15 +525,16 @@ extension MarkdownViewTextKit {
                 mdLog("📝 [RealStream] Processed \(pendingFootnotes.count) footnotes at end")
             }
 
-            // 2. 重置状态
+            // 2. 仍处于真流式状态时做最终全量校准，让最后加入的脚注也进入高度缓存。
+            self.notifyHeightChange(force: true)
+
+            // 3. 重置状态
             self.isRealStreamingMode = false
             self.isStreaming = false
             self.useSmartBufferMode = false
             self.stopHapticFeedback()
             mdLog("[FOOTNOTE_DEBUG] 🔴 isRealStreamingMode set to FALSE")
 
-            // 3. 通知最终高度
-            self.notifyHeightChange()
             self.streamPerformanceDiagnostics.end(
                 pendingModules: self.realStreamParseInFlightCount,
                 pendingViews: self.pendingRealStreamElements.count,

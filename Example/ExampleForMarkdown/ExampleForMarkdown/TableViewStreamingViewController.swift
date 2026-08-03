@@ -389,6 +389,7 @@ class ChatMarkdownCell: UITableViewCell {
         isPaused = false
         isCurrentlyStreaming = true
         realStreamCompletion = completion
+        lastReportedHeight = 0
 
         // ⚠️ 注意：不在 onComplete 中设置 isCurrentlyStreaming = false
         // 因为 endRealStreaming 调用时 TypewriterEngine 可能还在显示内容
@@ -433,7 +434,9 @@ class ChatMarkdownCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         typingIndicator.stopAnimating()
+        markdownView.resetForReuse()
         onContentHeightChanged = nil
+        lastReportedHeight = 0
         // ⭐️ 重置流式标记
         isCurrentlyStreaming = false
 

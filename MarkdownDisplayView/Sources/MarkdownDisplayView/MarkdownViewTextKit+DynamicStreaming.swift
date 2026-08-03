@@ -505,6 +505,12 @@ extension MarkdownViewTextKit {
         realStreamBackpressureActive = false
         heightNotificationScheduled = false
         pendingForcedHeightNotification = false
+        pendingKnownStreamingHeight = nil
+        pendingRequiresFullHeightMeasurement = false
+        heightNotificationGeneration += 1
+        realStreamHeightAccumulator.reset(verticalMargins: 0)
+        lastReportedHeight = 0
+        invalidateIntrinsicContentSize()
         lastHeightNotificationTimestamp = 0
         lastLayoutWidthForHeightMeasurement = 0
         streamPreParseCompleted = false
@@ -655,6 +661,9 @@ extension MarkdownViewTextKit {
             contentStackView.addArrangedSubview(waitingIndicatorView)
         }
         waitingIndicatorView.isHidden = false
+        if isRealStreamingMode {
+            scheduleHeightChangeNotification(force: true)
+        }
 
         // 启动跳动动画
         startWaitingAnimation()
@@ -673,6 +682,9 @@ extension MarkdownViewTextKit {
         // 从 StackView 移除
         waitingIndicatorView.isHidden = true
         waitingIndicatorView.removeFromSuperview()
+        if isRealStreamingMode {
+            scheduleHeightChangeNotification(force: true)
+        }
 
         mdLog("[StreamBuffer] 💫 Waiting indicator hidden")
     }

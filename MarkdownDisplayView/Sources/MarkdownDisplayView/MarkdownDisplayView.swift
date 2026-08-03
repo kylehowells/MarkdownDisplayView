@@ -9,6 +9,39 @@ import UIKit
 import Foundation
 import Combine
 import NaturalLanguage
+
+struct StreamingHeightAccumulator {
+    private var visibleRoots: Set<ObjectIdentifier> = []
+    private(set) var totalHeight: CGFloat = 0
+
+    mutating func reset(verticalMargins: CGFloat) {
+        visibleRoots.removeAll(keepingCapacity: true)
+        totalHeight = max(0, verticalMargins)
+    }
+
+    mutating func rootBecameVisible(
+        _ root: UIView,
+        measuredHeight: CGFloat,
+        spacing: CGFloat
+    ) -> CGFloat? {
+        guard measuredHeight.isFinite, measuredHeight >= 0 else { return nil }
+        guard visibleRoots.insert(ObjectIdentifier(root)).inserted else { return totalHeight }
+        if visibleRoots.count > 1 { totalHeight += spacing }
+        totalHeight += measuredHeight
+        return totalHeight
+    }
+
+    mutating func textHeightChanged(delta: CGFloat) -> CGFloat? {
+        guard delta.isFinite, abs(delta) > 0.5 else { return nil }
+        totalHeight = max(0, totalHeight + delta)
+        return totalHeight
+    }
+
+    mutating func synchronize(totalHeight: CGFloat) {
+        guard totalHeight.isFinite else { return }
+        self.totalHeight = max(0, totalHeight)
+    }
+}
 // MARK: - MarkdownViewTextKit
 
 /// TextKit 2 版本的 Markdown 渲染视图
@@ -32,8 +65,8 @@ public final class MarkdownViewTextKit: UIView {
             self?.tryFinishRealStreamDrain()
         }
         // ⚡️ 核心修复：当打字机揭示了新视图（导致高度变化）时，立即通知父视图更新高度
-        engine.onLayoutChange = { [weak self] in
-            self?.scheduleHeightChangeNotification()
+        engine.onLayoutChange = { [weak self] change in
+            self?.handleTypewriterLayoutChange(change)
         }
         engine.onOutstandingTaskCountChange = { [weak self] count in
             guard let self else { return }
@@ -400,6 +433,10 @@ public final class MarkdownViewTextKit: UIView {
     var pendingForcedHeightNotification = false
     var lastHeightNotificationTimestamp: CFTimeInterval = 0
     var lastLayoutWidthForHeightMeasurement: CGFloat = 0
+    var realStreamHeightAccumulator = StreamingHeightAccumulator()
+    var pendingKnownStreamingHeight: CGFloat?
+    var pendingRequiresFullHeightMeasurement = false
+    var heightNotificationGeneration = 0
 
     // MARK: - Height reporting state
 
