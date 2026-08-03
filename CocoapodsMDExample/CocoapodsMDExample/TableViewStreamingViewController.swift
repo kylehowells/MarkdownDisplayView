@@ -542,29 +542,7 @@ class TableViewStreamingViewController: UIViewController {
     }
     
     private func setupInputArea() {
-        // 假流式按钮
-        let button = UIButton(type: .system)
-        button.setTitle("假流式", for: .normal)
-        button.backgroundColor = .systemBlue
-        button.setTitleColor(.white, for: .normal)
-        button.layer.cornerRadius = 20
-        button.addTarget(self, action: #selector(handleSend), for: .touchUpInside)
-
-        view.addSubview(button)
-        button.translatesAutoresizingMaskIntoConstraints = false
-
-        // 真流式按钮（传统模式：外部预分割）
-        let realStreamButton = UIButton(type: .system)
-        realStreamButton.setTitle("真流式", for: .normal)
-        realStreamButton.backgroundColor = .systemGreen
-        realStreamButton.setTitleColor(.white, for: .normal)
-        realStreamButton.layer.cornerRadius = 20
-        realStreamButton.addTarget(self, action: #selector(handleRealStreamSend), for: .touchUpInside)
-
-        view.addSubview(realStreamButton)
-        realStreamButton.translatesAutoresizingMaskIntoConstraints = false
-
-        // ⭐️ 新增：智能流式按钮（使用 SmartBuffer 自动检测模块）
+        // 智能流式按钮（使用 SmartBuffer 自动检测模块）
         let smartStreamButton = UIButton(type: .system)
         smartStreamButton.setTitle("智能流式", for: .normal)
         smartStreamButton.backgroundColor = .systemOrange
@@ -576,21 +554,8 @@ class TableViewStreamingViewController: UIViewController {
         smartStreamButton.translatesAutoresizingMaskIntoConstraints = false
 
         NSLayoutConstraint.activate([
-            // 假流式按钮 - 左侧
-            button.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            button.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
-            button.widthAnchor.constraint(equalToConstant: 80),
-            button.heightAnchor.constraint(equalToConstant: 44),
-
-            // 真流式按钮 - 中间
-            realStreamButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            realStreamButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            realStreamButton.widthAnchor.constraint(equalToConstant: 80),
-            realStreamButton.heightAnchor.constraint(equalToConstant: 44),
-
-            // 智能流式按钮 - 右侧
             smartStreamButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            smartStreamButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            smartStreamButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             smartStreamButton.widthAnchor.constraint(equalToConstant: 80),
             smartStreamButton.heightAnchor.constraint(equalToConstant: 44)
         ])
