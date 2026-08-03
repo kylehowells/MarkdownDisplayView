@@ -8,10 +8,206 @@
 import UIKit
 import Foundation
 
+/// FIFO storage whose dequeue cost is amortized O(1).
+///
+/// Keeping a logical head avoids `Array.removeFirst()` shifting every remaining
+/// typewriter task. The consumed prefix is compacted only occasionally.
+struct TypewriterPendingQueue<Element> {
+    private var storage: [Element] = []
+    private var head = 0
+
+    var isEmpty: Bool { head >= storage.count }
+    var count: Int { storage.count - head }
+
+    mutating func append(_ element: Element) {
+        storage.append(element)
+    }
+
+    mutating func popFirst() -> Element? {
+        guard !isEmpty else { return nil }
+
+        let element = storage[head]
+        head += 1
+
+        if head == storage.count {
+            storage.removeAll(keepingCapacity: true)
+            head = 0
+        } else if head >= 64, head * 2 >= storage.count {
+            storage.removeFirst(head)
+            head = 0
+        }
+
+        return element
+    }
+
+    func forEach(_ body: (Element) -> Void) {
+        guard !isEmpty else { return }
+        for index in head..<storage.count {
+            body(storage[index])
+        }
+    }
+
+    func contains(where predicate: (Element) -> Bool) -> Bool {
+        guard !isEmpty else { return false }
+        return storage[head...].contains(where: predicate)
+    }
+
+    mutating func updateEach(_ body: (inout Element) -> Void) {
+        guard !isEmpty else { return }
+        for index in head..<storage.count {
+            body(&storage[index])
+        }
+    }
+
+    mutating func removeAll() {
+        storage.removeAll(keepingCapacity: true)
+        head = 0
+    }
+}
+
+/// Task-local punctuation classification indexed in UTF-16 coordinates.
+///
+/// `NSAttributedString.length` and `revealCharacter(upto:)` both use UTF-16
+/// offsets. Building this lookup once keeps every animation tick O(1) and avoids
+/// mixing those offsets with Swift grapheme-cluster indices.
+struct TypewriterPunctuationProfile {
+    private static let commaLikeUnits: Set<UInt16> = [0xFF0C, 0x002C, 0x3001] // ， , 、
+    private static let sentenceEndUnits: Set<UInt16> = [
+        0x3002, // 。
+        0xFF01, // ！
+        0xFF1F, // ？
+        0x0021, // !
+        0x003F, // ?
+        0x003B, // ;
+        0xFF1B, // ；
+        0x000A, // newline
+    ]
+
+    private let extraDelays: [Int: TimeInterval]
+
+    init(text: String) {
+        var delays: [Int: TimeInterval] = [:]
+        delays.reserveCapacity(max(1, text.utf16.count / 16))
+
+        for (offset, codeUnit) in text.utf16.enumerated() {
+            if Self.commaLikeUnits.contains(codeUnit) {
+                delays[offset] = 0.03
+            } else if Self.sentenceEndUnits.contains(codeUnit) {
+                delays[offset] = 0.08
+            }
+        }
+
+        extraDelays = delays
+    }
+
+    func extraDelay(atUTF16Offset offset: Int) -> TimeInterval {
+        guard offset >= 0 else { return 0 }
+        return extraDelays[offset] ?? 0
+    }
+}
+
+/// Pure, clock-independent state for batching logical typewriter steps into display frames.
+/// It intentionally uses UTF-16 offsets because NSAttributedString and TextKit do too.
+struct TypewriterFrameSchedule {
+    struct AdvanceResult {
+        let targetUTF16Offset: Int?
+        let completed: Bool
+        let logicalStepCount: Int
+    }
+
+    let totalUTF16Length: Int
+    private(set) var revealedUTF16Offset = 0
+    private(set) var isComplete = false
+    private var remainingDuration: TimeInterval = 0
+    private var hasStarted = false
+
+    init(totalUTF16Length: Int) {
+        self.totalUTF16Length = max(0, totalUTF16Length)
+    }
+
+    mutating func start(
+        charsPerStep: Int,
+        delay: (Int) -> TimeInterval
+    ) -> AdvanceResult {
+        guard !hasStarted, totalUTF16Length > 0 else {
+            isComplete = totalUTF16Length == 0
+            return AdvanceResult(targetUTF16Offset: nil, completed: isComplete, logicalStepCount: 0)
+        }
+        hasStarted = true
+        let stepStart = revealedUTF16Offset
+        revealedUTF16Offset = min(totalUTF16Length, revealedUTF16Offset + max(1, charsPerStep))
+        remainingDuration = max(0, delay(stepStart))
+        return AdvanceResult(
+            targetUTF16Offset: revealedUTF16Offset,
+            completed: false,
+            logicalStepCount: 1
+        )
+    }
+
+    mutating func advance(
+        elapsed: TimeInterval,
+        charsPerStep: Int,
+        delay: (Int) -> TimeInterval
+    ) -> AdvanceResult {
+        guard hasStarted, !isComplete, elapsed.isFinite, elapsed >= 0 else {
+            return AdvanceResult(targetUTF16Offset: nil, completed: isComplete, logicalStepCount: 0)
+        }
+
+        remainingDuration -= elapsed
+        var target: Int?
+        var logicalStepCount = 0
+        while remainingDuration <= 0, !isComplete {
+            let overshoot = -remainingDuration
+            if revealedUTF16Offset >= totalUTF16Length {
+                isComplete = true
+                break
+            }
+
+            let stepStart = revealedUTF16Offset
+            revealedUTF16Offset = min(
+                totalUTF16Length,
+                revealedUTF16Offset + max(1, charsPerStep)
+            )
+            target = revealedUTF16Offset
+            logicalStepCount += 1
+            remainingDuration = max(0, delay(stepStart)) - overshoot
+        }
+
+        return AdvanceResult(
+            targetUTF16Offset: target,
+            completed: isComplete,
+            logicalStepCount: logicalStepCount
+        )
+    }
+
+    mutating func resetTiming(delay: (Int) -> TimeInterval) {
+        guard hasStarted, !isComplete else { return }
+        remainingDuration = max(0, delay(revealedUTF16Offset))
+    }
+}
+
+@available(iOS 15.0, *)
+private final class TypewriterDisplayLinkProxy {
+    weak var engine: TypewriterEngine?
+
+    init(engine: TypewriterEngine) {
+        self.engine = engine
+    }
+
+    @objc func displayLinkDidFire(_ displayLink: CADisplayLink) {
+        engine?.displayLinkDidFire(displayLink)
+    }
+}
+
 // MARK: - Typewriter Engine
 
 @available(iOS 15.0, *)
 class TypewriterEngine {
+
+    enum LayoutChange {
+        case rootBecameVisible(UIView)
+        case textHeightChanged(delta: CGFloat)
+    }
 
     enum TaskType {
         case show(UIView)
@@ -20,7 +216,7 @@ class TypewriterEngine {
         case block(UIView)
     }
 
-    private var taskQueue: [TaskType] = []
+    private var taskQueue = TypewriterPendingQueue<TaskType>()
     private var isRunning = false
     private var isPaused = false
 
@@ -35,6 +231,12 @@ class TypewriterEngine {
     // 追踪当前正在执行的任务，以便超时后强制完成
     private var currentTask: TaskType?
     private var currentTaskToken: UUID?
+    private var playbackGeneration = 0
+    private var currentPunctuationProfile: TypewriterPunctuationProfile?
+    private var textFrameSchedule: TypewriterFrameSchedule?
+    private var textDisplayLink: CADisplayLink?
+    private var textDisplayLinkProxy: TypewriterDisplayLinkProxy?
+    private var lastTextFrameTimestamp: CFTimeInterval?
 
     // 基础耗时
     // ⭐️ 优化：降低基础延迟，加快打字速度
@@ -48,9 +250,13 @@ class TypewriterEngine {
 
     // ⭐️ 新增：标记上一个任务是否是块级任务（用于判断是否需要添加间隔）
     private var lastTaskWasBlock: Bool = false
+    var taskGapScheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, action in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
+    }
 
     var onComplete: (() -> Void)?
-    var onLayoutChange: (() -> Void)?
+    var onLayoutChange: ((LayoutChange) -> Void)?
+    var onOutstandingTaskCountChange: ((Int) -> Void)?
     /// 每次输出内容时的回调（用于震动反馈等）
     var onTypewriterStep: (() -> Void)?
 
@@ -66,9 +272,19 @@ class TypewriterEngine {
         if let elementGapDuration {
             self.elementGapDuration = max(0, elementGapDuration)
         }
+        if case .text = currentTask, var schedule = textFrameSchedule {
+            schedule.resetTiming { [weak self] offset in
+                self?.calculateDelay(atUTF16Offset: offset) ?? 0
+            }
+            textFrameSchedule = schedule
+            lastTextFrameTimestamp = CACurrentMediaTime()
+        }
     }
 
     func enqueue(view: UIView, isRoot: Bool = true) {
+        defer {
+            if isRoot { onOutstandingTaskCountChange?(outstandingTaskCount) }
+        }
         // 完整块只执行根视图的 show：先不占 StackView 高度，轮到它时整块插入并淡入。
         // 普通文本继续递归到 MarkdownTextViewTK2，保持逐字显示。
         let isAtomicRoot = isRoot && view.accessibilityIdentifier?.hasPrefix("MarkdownAtomic") == true
@@ -155,15 +371,17 @@ class TypewriterEngine {
     }
 
     func stop() {
+        playbackGeneration += 1
         isPaused = true
         stopWatchdog()
+        invalidateTextDisplayLink()
 
         // TextView 在入队时已经 prepare；停止播放时必须同时清理当前任务和
         // 尚未执行的文字任务，否则它们会永久保留播放期的高度下限。
         if case .text(let textView) = currentTask {
             textView.finishAppendTypewriterPlayback()
         }
-        for task in taskQueue {
+        taskQueue.forEach { task in
             if case .text(let textView) = task {
                 textView.finishAppendTypewriterPlayback()
             }
@@ -173,7 +391,10 @@ class TypewriterEngine {
         isRunning = false
         currentTask = nil
         currentTaskToken = nil
+        currentPunctuationProfile = nil
+        textFrameSchedule = nil
         lastTaskWasBlock = false  // ⭐️ 重置状态
+        onOutstandingTaskCountChange?(0)
     }
 
     /// ⭐️ 新增：检查 TypewriterEngine 是否已完成（队列为空且不在运行）
@@ -181,53 +402,56 @@ class TypewriterEngine {
         return taskQueue.isEmpty && !isRunning
     }
 
+    var outstandingTaskCount: Int {
+        taskQueue.count + (isRunning ? 1 : 0)
+    }
+
     /// ⭐️ 检查视图是否在队列中
     func isViewInQueue(_ view: UIView) -> Bool {
-        for task in taskQueue {
+        return taskQueue.contains { task in
             switch task {
             case .show(let v):
-                if v === view { return true }
+                return v === view
             case .text(let tv):
-                if tv === view { return true }
+                return tv === view
             case .label(let lbl):
-                if lbl === view { return true }
+                return lbl === view
             case .block(let bv):
-                if bv === view { return true }
+                return bv === view
             }
         }
-        return false
     }
 
     /// ⭐️ 替换队列中的视图（替换所有匹配的任务）
     func replaceView(_ oldView: UIView, with newView: UIView) {
         var replacedCount = 0
 
-        for i in 0..<taskQueue.count {
-            switch taskQueue[i] {
+        taskQueue.updateEach { task in
+            switch task {
             case .show(let v):
                 if v === oldView {
                     newView.alpha = 0
-                    taskQueue[i] = .show(newView)
+                    task = .show(newView)
                     replacedCount += 1
                     mdLog("[TYPEWRITER] 🔄 Replaced .show task view")
                 }
             case .text(let tv):
                 if tv === oldView, let newTv = newView.subviews.compactMap({ $0 as? MarkdownTextViewTK2 }).first ?? (newView as? MarkdownTextViewTK2) {
                     newTv.prepareForTypewriter()
-                    taskQueue[i] = .text(newTv)
+                    task = .text(newTv)
                     replacedCount += 1
                     mdLog("[TYPEWRITER] 🔄 Replaced .text task view")
                 }
             case .label(let lbl):
                 if lbl === oldView, let newLbl = newView as? UILabel {
-                    taskQueue[i] = .label(newLbl)
+                    task = .label(newLbl)
                     replacedCount += 1
                     mdLog("[TYPEWRITER] 🔄 Replaced .label task view")
                 }
             case .block(let bv):
                 if bv === oldView {
                     newView.alpha = 0
-                    taskQueue[i] = .block(newView)
+                    task = .block(newView)
                     replacedCount += 1
                     mdLog("[TYPEWRITER] 🔄 Replaced .block task view")
                 }
@@ -270,20 +494,21 @@ class TypewriterEngine {
     deinit {
         // 常驻 Timer 由 RunLoop 持有，不 invalidate 会在引擎释放后继续空转
         watchdogTimer?.invalidate()
+        textDisplayLink?.invalidate()
     }
 
     /// 超时强制完成当前任务
-    private func forceFinishCurrentTask() {
-        guard let task = currentTask else {
-            finishCurrentTask()
-            return
-        }
+    func forceFinishCurrentTask() {
+        guard let task = currentTask, let token = currentTaskToken else { return }
+
+        invalidateTextDisplayLink()
 
         switch task {
         case .text(let textView):
             if let len = textView.attributedText?.length {
-                if textView.revealCharacter(upto: len).didChangeHeight {
-                    onLayoutChange?()
+                let result = textView.revealCharacter(upto: len)
+                if result.didChangeHeight {
+                    onLayoutChange?(.textHeightChanged(delta: result.heightDelta))
                 }
             }
         case .block(let view):
@@ -296,10 +521,10 @@ class TypewriterEngine {
             view.layer.removeAllAnimations()
             view.isHidden = false
             view.alpha = 1.0
-            onLayoutChange?() // 强制完成时也要通知
+            onLayoutChange?(.rootBecameVisible(view)) // 强制完成时也要通知
         }
 
-        finishCurrentTask()
+        finishCurrentTask(token: token)
     }
 
     private func runNext() {
@@ -316,7 +541,7 @@ class TypewriterEngine {
         isRunning = true
         isPaused = false
 
-        let task = taskQueue.removeFirst()
+        guard let task = taskQueue.popFirst() else { return }
         currentTask = task
 
         let token = UUID()
@@ -340,7 +565,7 @@ class TypewriterEngine {
             }
 
             // ⚡️ 关键修复：视图显示后立即通知高度变化
-            onLayoutChange?()
+            onLayoutChange?(.rootBecameVisible(view))
 
             // 注意：.show 是容器/根视图渐显，不触发震动反馈
 
@@ -349,7 +574,7 @@ class TypewriterEngine {
                 view.alpha = 1.0
             }) { _ in
                 mdLog("[STREAM] 👁️ 视图显示完成: \(viewType), 动画耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - showStartTime) * 1000))ms")
-                self.finishCurrentTask()
+                self.finishCurrentTask(token: token)
             }
 
         case .block(let view):
@@ -393,7 +618,7 @@ class TypewriterEngine {
                 mdLog("[STREAM] 📦 块视图显示完成: \(blockViewType), 动画耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - blockStartTime) * 1000))ms")
                 // 块级元素动画完成时触发震动反馈
                 self?.onTypewriterStep?()
-                self?.finishCurrentTask()
+                self?.finishCurrentTask(token: token)
             })
 
         case .label(let label):
@@ -401,60 +626,110 @@ class TypewriterEngine {
             UIView.animate(withDuration: 0.1, animations: {
                 label.alpha = 1.0
             }, completion: { _ in
-                self.finishCurrentTask()
+                self.finishCurrentTask(token: token)
             })
 
         case .text(let textView):
-            let textLen = textView.attributedText?.length ?? 0
-            let textPreview = textView.attributedText?.string.prefix(30) ?? ""
+            let textSnapshot = textView.attributedText ?? NSAttributedString()
+            let plainTextSnapshot = textSnapshot.string
+            let textLen = textSnapshot.length
+            let textPreview = plainTextSnapshot.prefix(30)
             mdLog("[TYPEWRITER] 📝 开始执行 .text 任务, 文本长度: \(textLen), 内容: \(textPreview)...")
+            currentPunctuationProfile = TypewriterPunctuationProfile(text: plainTextSnapshot)
             if textLen == 0 {
                 _ = textView.revealCharacter(upto: 0)
-                finishCurrentTask()
+                finishCurrentTask(token: token)
             } else {
-                typeNextCharacter(textView, currentIndex: 0, token: token)
+                startTextDisplayLinkTask(textView, textLength: textLen, token: token)
             }
         }
     }
 
-    private func typeNextCharacter(_ textView: MarkdownTextViewTK2, currentIndex: Int, token: UUID) {
-        guard token == self.currentTaskToken else { return }
-        guard !isPaused else { return }
+    private func startTextDisplayLinkTask(
+        _ textView: MarkdownTextViewTK2,
+        textLength: Int,
+        token: UUID
+    ) {
+        invalidateTextDisplayLink()
+        var schedule = TypewriterFrameSchedule(totalUTF16Length: textLength)
+        let initial = schedule.start(charsPerStep: charsPerStep) { [weak self] offset in
+            self?.calculateDelay(atUTF16Offset: offset) ?? 0
+        }
+        textFrameSchedule = schedule
+        if let target = initial.targetUTF16Offset {
+            revealText(textView, upto: target)
+        }
 
-        feedWatchdog()
-
-        guard let totalLen = textView.attributedText?.length else {
-            finishCurrentTask()
+        guard currentTaskToken == token, !initial.completed else {
+            finishCurrentTask(token: token)
             return
         }
 
-        if currentIndex >= totalLen {
-            if textView.revealCharacter(upto: totalLen).didChangeHeight {
-                onLayoutChange?()
-            }
-            finishCurrentTask()
+        let proxy = TypewriterDisplayLinkProxy(engine: self)
+        let displayLink = CADisplayLink(target: proxy, selector: #selector(TypewriterDisplayLinkProxy.displayLinkDidFire(_:)))
+        displayLink.preferredFramesPerSecond = 30
+        textDisplayLinkProxy = proxy
+        textDisplayLink = displayLink
+        lastTextFrameTimestamp = CACurrentMediaTime()
+        displayLink.add(to: .main, forMode: .common)
+    }
+
+    fileprivate func displayLinkDidFire(_ displayLink: CADisplayLink) {
+        handleTextFrame(timestamp: displayLink.timestamp)
+    }
+
+    func handleTextFrame(timestamp: CFTimeInterval) {
+        guard !isPaused,
+              let token = currentTaskToken,
+              case .text(let textView) = currentTask,
+              var schedule = textFrameSchedule,
+              let previousTimestamp = lastTextFrameTimestamp else { return }
+        let elapsed = timestamp - previousTimestamp
+        guard elapsed.isFinite, elapsed >= 0 else {
+            lastTextFrameTimestamp = timestamp
             return
         }
-
-        // ⭐️ 优化：批量显示字符（每次显示 charsPerStep 个）
-        let nextIndex = min(currentIndex + charsPerStep, totalLen)
-        let revealResult = textView.revealCharacter(upto: nextIndex)
-        if revealResult.didReveal {
-            if revealResult.didChangeHeight {
-                onLayoutChange?()
-            }
-            // 只在有实际内容显示时触发震动反馈
-            onTypewriterStep?()
+        lastTextFrameTimestamp = timestamp
+        let frame = schedule.advance(elapsed: elapsed, charsPerStep: charsPerStep) { [weak self] offset in
+            self?.calculateDelay(atUTF16Offset: offset) ?? 0
         }
+        textFrameSchedule = schedule
 
-        let delay = calculateDelay(at: currentIndex, text: textView.attributedText?.string ?? "")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.typeNextCharacter(textView, currentIndex: nextIndex, token: token)
+        if let target = frame.targetUTF16Offset {
+            revealText(textView, upto: target)
+            feedWatchdog()
+        }
+        if frame.completed {
+            invalidateTextDisplayLink()
+            finishCurrentTask(token: token)
         }
     }
 
-    private func finishCurrentTask() {
+    func advanceTextFrame(by elapsed: TimeInterval) {
+        guard let lastTextFrameTimestamp else { return }
+        handleTextFrame(timestamp: lastTextFrameTimestamp + max(0, elapsed))
+    }
+
+    private func revealText(_ textView: MarkdownTextViewTK2, upto target: Int) {
+        let revealResult = textView.revealCharacter(upto: target)
+        guard revealResult.didReveal else { return }
+        if revealResult.didChangeHeight {
+            onLayoutChange?(.textHeightChanged(delta: revealResult.heightDelta))
+        }
+        onTypewriterStep?()
+    }
+
+    private func invalidateTextDisplayLink() {
+        textDisplayLink?.invalidate()
+        textDisplayLink = nil
+        textDisplayLinkProxy = nil
+        lastTextFrameTimestamp = nil
+    }
+
+    var hasActiveTextDisplayLink: Bool { textDisplayLink != nil }
+
+    private func finishCurrentTask(token: UUID) {
+        guard currentTaskToken == token else { return }
         // 任务间隔（elementGapDuration）不应计入超时，这里刷新时间戳而非停表；
         // 队列真正空了由 runNext 停掉常驻 Timer。
         lastFeedTimestamp = CFAbsoluteTimeGetCurrent()
@@ -474,40 +749,42 @@ class TypewriterEngine {
         lastTaskWasBlock = isBlockTask
 
         if Thread.isMainThread {
-            self._finish()
+            self._finish(token: token)
         } else {
-            DispatchQueue.main.async { self._finish() }
+            DispatchQueue.main.async { self._finish(token: token) }
         }
     }
 
-    private func _finish() {
+    private func _finish(token: UUID) {
+        guard currentTaskToken == token else { return }
         // 正常完成、空文本和 watchdog 强制完成最终都会汇聚到主线程的这里。
         // 此时最后一次字符测高已经结束，可以解除播放期的单调高度保护。
         if case .text(let textView) = currentTask {
             textView.finishAppendTypewriterPlayback()
         }
+        invalidateTextDisplayLink()
+        textFrameSchedule = nil
+        currentPunctuationProfile = nil
+        currentTaskToken = nil
+        currentTask = nil
 
         isRunning = false
+        onOutstandingTaskCountChange?(outstandingTaskCount)
         // ⭐️ 优化：如果上一个任务是块级任务，添加额外延迟，让元素之间有明显间隔
         if lastTaskWasBlock && !taskQueue.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + elementGapDuration) { [weak self] in
-                self?.runNext()
+            let generation = playbackGeneration
+            taskGapScheduler(elementGapDuration) { [weak self] in
+                guard let self, self.playbackGeneration == generation else { return }
+                self.runNext()
             }
         } else {
             runNext()
         }
     }
 
-    private func calculateDelay(at index: Int, text: String) -> TimeInterval {
-        var delay = baseDuration
-        // 使用 limitedBy 安全获取索引，防止 Unicode 字符边界导致崩溃
-        if index >= 0,
-           index < text.count,
-           let charIndex = text.index(text.startIndex, offsetBy: index, limitedBy: text.endIndex) {
-            let char = text[charIndex]
-            if "，,、".contains(char) { delay += 0.03 }
-            else if "。！？!?;；\n".contains(char) { delay += 0.08 }
-        }
-        return delay + Double.random(in: 0...0.005)
+    private func calculateDelay(atUTF16Offset offset: Int) -> TimeInterval {
+        baseDuration
+            + (currentPunctuationProfile?.extraDelay(atUTF16Offset: offset) ?? 0)
+            + Double.random(in: 0...0.005)
     }
 }

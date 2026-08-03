@@ -10,6 +10,35 @@ import Foundation
 import Combine
 import NaturalLanguage
 
+/// Immutable, shared regex set for streaming atomic ranges.
+///
+/// The order and overlap behavior intentionally match the original implementation:
+/// results are sorted by location but overlapping image/link and math ranges are not merged.
+enum AtomicRangeMatcher {
+    private static let patterns = [
+        "(?s)\\$\\$.*?\\$\\$", // block math
+        "\\$[^\\n\\$]+?\\$",  // inline math
+        "!\\[.*?\\]\\(.*?\\)", // image
+        "\\[.*?\\]\\(.*?\\)",  // link
+    ]
+
+    private static let regularExpressions: [NSRegularExpression] = patterns.compactMap {
+        try? NSRegularExpression(pattern: $0, options: [])
+    }
+
+    static func ranges(in text: String) -> [NSRange] {
+        let fullRange = NSRange(location: 0, length: (text as NSString).length)
+        var ranges: [NSRange] = []
+
+        for regex in regularExpressions {
+            ranges.append(contentsOf: regex.matches(in: text, options: [], range: fullRange).map(\.range))
+        }
+
+        ranges.sort { $0.location < $1.location }
+        return ranges
+    }
+}
+
 @available(iOS 15.0, *)
 extension MarkdownViewTextKit {
     // MARK: - Table View
@@ -169,8 +198,12 @@ extension MarkdownViewTextKit {
     func createFootnoteView(footnotes: [MarkdownFootnote], width: CGFloat) -> UIView {
         // [FOOTNOTE_DEBUG] 脚注视图创建
         mdLog("[FOOTNOTE_DEBUG] 🎨 createFootnoteView called! count=\(footnotes.count), isRealStreamingMode=\(isRealStreamingMode)")
-        let callStack = Thread.callStackSymbols.prefix(6).joined(separator: "\n")
-        mdLog("[FOOTNOTE_DEBUG] 🎨 Call stack:\n\(callStack)")
+        #if DEBUG
+        if mdVerboseLoggingEnabled {
+            let callStack = Thread.callStackSymbols.prefix(6).joined(separator: "\n")
+            mdLog("[FOOTNOTE_DEBUG] 🎨 Call stack:\n\(callStack)")
+        }
+        #endif
 
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -387,10 +420,147 @@ extension MarkdownViewTextKit {
         return max(0, totalHeight)
     }
 
-    func notifyHeightChange(force: Bool = false) {
+    func handleTypewriterLayoutChange(_ change: TypewriterEngine.LayoutChange) {
+        guard isRealStreamingMode else {
+            scheduleHeightChangeNotification()
+            return
+        }
+
+        let knownHeight: CGFloat?
+        switch change {
+        case .rootBecameVisible(let root):
+            knownHeight = realStreamHeightAccumulator.rootBecameVisible(
+                root,
+                measuredHeight: measuredStreamingRootHeight(root),
+                spacing: contentStackView.spacing
+            )
+        case .textHeightChanged(let delta):
+            knownHeight = realStreamHeightAccumulator.textHeightChanged(delta: delta)
+        }
+
+        guard let knownHeight else { return }
+        invalidateIntrinsicContentSize()
+        // Typewriter 已经按显示帧合并 reveal，这里的增量高度又是 O(1) 已知值。
+        // 立即提交给宿主，保证文字写入、Cell self-sizing 和最终 draw 位于同一轮
+        // 主线程事务；再次延迟 30Hz 会让新内容在旧 Cell 高度中被裁剪数帧。
+        notifyHeightChange(knownStreamingHeight: knownHeight)
+    }
+
+    private func measuredStreamingRootHeight(_ root: UIView) -> CGFloat {
+        if let stack = root as? UIStackView {
+            let visible = stack.arrangedSubviews.filter { !$0.isHidden }
+            var height = visible.reduce(CGFloat.zero) {
+                $0 + measuredStreamingRootHeight($1)
+            }
+            if visible.count > 1 {
+                height += CGFloat(visible.count - 1) * stack.spacing
+            }
+            if stack.isLayoutMarginsRelativeArrangement {
+                height += stack.layoutMargins.top + stack.layoutMargins.bottom
+            }
+            if height.isFinite, height > 0 { return height }
+        }
+
+        let intrinsicHeight = root.intrinsicContentSize.height
+        if intrinsicHeight.isFinite,
+           intrinsicHeight != UIView.noIntrinsicMetric,
+           intrinsicHeight > 0 {
+            return intrinsicHeight
+        }
+
+        if let fixedHeight = root.constraints.first(where: {
+            $0.isActive
+                && $0.firstItem === root
+                && $0.firstAttribute == .height
+                && $0.relation == .equal
+        }), fixedHeight.constant > 0 {
+            return fixedHeight.constant
+        }
+
+        let fittingWidth = max(
+            1,
+            contentStackView.bounds.width > 0
+                ? contentStackView.bounds.width
+                : bounds.width
+        )
+        let height = root.systemLayoutSizeFitting(
+            CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+        if height.isFinite, height > 0 { return height }
+        return max(0, root.bounds.height)
+    }
+
+    /// 合并同一轮 RunLoop 内的测高请求，避免 Typewriter、建 View 和外层列表连续触发布局。
+    func scheduleHeightChangeNotification(
+        force: Bool = false,
+        knownStreamingHeight: CGFloat? = nil
+    ) {
+        streamPerformanceDiagnostics.recordHeightRequest()
+        // 只有 Typewriter 的 append 高度变化可以走 O(1) 增量值。图片回调、宽度变化和
+        // 强制测高都必须清空该值，回退到完整布局以保证最终正确性。
+        if knownStreamingHeight == nil || force {
+            invalidateIntrinsicHeightCache()
+            pendingRequiresFullHeightMeasurement = true
+            pendingKnownStreamingHeight = nil
+        } else if !pendingRequiresFullHeightMeasurement {
+            pendingKnownStreamingHeight = knownStreamingHeight
+        }
+        pendingForcedHeightNotification = pendingForcedHeightNotification || force
+        guard !heightNotificationScheduled else { return }
+        heightNotificationScheduled = true
+        let now = heightNotificationClock()
+        // 流式 Cell 的一次高度通知会触发 UITableView self-sizing/batch update。
+        // 30Hz 足以跟随打字机，同时避免对不断增长的 StackView 每帧完整测量。
+        let frameInterval = isStreaming ? 1.0 / 30.0 : 1.0 / 60.0
+        let delay = max(0, frameInterval - (now - lastHeightNotificationTimestamp))
+        let generation = heightNotificationGeneration
+
+        heightNotificationScheduler(delay) { [weak self] in
+            guard let self else { return }
+            guard generation == self.heightNotificationGeneration else { return }
+            self.heightNotificationScheduled = false
+            self.lastHeightNotificationTimestamp = self.heightNotificationClock()
+            let shouldForce = self.pendingForcedHeightNotification
+            self.pendingForcedHeightNotification = false
+            let knownHeight = self.pendingRequiresFullHeightMeasurement
+                ? nil
+                : self.pendingKnownStreamingHeight
+            self.pendingKnownStreamingHeight = nil
+            self.pendingRequiresFullHeightMeasurement = false
+            self.notifyHeightChange(force: shouldForce, knownStreamingHeight: knownHeight)
+        }
+    }
+
+    func notifyHeightChange(
+        force: Bool = false,
+        knownStreamingHeight: CGFloat? = nil
+    ) {
         let start = CFAbsoluteTimeGetCurrent()
         defer {
             recordCost(for: "Layout Calculation", duration: CFAbsoluteTimeGetCurrent() - start)
+        }
+
+        if let knownStreamingHeight,
+           isRealStreamingMode,
+           !force,
+           knownStreamingHeight.isFinite {
+            cacheIntrinsicHeight(knownStreamingHeight, width: heightMeasurementWidth)
+            let heightDiff = knownStreamingHeight - lastReportedHeight
+            let shouldNotifyParent = abs(heightDiff) > 9.0
+            if shouldNotifyParent {
+                lastReportedHeight = knownStreamingHeight
+                onHeightChange?(knownStreamingHeight)
+            }
+            streamPerformanceDiagnostics.recordHeightMeasurement(
+                durationMS: (CFAbsoluteTimeGetCurrent() - start) * 1000,
+                notified: shouldNotifyParent,
+                force: false,
+                source: "incremental",
+                arrangedSubviews: contentStackView.arrangedSubviews.count
+            )
+            return
         }
 
         // ⭐️ 强制 StackView 立即更新布局
@@ -401,43 +571,63 @@ extension MarkdownViewTextKit {
         self.contentStackView.layoutIfNeeded()
 
         // 使用稳定的测量宽度，避免父视图尚未完成布局时出现 width=0 导致测高抖动
-        let fallbackWidth = max(1, UIScreen.main.bounds.width - 32)
-        let fittingWidth: CGFloat = {
-            if self.bounds.width > 0 { return self.bounds.width }
-            if self.contentStackView.bounds.width > 0 { return self.contentStackView.bounds.width }
-            return fallbackWidth
-        }()
-
-        let size = self.contentStackView.systemLayoutSizeFitting(
-            CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        )
+        let fittingWidth = heightMeasurementWidth
 
         let frameBasedHeight = measuredVisibleContentStackHeight()
         let hasVisibleContent = contentStackView.arrangedSubviews.contains { !$0.isHidden }
 
-        var newHeight = size.height
+        // 流式阶段刚完成 layoutIfNeeded，arrangedSubview frame 已是当前可见内容的结果。
+        // 复用这些 frame，避免每次打字机高度变化都让 systemLayoutSizeFitting 再解一次整棵树。
+        let fittingHeight: CGFloat = {
+            if isStreaming, frameBasedHeight > 0, !force {
+                return frameBasedHeight
+            }
+            return contentStackView.systemLayoutSizeFitting(
+                CGSize(width: fittingWidth, height: UIView.layoutFittingCompressedSize.height),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height
+        }()
+
+        var newHeight = fittingHeight
         var usedFrameFallback = false
+        var measurementSource = isStreaming && frameBasedHeight > 0 && !force ? "frame" : "fitting"
 
         if !newHeight.isFinite || newHeight <= 0 {
             newHeight = frameBasedHeight
             usedFrameFallback = true
+            measurementSource = "frameFallback"
         }
 
         // 有可见内容但高度仍为 0，通常是布局尚未稳定；本轮跳过，等待下一次布局回调
         if newHeight <= 0, hasVisibleContent, !force {
             mdLog("📏 [Height] ⏳ Deferred notification (transient 0 with visible content)")
+            streamPerformanceDiagnostics.recordHeightMeasurement(
+                durationMS: (CFAbsoluteTimeGetCurrent() - start) * 1000,
+                notified: false,
+                force: force,
+                source: "deferred",
+                arrangedSubviews: contentStackView.arrangedSubviews.count
+            )
             return
+        }
+
+        if newHeight.isFinite, newHeight >= 0 {
+            cacheIntrinsicHeight(newHeight, width: fittingWidth)
         }
 
         // 🔍 诊断日志：打印高度变化
         let heightDiff = newHeight - lastReportedHeight
+        if isRealStreamingMode {
+            realStreamHeightAccumulator.synchronize(totalHeight: newHeight)
+            invalidateIntrinsicContentSize()
+        }
         mdLog("🔍 [Height] Current: \(String(format: "%.1f", newHeight))pt | Last: \(String(format: "%.1f", lastReportedHeight))pt | Diff: \(String(format: "%.1f", heightDiff))pt | Force: \(force) | Width: \(String(format: "%.1f", fittingWidth)) | Source: \(usedFrameFallback ? "frame" : "fitting")")
 
         // 只有高度变化超过阈值才通知，避免浮点数误差导致的死循环
         // 如果 force 为 true，忽略防抖检查
-        if force || abs(newHeight - lastReportedHeight) > 9.0 {
+        let shouldNotifyParent = force || abs(newHeight - lastReportedHeight) > 9.0
+        if shouldNotifyParent {
             mdLog("📏 [Height] ✅ Notifying parent: \(String(format: "%.1f", lastReportedHeight)) -> \(String(format: "%.1f", newHeight))")
             lastReportedHeight = newHeight
             self.onHeightChange?(newHeight)
@@ -465,60 +655,78 @@ extension MarkdownViewTextKit {
         } else {
             mdLog("📏 [Height] ⚠️ Skipped notification (diff < 9.0pt)")
         }
+        streamPerformanceDiagnostics.recordHeightMeasurement(
+            durationMS: (CFAbsoluteTimeGetCurrent() - start) * 1000,
+            notified: shouldNotifyParent,
+            force: force,
+            source: measurementSource,
+            arrangedSubviews: contentStackView.arrangedSubviews.count
+        )
     }
     
     public override var intrinsicContentSize: CGSize {
+        if isRealStreamingMode, realStreamHeightAccumulator.totalHeight > 0 {
+            return CGSize(
+                width: UIView.noIntrinsicMetric,
+                height: realStreamHeightAccumulator.totalHeight
+            )
+        }
+        let fittingWidth = heightMeasurementWidth
+        if let cachedWidth = cachedIntrinsicHeightWidth,
+           let cachedHeight = cachedIntrinsicHeight,
+           abs(cachedWidth - fittingWidth) <= 0.5 {
+            return CGSize(width: UIView.noIntrinsicMetric, height: cachedHeight)
+        }
+        intrinsicHeightMeasurementCount += 1
         let size = contentStackView.systemLayoutSizeFitting(
             CGSize(
-                width: bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32,
+                width: fittingWidth,
                 height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
+        cacheIntrinsicHeight(size.height, width: fittingWidth)
         return CGSize(width: UIView.noIntrinsicMetric, height: size.height)
+    }
+
+    var heightMeasurementWidth: CGFloat {
+        if bounds.width > 0 { return bounds.width }
+        if contentStackView.bounds.width > 0 { return contentStackView.bounds.width }
+        return max(1, UIScreen.main.bounds.width - 32)
+    }
+
+    func cacheIntrinsicHeight(_ height: CGFloat, width: CGFloat? = nil) {
+        guard height.isFinite, height >= 0 else { return }
+        cachedIntrinsicHeightWidth = width ?? heightMeasurementWidth
+        cachedIntrinsicHeight = height
+    }
+
+    func invalidateIntrinsicHeightCache() {
+        cachedIntrinsicHeightWidth = nil
+        cachedIntrinsicHeight = nil
     }
     
     public override func layoutSubviews() {
         super.layoutSubviews()
-        
-        // ⭐️ 关键修复：在布局完成后检查高度是否需要修正
-        // 这解决了"初始宽度不准导致高度计算错误"的问题（Chicken & Egg problem）
-        // 通过对比 lastReportedHeight，我们只在真正需要时触发更新，从而避免死循环
-        notifyHeightChange()
+
+        // layoutSubviews 也会由高度回调和 UITableView batch update 触发。只在测量宽度
+        // 真正变化时重新测高，切断 notify → table layout → layoutSubviews → notify 的反馈环。
+        if consumeLayoutWidthChange(bounds.width) {
+            scheduleHeightChangeNotification(force: true)
+        }
+    }
+
+    func consumeLayoutWidthChange(_ width: CGFloat) -> Bool {
+        guard width > 0, abs(width - lastLayoutWidthForHeightMeasurement) > 0.5 else { return false }
+        lastLayoutWidthForHeightMeasurement = width
+        invalidateIntrinsicHeightCache()
+        return true
     }
     
     //MARK: - streaming method
     /// 计算需要原子化输出的区间（公式、图片、链接）
         func calculateAtomicRanges(in text: String) -> [NSRange] {
-            var ranges: [NSRange] = []
-            let nsString = text as NSString
-
-            // 定义正则表达式模式
-            // 1. 块级公式 $$...$$ (允许换行 (?s))
-            let blockMathPattern = "(?s)\\$\\$.*?\\$\\$"
-            // 2. 行内公式 $...$ (不允许换行)
-            let inlineMathPattern = "\\$[^\\n\\$]+?\\$"
-            // 3. 图片 ![alt](url)
-            let imagePattern = "!\\[.*?\\]\\(.*?\\)"
-            // 4. 链接 [text](url) - 如果你也希望链接整体出现，加上这个
-            let linkPattern = "\\[.*?\\]\\(.*?\\)"
-
-            // 合并正则 (注意顺序，块级优先于行内)
-            // 这里为了演示，把链接也加上去了，你可以根据需要注释掉 linkPattern
-            let patterns = [blockMathPattern, inlineMathPattern, imagePattern,linkPattern]
-
-            for pattern in patterns {
-                if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-                    let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
-                    for match in matches {
-                        ranges.append(match.range)
-                    }
-                }
-            }
-
-            // 排序并合并重叠区间（虽然正则通常分开写，但为了保险）
-            ranges.sort { $0.location < $1.location }
-            return ranges
+            AtomicRangeMatcher.ranges(in: text)
         }
 
 }

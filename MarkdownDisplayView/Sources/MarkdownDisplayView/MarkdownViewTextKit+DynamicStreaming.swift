@@ -494,6 +494,26 @@ extension MarkdownViewTextKit {
 
         isStreaming = false
         isRealStreamingMode = false
+        realStreamRenderGeneration += 1
+        pendingRealStreamElements.removeAll()
+        realStreamRenderPumpScheduled = false
+        realStreamParseInFlightCount = 0
+        pendingSmartStreamModules.removeAll()
+        smartStreamParseActive = false
+        realStreamDrainCompletion = nil
+        isEndingRealStream = false
+        realStreamBackpressureActive = false
+        heightNotificationScheduled = false
+        pendingForcedHeightNotification = false
+        pendingKnownStreamingHeight = nil
+        pendingRequiresFullHeightMeasurement = false
+        heightNotificationGeneration += 1
+        realStreamHeightAccumulator.reset(verticalMargins: 0)
+        lastReportedHeight = 0
+        invalidateIntrinsicHeightCache()
+        invalidateIntrinsicContentSize()
+        lastHeightNotificationTimestamp = 0
+        lastLayoutWidthForHeightMeasurement = 0
         streamPreParseCompleted = false
         streamDisplayedCount = 0
         streamParsedElements = []
@@ -557,10 +577,11 @@ extension MarkdownViewTextKit {
 
         let now = CFAbsoluteTimeGetCurrent()
         let timeSinceLastData = now - lastDataReceivedTime
-        let isEngineIdle = typewriterEngine.isIdle
+        let hasRenderBacklog = realStreamParseInFlightCount > 0 || !pendingRealStreamElements.isEmpty || realStreamRenderPumpScheduled
+        let isEngineIdle = typewriterEngine.isIdle && !hasRenderBacklog
 
         // ⭐️ 调试日志
-        mdLog("[WaitingIndicator] 检测: isEngineIdle=\(isEngineIdle), timeSinceLastData=\(String(format: "%.2f", timeSinceLastData))s, delay=\(waitingIndicatorDelay)s, isShowing=\(isShowingWaitingIndicator)")
+        mdLog("[WaitingIndicator] 检测: isEngineIdle=\(isEngineIdle), renderBacklog=\(hasRenderBacklog), timeSinceLastData=\(String(format: "%.2f", timeSinceLastData))s, delay=\(waitingIndicatorDelay)s, isShowing=\(isShowingWaitingIndicator)")
 
         // ⭐️ 核心逻辑：只有当 TypewriterEngine 空闲且超过延迟时间未收到数据时才显示
         if isEngineIdle && timeSinceLastData > waitingIndicatorDelay {
@@ -575,7 +596,7 @@ extension MarkdownViewTextKit {
         }
     }
 
-    /// ⭐️ 标记收到新数据（在 appendStreamData/appendBlock 时调用）
+    /// ⭐️ 标记收到新数据（在 appendStreamData 时调用）
     func markDataReceived() {
         lastDataReceivedTime = CFAbsoluteTimeGetCurrent()
         // 收到数据时立即隐藏等待动画
@@ -641,6 +662,10 @@ extension MarkdownViewTextKit {
             contentStackView.addArrangedSubview(waitingIndicatorView)
         }
         waitingIndicatorView.isHidden = false
+        if isRealStreamingMode {
+            // Waiting View 是低频结构变化；同步校准避免先显示 indicator、后改变 Cell 高度。
+            notifyHeightChange(force: true)
+        }
 
         // 启动跳动动画
         startWaitingAnimation()
@@ -659,6 +684,11 @@ extension MarkdownViewTextKit {
         // 从 StackView 移除
         waitingIndicatorView.isHidden = true
         waitingIndicatorView.removeFromSuperview()
+        if isRealStreamingMode {
+            // 新数据到达时先删除 waiting view。同步提交高度，避免删除、插入新模块和
+            // 宿主 batch 被拆成多个可见中间帧。
+            notifyHeightChange(force: true)
+        }
 
         mdLog("[StreamBuffer] 💫 Waiting indicator hidden")
     }

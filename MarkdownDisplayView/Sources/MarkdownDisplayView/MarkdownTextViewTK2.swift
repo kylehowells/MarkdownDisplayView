@@ -45,6 +45,7 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
 
     private var calculatedHeight: CGFloat = 0
     private var heightConstraint: NSLayoutConstraint?
+    private var lastDisplayInvalidationBoundsSize: CGSize = .zero
 
     // ⭐️ 管理自定义附件视图（如表格）
     private var attachmentProviders: [NSTextAttachment: NSTextAttachmentViewProvider] = [:]
@@ -331,14 +332,21 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
             layoutText()
         }
 
-        // ⭐️ 修复 3: 尺寸变化时强制重绘
-        // 当 StackView 展开时，bounds 从 0 变为有值，但 TextKit 可能需要一个显式的重绘信号，
-        // 尤其是在 backgroundColor 为 clear 的情况下。
-        //
-        // 这里刻意保持无条件：contentMode 为 .topLeft 时视图长高不会自动触发 draw，
-        // 而 applyLayout 的重算被 `force || widthChanged || calculatedHeight == 0` 挡住时
-        // 也不会重绘，此处是最后的兜底。
-        setNeedsDisplay()
+        // 内容写入路径会自行 setNeedsDisplay；这里只兜底处理真实尺寸变化。
+        // UITableView self-sizing 会反复调用所有子 TextView 的 layoutSubviews，若每次都
+        // 标脏全文，流式高度更新期间已经显示的段落会持续清空/重绘，表现为画面闪烁。
+        if consumeDisplayBoundsChange(bounds.size) {
+            setNeedsDisplay()
+        }
+    }
+
+    func consumeDisplayBoundsChange(_ size: CGSize) -> Bool {
+        guard size.width > 0, size.height > 0 else { return false }
+        let changed = abs(size.width - lastDisplayInvalidationBoundsSize.width) > 0.5
+            || abs(size.height - lastDisplayInvalidationBoundsSize.height) > 0.5
+        guard changed else { return false }
+        lastDisplayInvalidationBoundsSize = size
+        return true
     }
 
     override func draw(_ rect: CGRect) {
@@ -499,20 +507,20 @@ extension MarkdownTextViewTK2 {
 
     /// 揭示前 N 个字符（支持批量显示）。
     /// - Returns: 本次是否显示了新字符，以及重新测量后高度是否真的改变。
-    func revealCharacter(upto index: Int) -> (didReveal: Bool, didChangeHeight: Bool) {
-        guard index > 0 else { return (false, false) }
+    func revealCharacter(upto index: Int) -> (didReveal: Bool, didChangeHeight: Bool, heightDelta: CGFloat) {
+        guard index > 0 else { return (false, false, 0) }
 
         if typewriterTextMode == .append {
             guard let originalAttr = cachedOriginalAttributedString else {
-                return (false, false)
+                return (false, false, 0)
             }
 
             let length = originalAttr.length
-            if index > length { return (false, false) }
+            if index > length { return (false, false, 0) }
 
             let startIndex = lastRevealedIndex
             let endIndex = index
-            guard endIndex > startIndex else { return (false, false) }
+            guard endIndex > startIndex else { return (false, false, 0) }
 
             let range = NSRange(location: startIndex, length: endIndex - startIndex)
             let segment = originalAttr.attributedSubstring(from: range)
@@ -534,7 +542,8 @@ extension MarkdownTextViewTK2 {
                     let previousHeight = heightConstraint?.constant ?? calculatedHeight
                     applyLayout(width: layoutWidth, force: true)
                     let currentHeight = heightConstraint?.constant ?? calculatedHeight
-                    return (true, abs(currentHeight - previousHeight) > 0.5)
+                    let heightDelta = currentHeight - previousHeight
+                    return (true, abs(heightDelta) > 0.5, heightDelta)
                 } else {
                     setNeedsLayout()
                 }
@@ -543,24 +552,24 @@ extension MarkdownTextViewTK2 {
                 setNeedsDisplay()
             }
 
-            return (true, false)
+            return (true, false, 0)
         }
 
         guard let originalAttr = attributedText,
               cachedOriginalAttributedString != nil else {
             mdLog("[TYPEWRITER] ⚠️ revealCharacter 提前返回: attributedText=\(attributedText != nil), prepared=\(cachedOriginalAttributedString != nil), index=\(index)")
-            return (false, false)
+            return (false, false, 0)
         }
 
         let length = originalAttr.length
-        if index > length { return (false, false) }
+        if index > length { return (false, false, 0) }
 
         // ⭐️ 批量支持：从上次位置到当前位置，显示所有字符
         let startIndex = lastRevealedIndex
         let endIndex = index
 
         // 如果没有新字符需要显示，直接返回
-        guard endIndex > startIndex else { return (false, false) }
+        guard endIndex > startIndex else { return (false, false, 0) }
 
         // 按属性 run 恢复原始属性（含被 prepare 移除的 .link 与被覆盖的前景色）。
         // setAttributes 会整块替换该范围的属性，效果等价于原先逐字符
@@ -581,7 +590,7 @@ extension MarkdownTextViewTK2 {
         setNeedsDisplay()
 
         // reveal 模式预先保留完整布局，显示字符不会改变高度。
-        return (true, false)
+        return (true, false, 0)
     }
 }
 

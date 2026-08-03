@@ -85,6 +85,112 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
+@Test func repeatedLayoutAtSameWidthDoesNotRequestAnotherHeightMeasurement() async throws {
+    let view = MarkdownViewTextKit()
+
+    #expect(view.consumeLayoutWidthChange(320))
+    #expect(view.consumeLayoutWidthChange(320) == false)
+    #expect(view.consumeLayoutWidthChange(320.2) == false)
+    #expect(view.consumeLayoutWidthChange(321))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func repeatedTextLayoutAtSameSizeDoesNotInvalidateDisplayAgain() async throws {
+    let textView = MarkdownTextViewTK2()
+
+    #expect(textView.consumeDisplayBoundsChange(CGSize(width: 320, height: 44)))
+    #expect(textView.consumeDisplayBoundsChange(CGSize(width: 320, height: 44)) == false)
+    #expect(textView.consumeDisplayBoundsChange(CGSize(width: 320.2, height: 44.2)) == false)
+    #expect(textView.consumeDisplayBoundsChange(CGSize(width: 320, height: 60)))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func atomicQuoteDoesNotEnqueueEachNestedTextView() async throws {
+    let markdownView = MarkdownViewTextKit()
+    let quote = markdownView.createQuoteView(children: [], width: 320)
+    let nestedText = MarkdownTextViewTK2()
+    nestedText.attributedText = NSAttributedString(string: "quoted text")
+    quote.addSubview(nestedText)
+
+    #expect(quote.accessibilityIdentifier == "MarkdownAtomicQuote")
+
+    let engine = TypewriterEngine()
+    engine.enqueue(view: quote)
+
+    #expect(engine.outstandingTaskCount == 1)
+    #expect(nestedText.displayedAttributedString.string == "quoted text")
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func tableLayoutReusesAttributesWhileGeometryIsUnchanged() async throws {
+    let layout = MarkdownTableLayout()
+    layout.columnWidths = [100, 120]
+    layout.rowHeights = [44, 60]
+
+    layout.prepare()
+    layout.prepare()
+
+    #expect(layout.layoutRebuildCount == 1)
+    #expect(layout.collectionViewContentSize == CGSize(width: 220, height: 104))
+
+    layout.rowHeights = [44, 80]
+    layout.prepare()
+    #expect(layout.layoutRebuildCount == 2)
+    #expect(layout.collectionViewContentSize == CGSize(width: 220, height: 124))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func smartStreamingPreservesOrderWithoutDuplicateViews() async throws {
+    let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+    view.enableTypewriterEffect = false
+    view.beginRealStreaming()
+
+    let blocks = [
+        "# 目录\n\n1. [第一章](#第一章)\n2. [第二章](#第二章)\n",
+        "## 第一章\n\n第一章正文。\n",
+        "## 第二章\n\n第二章正文。\n",
+    ]
+    for block in blocks {
+        view.appendStreamData(block)
+    }
+
+    await withCheckedContinuation { continuation in
+        view.endRealStreaming {
+            continuation.resume()
+        }
+    }
+
+    let headingTitles = view.tableOfContents.map(\.title)
+    let headingIDs = view.tableOfContents.map(\.id)
+    let viewTags = view.contentStackView.arrangedSubviews.map(\.tag)
+    #expect(headingTitles.contains("目录"))
+    #expect(headingTitles.contains("第一章"))
+    #expect(headingTitles.contains("第二章"))
+    #expect(Set(headingIDs).count == headingIDs.count)
+    #expect(view.headingViews.count == headingIDs.count)
+    #expect(view.tocSectionId == headingIDs.first)
+    #expect(view.tocSectionView === view.headingViews[headingIDs[0]])
+    #expect(view.oldElements.count == view.contentStackView.arrangedSubviews.count)
+    #expect(Set(viewTags).count == viewTags.count)
+    for block in blocks {
+        #expect(view.markdown.contains(block.trimmingCharacters(in: .whitespacesAndNewlines)))
+    }
+
+    view.beginRealStreaming()
+    view.appendStreamData("# 新目录\n\n新内容。\n")
+    await withCheckedContinuation { continuation in
+        view.endRealStreaming { continuation.resume() }
+    }
+    #expect(view.tableOfContents.map(\.title) == ["新目录"])
+    #expect(view.imageAttachments.isEmpty)
+}
+
+@available(iOS 15.0, *)
+@MainActor
 @Test func appendTypewriterSeparatesCharacterRevealFromHeightChanges() async throws {
     let textView = MarkdownTextViewTK2()
     textView.typewriterTextMode = .append
@@ -104,6 +210,7 @@ import UIKit
     let firstMeasurement = textView.revealCharacter(upto: 20)
     #expect(firstMeasurement.didReveal)
     #expect(firstMeasurement.didChangeHeight)
+    #expect(firstMeasurement.heightDelta > 0)
 
     let sameLineCharacter = textView.revealCharacter(upto: 21)
     #expect(sameLineCharacter.didReveal)
@@ -165,6 +272,9 @@ import UIKit
 
     #expect(currentText.intrinsicContentSize.height < 160)
     #expect(queuedText.intrinsicContentSize.height < 160)
+    #expect(engine.isIdle)
+    #expect(engine.isViewInQueue(currentText) == false)
+    #expect(engine.isViewInQueue(queuedText) == false)
 }
 
 @available(iOS 15.0, *)
@@ -217,4 +327,60 @@ import UIKit
 
     #expect(textView.revealCharacter(upto: 7).didReveal == false)
     #expect(textView.revealCharacter(upto: text.length + 1).didReveal == false)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func streamingHeightAccumulatorAddsRootsAndTextDeltasWithoutDoubleCounting() async throws {
+    var accumulator = StreamingHeightAccumulator()
+    accumulator.reset(verticalMargins: 12)
+
+    let firstRoot = UIView()
+    let secondRoot = UIView()
+
+    #expect(accumulator.rootBecameVisible(firstRoot, measuredHeight: 20, spacing: 8) == 32)
+    #expect(accumulator.rootBecameVisible(firstRoot, measuredHeight: 20, spacing: 8) == 32)
+    #expect(accumulator.rootBecameVisible(secondRoot, measuredHeight: 30, spacing: 8) == 70)
+    #expect(accumulator.textHeightChanged(delta: 18) == 88)
+    #expect(accumulator.textHeightChanged(delta: 0.1) == nil)
+    #expect(accumulator.totalHeight == 88)
+    accumulator.synchronize(totalHeight: 120)
+    #expect(accumulator.textHeightChanged(delta: 10) == 130)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func smartStreamIncrementalHeightMatchesFinalStackFitting() async throws {
+    let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+    view.enableTypewriterEffect = true
+    view.updateTypewriterSpeed(charsPerStep: 1_000, baseDuration: 0.001, elementGapDuration: 0)
+    view.layoutIfNeeded()
+    view.beginRealStreaming()
+    view.appendStreamData("""
+    # Height Test
+
+    A paragraph that wraps onto more than one line when rendered in a narrow container.
+
+    - first list item
+    - second list item
+
+    > atomic quote content
+
+    """)
+
+    await withCheckedContinuation { continuation in
+        view.endRealStreaming { continuation.resume() }
+    }
+
+    view.layoutIfNeeded()
+    view.contentStackView.layoutIfNeeded()
+    let finalFittingHeight = view.contentStackView.systemLayoutSizeFitting(
+        CGSize(width: 320, height: UIView.layoutFittingCompressedSize.height),
+        withHorizontalFittingPriority: .required,
+        verticalFittingPriority: .fittingSizeLevel
+    ).height
+    #expect(
+        abs(view.realStreamHeightAccumulator.totalHeight - finalFittingHeight) < 2,
+        "cached=\(view.realStreamHeightAccumulator.totalHeight), final=\(finalFittingHeight)"
+    )
 }

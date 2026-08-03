@@ -90,29 +90,31 @@ public final class MarkdownRenderer {
         // 整段守卫而非仅守卫 mdLog：循环本身是 elements × placeholders 的全文 contains，
         // release 下必须完全跳过
         #if DEBUG
-        mdLog("🔷[MDEXT] ===== Parsed Elements (looking for placeholders) =====")
-        for (idx, element) in result.elements.enumerated() {
-            switch element {
-            case .attributedText(let attr):
-                let text = attr.string
-                for placeholder in customDataMap.keys {
-                    if text.contains(placeholder) {
-                        mdLog("🔷[MDEXT] 📍 Element[\(idx)] attributedText CONTAINS '\(placeholder)'")
-                        mdLog("🔷[MDEXT]    Full text: '\(text.replacingOccurrences(of: "\n", with: "⏎"))'")
+        if mdVerboseLoggingEnabled {
+            mdLog("🔷[MDEXT] ===== Parsed Elements (looking for placeholders) =====")
+            for (idx, element) in result.elements.enumerated() {
+                switch element {
+                case .attributedText(let attr):
+                    let text = attr.string
+                    for placeholder in customDataMap.keys {
+                        if text.contains(placeholder) {
+                            mdLog("🔷[MDEXT] 📍 Element[\(idx)] attributedText CONTAINS '\(placeholder)'")
+                            mdLog("🔷[MDEXT]    Full text: '\(text.replacingOccurrences(of: "\n", with: "⏎"))'")
+                        }
                     }
-                }
-            case .heading(let id, let attr):
-                let text = attr.string
-                for placeholder in customDataMap.keys {
-                    if text.contains(placeholder) {
-                        mdLog("🔷[MDEXT] 📍 Element[\(idx)] heading CONTAINS '\(placeholder)'")
+                case .heading(_, let attr):
+                    let text = attr.string
+                    for placeholder in customDataMap.keys {
+                        if text.contains(placeholder) {
+                            mdLog("🔷[MDEXT] 📍 Element[\(idx)] heading CONTAINS '\(placeholder)'")
+                        }
                     }
+                default:
+                    break
                 }
-            default:
-                break
             }
+            mdLog("🔷[MDEXT] ===== End Parsed Elements =====")
         }
-        mdLog("🔷[MDEXT] ===== End Parsed Elements =====")
         #endif
 
         // 4. 后处理：将占位符替换为自定义元素

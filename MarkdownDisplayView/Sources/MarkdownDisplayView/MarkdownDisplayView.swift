@@ -9,6 +9,39 @@ import UIKit
 import Foundation
 import Combine
 import NaturalLanguage
+
+struct StreamingHeightAccumulator {
+    private var visibleRoots: Set<ObjectIdentifier> = []
+    private(set) var totalHeight: CGFloat = 0
+
+    mutating func reset(verticalMargins: CGFloat) {
+        visibleRoots.removeAll(keepingCapacity: true)
+        totalHeight = max(0, verticalMargins)
+    }
+
+    mutating func rootBecameVisible(
+        _ root: UIView,
+        measuredHeight: CGFloat,
+        spacing: CGFloat
+    ) -> CGFloat? {
+        guard measuredHeight.isFinite, measuredHeight >= 0 else { return nil }
+        guard visibleRoots.insert(ObjectIdentifier(root)).inserted else { return totalHeight }
+        if visibleRoots.count > 1 { totalHeight += spacing }
+        totalHeight += measuredHeight
+        return totalHeight
+    }
+
+    mutating func textHeightChanged(delta: CGFloat) -> CGFloat? {
+        guard delta.isFinite, abs(delta) > 0.5 else { return nil }
+        totalHeight = max(0, totalHeight + delta)
+        return totalHeight
+    }
+
+    mutating func synchronize(totalHeight: CGFloat) {
+        guard totalHeight.isFinite else { return }
+        self.totalHeight = max(0, totalHeight)
+    }
+}
 // MARK: - MarkdownViewTextKit
 
 /// TextKit 2 版本的 Markdown 渲染视图
@@ -29,10 +62,21 @@ public final class MarkdownViewTextKit: UIView {
 
             // ⚡️ 流式优化：打字机动画完成后渲染脚注
             self?.renderFootnotesIfPending()
+            self?.tryFinishRealStreamDrain()
         }
         // ⚡️ 核心修复：当打字机揭示了新视图（导致高度变化）时，立即通知父视图更新高度
-        engine.onLayoutChange = { [weak self] in
-            self?.notifyHeightChange()
+        engine.onLayoutChange = { [weak self] change in
+            self?.handleTypewriterLayoutChange(change)
+        }
+        engine.onOutstandingTaskCountChange = { [weak self] count in
+            guard let self else { return }
+            self.streamPerformanceDiagnostics.recordTypewriterOutstanding(count)
+            if self.realStreamBackpressureActive, count <= self.realStreamTypewriterLowWatermark {
+                self.realStreamBackpressureActive = false
+                self.scheduleRealStreamRenderPump()
+                self.startNextSmartStreamParseIfPossible()
+            }
+            self.tryFinishRealStreamDrain()
         }
         // ⭐️ 震动反馈：每次输出内容时触发
         engine.onTypewriterStep = { [weak self] in
@@ -58,6 +102,7 @@ public final class MarkdownViewTextKit: UIView {
     
     public var configuration: MarkdownConfiguration = .default {
         didSet {
+            invalidateIntrinsicHeightCache()
             streamBuffer.updateMinModuleLength(configuration.streamMinModuleLength)
             scheduleRerender()
         }
@@ -65,6 +110,7 @@ public final class MarkdownViewTextKit: UIView {
     
     public var markdown: String = "" {
         didSet {
+            invalidateIntrinsicHeightCache()
             // 🔍 性能监控：记录渲染开始时间
             if !isStreaming {
                 renderStartTime = CFAbsoluteTimeGetCurrent()
@@ -356,9 +402,47 @@ public final class MarkdownViewTextKit: UIView {
     var isRealStreamingMode = false
     var realStreamAccumulatedText = ""
     var realStreamParsedElementCount = 0
-    var realStreamBlockQueue: [String] = []
-    var realStreamOnComplete: (() -> Void)?
-    var useSmartBufferMode = false
+    struct PendingRealStreamElement {
+        var element: MarkdownRenderElement
+        let globalIndex: Int
+        let moduleSequence: Int
+    }
+    var pendingRealStreamElements = TypewriterPendingQueue<PendingRealStreamElement>()
+    var realStreamRenderPumpScheduled = false
+    var realStreamRenderGeneration = 0
+    var realStreamParseInFlightCount = 0
+    struct PendingSmartStreamModule {
+        let text: String
+        let renderVersion: Int
+        let renderGeneration: Int
+        let sequence: Int
+    }
+    var pendingSmartStreamModules = TypewriterPendingQueue<PendingSmartStreamModule>()
+    var smartStreamParseActive = false
+    var realStreamDrainCompletion: (() -> Void)?
+    var isEndingRealStream = false
+    var realStreamBackpressureActive = false
+    let realStreamTypewriterHighWatermark = 24
+    let realStreamTypewriterLowWatermark = 12
+    let realStreamFrameBudget: CFTimeInterval = 0.004
+    var realStreamNextModuleSequence = 0
+    let streamPerformanceDiagnostics = MarkdownStreamPerformanceDiagnostics()
+
+    var heightNotificationScheduled = false
+    var pendingForcedHeightNotification = false
+    var lastHeightNotificationTimestamp: CFTimeInterval = 0
+    var lastLayoutWidthForHeightMeasurement: CGFloat = 0
+    var realStreamHeightAccumulator = StreamingHeightAccumulator()
+    var pendingKnownStreamingHeight: CGFloat?
+    var pendingRequiresFullHeightMeasurement = false
+    var heightNotificationGeneration = 0
+    var cachedIntrinsicHeightWidth: CGFloat?
+    var cachedIntrinsicHeight: CGFloat?
+    var intrinsicHeightMeasurementCount = 0
+    var heightNotificationClock: () -> CFTimeInterval = { CACurrentMediaTime() }
+    var heightNotificationScheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, action in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
+    }
 
     // MARK: - Height reporting state
 

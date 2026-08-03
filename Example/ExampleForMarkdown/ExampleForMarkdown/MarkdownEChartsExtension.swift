@@ -146,22 +146,36 @@ private final class EChartsErrorView: UIView {
 
 // MARK: - ECharts Web View
 
-private final class EChartsWebView: UIView {
+private final class EChartsWebView: UIView, WKNavigationDelegate {
+    private static var nextDiagnosticID = 0
+    private static var liveDiagnosticCount = 0
     private let webView: WKWebView
     private let optionJSON: String
     private let chartHeight: CGFloat
+    private let diagnosticID: Int
+    private var navigationStart: CFTimeInterval = 0
 
     init(optionJSON: String, frame: CGRect) {
         self.optionJSON = optionJSON
         self.chartHeight = max(1, frame.height)
+        Self.nextDiagnosticID += 1
+        Self.liveDiagnosticCount += 1
+        self.diagnosticID = Self.nextDiagnosticID
 
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         self.webView = WKWebView(frame: .zero, configuration: configuration)
 
         super.init(frame: frame)
+        webView.navigationDelegate = self
+        logWebPerformance(event: "create", detail: "live=\(Self.liveDiagnosticCount) optionChars=\(optionJSON.count)")
         setupUI()
         loadChart()
+    }
+
+    deinit {
+        Self.liveDiagnosticCount = max(0, Self.liveDiagnosticCount - 1)
+        logWebPerformance(event: "destroy", detail: "live=\(Self.liveDiagnosticCount)")
     }
 
     required init?(coder: NSCoder) {
@@ -198,6 +212,32 @@ private final class EChartsWebView: UIView {
     private func loadChart() {
         let encodedOption = Data(optionJSON.utf8).base64EncodedString()
         webView.loadHTMLString(Self.html(optionBase64: encodedOption), baseURL: nil)
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        navigationStart = CACurrentMediaTime()
+        logWebPerformance(event: "navStart", detail: "live=\(Self.liveDiagnosticCount)")
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let durationMS = (CACurrentMediaTime() - navigationStart) * 1000
+        logWebPerformance(event: "navFinish", detail: "ms=\(String(format: "%.1f", durationMS)) live=\(Self.liveDiagnosticCount)")
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        let durationMS = (CACurrentMediaTime() - navigationStart) * 1000
+        logWebPerformance(event: "navFail", detail: "ms=\(String(format: "%.1f", durationMS)) code=\((error as NSError).code)")
+    }
+
+    private func logWebPerformance(event: String, detail: @autoclosure () -> String) {
+        #if DEBUG
+        guard ProcessInfo.processInfo.environment["MD_STREAM_PERF_LOG"] == "1" else { return }
+        print("[MDPERF][WEB] type=echarts id=\(diagnosticID) event=\(event) \(detail())")
+        #endif
     }
 
     private static func html(optionBase64: String) -> String {
