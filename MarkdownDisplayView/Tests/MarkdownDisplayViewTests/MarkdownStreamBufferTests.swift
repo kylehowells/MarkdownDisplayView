@@ -73,6 +73,25 @@ private func pendingTypeSequence(_ chunks: [String], minModuleLength: Int = 10) 
     return types
 }
 
+private final class StreamBufferEChartsParser: MarkdownCustomParser {
+    let identifier = "echarts"
+    let pattern = #"(?i)<echarts(?:\s+[^>]*)?>([\s\S]*?)</echarts\s*>"#
+    let streamingBlockTagName: String? = "echarts"
+
+    func parse(match: NSTextCheckingResult, in text: String) -> CustomElementData? {
+        CustomElementData(type: identifier, rawText: (text as NSString).substring(with: match.range))
+    }
+}
+
+private final class StreamBufferVideoParser: MarkdownCustomParser {
+    let identifier = "video"
+    let pattern = #"\[video:([^\]]+)\]"#
+
+    func parse(match: NSTextCheckingResult, in text: String) -> CustomElementData? {
+        CustomElementData(type: identifier, rawText: (text as NSString).substring(with: match.range))
+    }
+}
+
 // MARK: - Samples
 
 private let multiHeadingSample = """
@@ -249,6 +268,56 @@ private let allSamples: [(name: String, text: String)] = [
 
     let closed = buffer.append("$$\n\nTail paragraph is here.\n\n")
     #expect(closed.hasPendingStructure == false)
+}
+
+// MARK: - Registered Atomic Custom Blocks
+
+@available(iOS 15.0, *)
+@Test func echartsBlockWaitsForClosingTagAndRendersAsCustomElement() async throws {
+    MarkdownCustomExtensionManager.shared.register(parser: StreamBufferEChartsParser())
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+
+    let opened = buffer.append("## Chart\n\n<echarts height=\"320\">\n{\n  \"label\": \"<details>\",\n  \"series\": []\n\n")
+    #expect(opened.completeModules.isEmpty)
+    #expect(opened.hasPendingStructure)
+    #expect(opened.pendingType == nil)
+
+    let closed = buffer.append("}\n</echarts>\n\n## Next\n\nNext section body.\n\n")
+    #expect(closed.completeModules.count == 2)
+    #expect(closed.completeModules[0].contains("<echarts height=\"320\">"))
+    #expect(closed.completeModules[0].contains("</echarts>"))
+
+    let renderer = MarkdownRenderer(configuration: .default, containerWidth: 320)
+    let rendered = renderer.render(closed.completeModules[0]).elements
+    #expect(rendered.contains { element in
+        if case .custom(let data) = element { return data.type == "echarts" }
+        return false
+    })
+}
+
+@available(iOS 15.0, *)
+@Test func echartsBlockHandlesRandomChunksAndPayloadDelimiters() async throws {
+    MarkdownCustomExtensionManager.shared.register(parser: StreamBufferEChartsParser())
+    let sample = "## Chart\n\n<echarts>\n{\"text\": \"$$ and ```\", \"series\": []}\n</echarts>\n\n"
+
+    for seed in UInt64(1)...UInt64(8) {
+        let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+        var modules: [String] = []
+        for chunk in pseudoRandomChunks(sample, seed: seed, maxSize: 7) {
+            modules.append(contentsOf: buffer.append(chunk).completeModules)
+        }
+        let remaining = buffer.flush().trimmingCharacters(in: .whitespacesAndNewlines)
+        if !remaining.isEmpty { modules.append(remaining) }
+        #expect(modules == [sample.trimmingCharacters(in: .whitespacesAndNewlines)])
+    }
+}
+
+@available(iOS 15.0, *)
+@Test func parserIdentifierIsNotImplicitlyTreatedAsHTMLTag() async throws {
+    MarkdownCustomExtensionManager.shared.register(parser: StreamBufferVideoParser())
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    let result = buffer.append("<video>ordinary HTML without a closing tag\n")
+    #expect(result.hasPendingStructure == false)
 }
 
 // MARK: - Greedy Non-Overlapping Match Semantics

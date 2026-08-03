@@ -36,8 +36,18 @@ public protocol MarkdownCustomParser: AnyObject {
     /// 正则匹配模式
     var pattern: String { get }
 
+    /// 智能流式输出时必须整体提交的 HTML 风格块标签名。
+    ///
+    /// 例如解析 `<echarts>...</echarts>` 的扩展返回 `"echarts"`。行内语法或
+    /// fenced code renderer 保持默认的 `nil`，避免把 parser identifier 错当标签名。
+    var streamingBlockTagName: String? { get }
+
     /// 将匹配到的文本转换为自定义数据
     func parse(match: NSTextCheckingResult, in text: String) -> CustomElementData?
+}
+
+public extension MarkdownCustomParser {
+    var streamingBlockTagName: String? { nil }
 }
 
 // MARK: - Custom View Provider Protocol

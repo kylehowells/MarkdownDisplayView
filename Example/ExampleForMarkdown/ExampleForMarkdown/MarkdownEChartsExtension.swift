@@ -18,6 +18,7 @@ import MarkdownDisplayView
 /// </echarts>
 public final class MarkdownEChartsParser: MarkdownCustomParser {
     public let identifier = "echarts"
+    public let streamingBlockTagName: String? = "echarts"
     public let pattern = #"(?i)<echarts(?:\s+height\s*=\s*["']?(\d+(?:\.\d+)?)["']?)?\s*>([\s\S]*?)</echarts\s*>"#
 
     private static let defaultHeight: CGFloat = 320
