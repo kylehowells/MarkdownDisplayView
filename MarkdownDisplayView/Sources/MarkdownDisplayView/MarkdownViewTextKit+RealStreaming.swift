@@ -12,15 +12,12 @@ import NaturalLanguage
 
 @available(iOS 15.0, *)
 extension MarkdownViewTextKit {
-    // MARK: - ⭐️ 真流式 Append 模式（Real Streaming）
+    // MARK: - 智能流式
 
-    /// 开始真流式模式
-    /// - Parameters:
-    ///   - autoScrollBottom: 是否自动滚动到底部
-    ///   - useSmartBuffer: 是否使用智能缓存模式（自动检测完整模块）
-    ///   - onComplete: 流式完成回调
-    public func beginRealStreaming(autoScrollBottom: Bool = true, useSmartBuffer: Bool = false, onComplete: (() -> Void)? = nil) {
-        mdLog("[FOOTNOTE_DEBUG] 🟢 beginRealStreaming called, useSmartBuffer=\(useSmartBuffer)")
+    /// 开始智能流式模式
+    /// - Parameter autoScrollBottom: 是否自动滚动到底部
+    public func beginRealStreaming(autoScrollBottom: Bool = true) {
+        mdLog("[FOOTNOTE_DEBUG] 🟢 beginRealStreaming called")
 
         // 停止任何现有流式
         stopStreaming()
@@ -38,14 +35,11 @@ extension MarkdownViewTextKit {
         // 初始化真流式状态
         isRealStreamingMode = true
         isStreaming = true
-        useSmartBufferMode = useSmartBuffer
         mdLog("[FOOTNOTE_DEBUG] 🟢 isRealStreamingMode set to TRUE")
         autoScrollEnabled = autoScrollBottom
         userScrolledAway = false
         realStreamAccumulatedText = ""
         realStreamParsedElementCount = 0
-        realStreamBlockQueue = []
-        realStreamOnComplete = onComplete
         realStreamRenderGeneration += 1
         pendingRealStreamElements.removeAll()
         realStreamRenderPumpScheduled = false
@@ -60,6 +54,7 @@ extension MarkdownViewTextKit {
             verticalMargins: contentStackView.layoutMargins.top + contentStackView.layoutMargins.bottom
         )
         lastReportedHeight = 0
+        invalidateIntrinsicHeightCache()
         invalidateIntrinsicContentSize()
         pendingKnownStreamingHeight = nil
         pendingRequiresFullHeightMeasurement = false
@@ -81,11 +76,9 @@ extension MarkdownViewTextKit {
         // 重置 TypewriterEngine
         typewriterEngine.stop()
 
-        // 重置 StreamBuffer（智能缓存模式）
-        if useSmartBuffer {
-            streamBuffer.reset()
-            streamBuffer.updateContainerWidth(bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32)
-        }
+        // 重置 StreamBuffer，由它自动识别完整 Markdown 模块。
+        streamBuffer.reset()
+        streamBuffer.updateContainerWidth(bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32)
 
         // ⭐️ 修复：启动等待检测，而不是直接显示等待动画
         // 等待动画只在 TypewriterEngine 空闲且一段时间无数据到达时显示
@@ -97,7 +90,7 @@ extension MarkdownViewTextKit {
         // 记录开始时间
         streamingStartTimestamp = CFAbsoluteTimeGetCurrent()
 
-        mdLog("🎬 [RealStream] Started real streaming mode, smartBuffer=\(useSmartBuffer)")
+        mdLog("🎬 [RealStream] Started smart streaming mode")
     }
 
     /// ⭐️ 新 API：追加流式数据（智能缓存模式）
@@ -269,43 +262,12 @@ extension MarkdownViewTextKit {
         )
     }
 
-    /// 追加一个完整的 Markdown 块（保持向后兼容）
-    /// - Parameter block: 完整的 Markdown 块（如标题+内容、段落、代码块等）
-    /// - Note: 每个块应该是完整的 Markdown 结构，不会在语法中间截断
-    public func appendBlock(_ block: String) {
-        guard isRealStreamingMode, !isEndingRealStream else {
-            mdLog("⚠️ [RealStream] Not in real streaming mode, call beginRealStreaming() first")
-            return
-        }
-
-        // 如果使用智能缓存模式，委托给 appendStreamData
-        if useSmartBufferMode {
-            appendStreamData(block)
-            return
-        }
-
-        // ⭐️ 标记收到新数据，用于等待动画检测
-        markDataReceived()
-
-        mdLog("📝 [RealStream] Appending block: \(block.prefix(50))... (\(block.count) chars)")
-
-        // 完整块也必须进入串行解析队列。旧实现会为每个块并发重解析累计全文，
-        // 多个结果可能使用相同的 previousElementCount 并乱序回写，造成 View 重复、
-        // tag 冲突及目录状态被旧结果覆盖。
-        enqueueSmartStreamModule(block, appendSeparator: false)
-    }
-
-    /// 显示真流式新增的元素
+    /// 显示智能流式新增的元素
     func displayRealStreamElements(
         _ elements: [MarkdownRenderElement],
         startIndex: Int,
         moduleSequence: Int
     ) {
-        guard useSmartBufferMode else {
-            displayLegacyRealStreamElements(elements, startIndex: startIndex)
-            return
-        }
-
         for (index, element) in elements.enumerated() {
             pendingRealStreamElements.append(PendingRealStreamElement(
                 element: element,
@@ -314,37 +276,6 @@ extension MarkdownViewTextKit {
             ))
         }
         scheduleRealStreamRenderPump()
-    }
-
-    private func displayLegacyRealStreamElements(_ elements: [MarkdownRenderElement], startIndex: Int) {
-        let containerWidth = bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32
-        if isShowingWaitingIndicator { hideWaitingIndicator() }
-
-        for (index, element) in elements.enumerated() {
-            let globalIndex = startIndex + index
-            let view = createView(for: element, containerWidth: containerWidth)
-            view.tag = 1000 + globalIndex
-            if enableTypewriterEffect {
-                view.isHidden = true
-                contentStackView.addArrangedSubview(view)
-                typewriterEngine.enqueue(view: view)
-            } else {
-                contentStackView.addArrangedSubview(view)
-            }
-            if case .heading(let id, _) = element {
-                headingViews[id] = view
-                if id == tocSectionId { tocSectionView = view }
-            }
-            oldElements.append(element)
-        }
-
-        if enableTypewriterEffect { typewriterEngine.start() }
-        // hidden 根视图尚未贡献可见高度；由 Typewriter 的 root/text 增量事件报告。
-        // 此处提前读取 StackView frame 会把容器初始高度误当成首个根视图高度。
-        if !enableTypewriterEffect {
-            scheduleHeightChangeNotification()
-        }
-        handleAutoScroll()
     }
 
     func scheduleRealStreamRenderPump() {
@@ -487,13 +418,11 @@ extension MarkdownViewTextKit {
         // ⭐️ 隐藏等待动画
         hideWaitingIndicator()
 
-        // ⭐️ 智能缓存模式：处理剩余的未完成内容
-        if useSmartBufferMode {
-            let remainingText = streamBuffer.flush()
-            if !remainingText.isEmpty {
-                mdLog("📦 [SmartBuffer] Flushing remaining content: \(remainingText.prefix(50))...")
-                enqueueSmartStreamModule(remainingText)
-            }
+        // 处理缓冲区中剩余的未完成内容。
+        let remainingText = streamBuffer.flush()
+        if !remainingText.isEmpty {
+            mdLog("📦 [SmartBuffer] Flushing remaining content: \(remainingText.prefix(50))...")
+            enqueueSmartStreamModule(remainingText)
         }
 
         // 更新 markdown 属性（用于后续非流式访问）
@@ -505,9 +434,7 @@ extension MarkdownViewTextKit {
 
         // ⭐️ 关键修复：保存脚注和完成回调，等待 TypewriterEngine 完成后统一处理
         let pendingFootnotes = footnotes
-        let pendingCompletion = realStreamOnComplete
-        let externalCompletion = completion  // ⭐️ 新增：保存外部传入的 completion
-        realStreamOnComplete = nil
+        let externalCompletion = completion
 
         // 定义收尾逻辑
         let finishBlock: () -> Void = { [weak self] in
@@ -531,7 +458,6 @@ extension MarkdownViewTextKit {
             // 3. 重置状态
             self.isRealStreamingMode = false
             self.isStreaming = false
-            self.useSmartBufferMode = false
             self.stopHapticFeedback()
             mdLog("[FOOTNOTE_DEBUG] 🔴 isRealStreamingMode set to FALSE")
 
@@ -542,8 +468,7 @@ extension MarkdownViewTextKit {
                 arrangedSubviews: self.contentStackView.arrangedSubviews.count
             )
 
-            // 4. 触发完成回调（先内部回调，再外部回调）
-            pendingCompletion?()
+            // 4. 触发结束阶段传入的完成回调。
             externalCompletion?()
 
             let elapsed = (CFAbsoluteTimeGetCurrent() - self.streamingStartTimestamp) * 1000

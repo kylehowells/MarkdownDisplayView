@@ -510,6 +510,7 @@ extension MarkdownViewTextKit {
         heightNotificationGeneration += 1
         realStreamHeightAccumulator.reset(verticalMargins: 0)
         lastReportedHeight = 0
+        invalidateIntrinsicHeightCache()
         invalidateIntrinsicContentSize()
         lastHeightNotificationTimestamp = 0
         lastLayoutWidthForHeightMeasurement = 0
@@ -595,7 +596,7 @@ extension MarkdownViewTextKit {
         }
     }
 
-    /// ⭐️ 标记收到新数据（在 appendStreamData/appendBlock 时调用）
+    /// ⭐️ 标记收到新数据（在 appendStreamData 时调用）
     func markDataReceived() {
         lastDataReceivedTime = CFAbsoluteTimeGetCurrent()
         // 收到数据时立即隐藏等待动画
@@ -662,7 +663,8 @@ extension MarkdownViewTextKit {
         }
         waitingIndicatorView.isHidden = false
         if isRealStreamingMode {
-            scheduleHeightChangeNotification(force: true)
+            // Waiting View 是低频结构变化；同步校准避免先显示 indicator、后改变 Cell 高度。
+            notifyHeightChange(force: true)
         }
 
         // 启动跳动动画
@@ -683,7 +685,9 @@ extension MarkdownViewTextKit {
         waitingIndicatorView.isHidden = true
         waitingIndicatorView.removeFromSuperview()
         if isRealStreamingMode {
-            scheduleHeightChangeNotification(force: true)
+            // 新数据到达时先删除 waiting view。同步提交高度，避免删除、插入新模块和
+            // 宿主 batch 被拆成多个可见中间帧。
+            notifyHeightChange(force: true)
         }
 
         mdLog("[StreamBuffer] 💫 Waiting indicator hidden")

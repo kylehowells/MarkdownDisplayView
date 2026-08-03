@@ -374,17 +374,16 @@ class ChatMarkdownCell: UITableViewCell {
         isCurrentlyStreaming = false
     }
 
-    // MARK: - 真流式 API
+    // MARK: - 智能流式 API
 
-    /// 真流式完成回调（保存以便后续调用）
+    /// 智能流式完成回调（保存以便后续调用）
     private var realStreamCompletion: (() -> Void)?
 
-    /// 开始真流式模式
+    /// 开始智能流式模式
     /// - Parameters:
-    ///   - useSmartBuffer: 是否使用智能缓存模式（自动检测完整模块）
     ///   - onStart: 开始回调
     ///   - completion: 完成回调
-    func beginRealStreaming(useSmartBuffer: Bool = false, onStart: (() -> Void)? = nil, completion: @escaping () -> Void) {
+    func beginRealStreaming(onStart: (() -> Void)? = nil, completion: @escaping () -> Void) {
         // 重置状态
         isPaused = false
         isCurrentlyStreaming = true
@@ -394,7 +393,7 @@ class ChatMarkdownCell: UITableViewCell {
         // ⚠️ 注意：不在 onComplete 中设置 isCurrentlyStreaming = false
         // 因为 endRealStreaming 调用时 TypewriterEngine 可能还在显示内容
         // 我们在 endRealStreaming 中手动处理完成逻辑
-        markdownView.beginRealStreaming(autoScrollBottom: false, useSmartBuffer: useSmartBuffer, onComplete: nil)
+        markdownView.beginRealStreaming(autoScrollBottom: false)
 
         // 立即执行 UI 切换
         typingIndicator.isHidden = true
@@ -407,18 +406,13 @@ class ChatMarkdownCell: UITableViewCell {
         onStart?()
     }
 
-    /// 追加一个 Markdown 块（预分割模式）
-    func appendBlock(_ block: String) {
-        markdownView.appendBlock(block)
-    }
-
     /// ⭐️ 追加流式数据（智能缓存模式）
     /// 让 MarkdownStreamBuffer 自动检测完整模块
     func appendStreamData(_ data: String) {
         markdownView.appendStreamData(data)
     }
 
-    /// 结束真流式
+    /// 结束智能流式
     func endRealStreaming() {
         // ⭐️ 使用 completion 回调替代固定延迟
         // 确保在 TypewriterEngine 完全结束后才触发完成逻辑
@@ -556,17 +550,6 @@ class TableViewStreamingViewController: UIViewController {
         view.addSubview(button)
         button.translatesAutoresizingMaskIntoConstraints = false
 
-        // 真流式按钮（传统模式：外部预分割）
-        let realStreamButton = UIButton(type: .system)
-        realStreamButton.setTitle("真流式", for: .normal)
-        realStreamButton.backgroundColor = .systemGreen
-        realStreamButton.setTitleColor(.white, for: .normal)
-        realStreamButton.layer.cornerRadius = 20
-        realStreamButton.addTarget(self, action: #selector(handleRealStreamSend), for: .touchUpInside)
-
-        view.addSubview(realStreamButton)
-        realStreamButton.translatesAutoresizingMaskIntoConstraints = false
-
         // ⭐️ 新增：智能流式按钮（使用 SmartBuffer 自动检测模块）
         let smartStreamButton = UIButton(type: .system)
         smartStreamButton.setTitle("智能流式", for: .normal)
@@ -585,12 +568,6 @@ class TableViewStreamingViewController: UIViewController {
             button.widthAnchor.constraint(equalToConstant: 80),
             button.heightAnchor.constraint(equalToConstant: 44),
 
-            // 真流式按钮 - 中间
-            realStreamButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
-            realStreamButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            realStreamButton.widthAnchor.constraint(equalToConstant: 80),
-            realStreamButton.heightAnchor.constraint(equalToConstant: 44),
-
             // 智能流式按钮 - 右侧
             smartStreamButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
             smartStreamButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
@@ -599,174 +576,14 @@ class TableViewStreamingViewController: UIViewController {
         ])
     }
     
-    // 在 ChatViewController 类中
-
-    // MARK: - Markdown 分割工具
-
-    /// 按章节标题分割 Markdown 内容
-    /// - Parameter markdown: 完整的 Markdown 文本
-    /// - Returns: 分割后的块数组，每个块是一个完整的章节
-    private func splitMarkdownBySection(_ markdown: String) -> [String] {
-        var blocks: [String] = []
-        var currentBlock = ""
-
-        let lines = markdown.components(separatedBy: "\n")
-
-        for line in lines {
-            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-
-            // 检测是否是标题行（# 或 ## 开头）
-            let isHeading = trimmedLine.hasPrefix("# ") ||
-                            trimmedLine.hasPrefix("## ") ||
-                            trimmedLine.hasPrefix("### ")
-
-            if isHeading && !currentBlock.isEmpty {
-                // 遇到新标题，保存当前块
-                blocks.append(currentBlock)
-                currentBlock = line + "\n"
-            } else {
-                // 继续累积当前块
-                currentBlock += line + "\n"
-            }
-        }
-
-        // 保存最后一个块
-        if !currentBlock.isEmpty {
-            blocks.append(currentBlock)
-        }
-
-        //print("📦 [RealStream] Split markdown into \(blocks.count) blocks")
-        return blocks
-    }
-
-    // MARK: - 真流式发送
-
-    /// 当前真流式的定时器
-    private var realStreamTimer: Timer?
-    /// 当前真流式的块索引
-    private var realStreamBlockIndex: Int = 0
-    /// 当前真流式的块数组
-    private var realStreamBlocks: [String] = []
-    /// 当前真流式的 Cell
+    /// 当前智能流式的 Cell
     private weak var realStreamCell: ChatMarkdownCell?
-    /// 当前真流式的 IndexPath
+    /// 当前智能流式的 IndexPath
     private var realStreamIndexPath: IndexPath?
 
-    @objc private func handleRealStreamSend() {
-        guard !isSending else { return }
-        isSending = true
-
-        let userText = "请用真流式给我写一段 Markdown。"
-        let aiResponseText = demoMarkdown
-
-        // 1. 用户消息
-        let userMsg = ChatMessage(content: userText, isUser: true)
-        messages.append(userMsg)
-        insertRowAndScroll(animated: true)
-
-        // 2. 插入 Bot Loading
-        let botMsg = ChatMessage(content: "", isUser: false, isStreaming: false, isLoading: true)
-        messages.append(botMsg)
-        let botIndexPath = IndexPath(row: messages.count - 1, section: 0)
-        tableView.insertRows(at: [botIndexPath], with: .bottom)
-        scrollToBottom(animated: true)
-
-        // 3. 模拟网络延迟后开始真流式
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            guard let self = self else { return }
-
-            // 分割 Markdown 内容
-            self.realStreamBlocks = self.splitMarkdownBySection(aiResponseText)
-            self.realStreamBlockIndex = 0
-            self.realStreamIndexPath = botIndexPath
-
-            // 更新数据源状态
-            self.messages[botIndexPath.row].isLoading = false
-            self.messages[botIndexPath.row].isStreaming = true
-            self.messages[botIndexPath.row].content = ""
-
-            // 获取 Cell
-            if let cell = self.tableView.cellForRow(at: botIndexPath) as? ChatMarkdownCell {
-                self.realStreamCell = cell
-
-                // 绑定高度回调
-                // ⚠️ 使用数据源的 isStreaming 状态，而不是 Cell 的状态
-                // 避免 Cell 状态被复用或其他原因重置导致滚动失效
-                cell.onContentHeightChanged = { [weak self] in
-                    guard let self = self else { return }
-                    UIView.performWithoutAnimation {
-                        self.tableView.performBatchUpdates(nil, completion: nil)
-                    }
-                    // 检查数据源状态
-                    if let indexPath = self.realStreamIndexPath,
-                       indexPath.row < self.messages.count,
-                       self.messages[indexPath.row].isStreaming {
-                        self.scrollToBottom(animated: false)
-                    }
-                }
-
-                // 开始真流式
-                cell.beginRealStreaming(
-                    onStart: { [weak self] in
-                        self?.messages[botIndexPath.row].isLoading = false
-                        self?.messages[botIndexPath.row].isStreaming = true
-                        self?.isSending = false
-                    },
-                    completion: { [weak self] in
-                        guard let self = self else { return }
-                        self.messages[botIndexPath.row].content = aiResponseText
-                        self.messages[botIndexPath.row].isStreaming = false
-                        self.isSending = true
-                        //print("✅ [RealStream] Streaming completed!")
-                    }
-                )
-
-                // 启动定时器，模拟网络数据分块到达
-                self.startRealStreamTimer()
-            } else {
-                // Cell 不可见，直接显示最终结果
-                self.messages[botIndexPath.row].content = aiResponseText
-                self.messages[botIndexPath.row].isStreaming = false
-                self.isSending = true
-                self.tableView.reloadRows(at: [botIndexPath], with: .none)
-            }
-        }
-    }
-
-    /// 启动真流式定时器
-    private func startRealStreamTimer() {
-        //print("[FOOTNOTE_DEBUG] ⏰ startRealStreamTimer called, blocks.count=\(realStreamBlocks.count), blockIndex=\(realStreamBlockIndex)")
-
-        // 每 0.3 秒发送一个块，模拟网络数据到达
-        realStreamTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: true) { [weak self] timer in
-            guard let self = self else {
-                timer.invalidate()
-                return
-            }
-
-            //print("[FOOTNOTE_DEBUG] ⏰ Timer fired, blockIndex=\(self.realStreamBlockIndex), blocks.count=\(self.realStreamBlocks.count), cell=\(self.realStreamCell != nil ? "exists" : "nil")")
-
-            if self.realStreamBlockIndex < self.realStreamBlocks.count {
-                let block = self.realStreamBlocks[self.realStreamBlockIndex]
-                self.realStreamCell?.appendBlock(block)
-                //print("📤 [RealStream] Sent block \(self.realStreamBlockIndex + 1)/\(self.realStreamBlocks.count)")
-                self.realStreamBlockIndex += 1
-            } else {
-                // 所有块发送完毕
-                //print("[FOOTNOTE_DEBUG] ⏰ Timer ending, calling endRealStreaming")
-                timer.invalidate()
-                self.realStreamTimer = nil
-                self.realStreamCell?.endRealStreaming()
-                //print("🏁 [RealStream] All blocks sent, ending stream")
-            }
-        }
-    }
-
-    /// 停止真流式
+    /// 停止当前智能流式
     private func stopRealStream() {
         //print("[FOOTNOTE_DEBUG] ⛔️ stopRealStream called!")
-        realStreamTimer?.invalidate()
-        realStreamTimer = nil
         smartStreamTimer?.invalidate()
         smartStreamTimer = nil
         flushSmartStreamLayoutUpdate()
@@ -781,12 +598,8 @@ class TableViewStreamingViewController: UIViewController {
     private var smartStreamCharIndex: Int = 0
     /// 智能流式完整文本
     private var smartStreamFullText: String = ""
-    private var pendingSmartStreamLayoutWorkItem: DispatchWorkItem?
     private var isSmartStreamLayoutUpdateInFlight = false
     private var needsSmartStreamLayoutUpdate = false
-    private var needsImmediateSmartStreamLayoutFlush = false
-    private var lastSmartStreamLayoutUpdateTimestamp: CFTimeInterval = 0
-    private let smartStreamLayoutUpdateInterval: CFTimeInterval = 1.0 / 20.0
     private static let streamPerfLoggingEnabled: Bool = {
         #if DEBUG
         ProcessInfo.processInfo.environment["MD_STREAM_PERF_LOG"] == "1"
@@ -846,9 +659,8 @@ class TableViewStreamingViewController: UIViewController {
                     self?.scheduleSmartStreamLayoutUpdate()
                 }
 
-                // ⭐️ 关键：使用 useSmartBuffer: true 开启智能缓存模式
+                // StreamBuffer 会自动识别完整 Markdown 模块。
                 cell.beginRealStreaming(
-                    useSmartBuffer: true,
                     onStart: { [weak self] in
                         self?.messages[botIndexPath.row].isLoading = false
                         self?.messages[botIndexPath.row].isStreaming = true
@@ -887,50 +699,30 @@ class TableViewStreamingViewController: UIViewController {
     }
 
     private func scheduleSmartStreamLayoutUpdate() {
-        requestSmartStreamLayoutUpdate(immediate: false)
+        requestSmartStreamLayoutUpdate()
     }
 
     private func flushSmartStreamLayoutUpdate(force: Bool = true) {
         guard force
-                || pendingSmartStreamLayoutWorkItem != nil
                 || needsSmartStreamLayoutUpdate
                 || isSmartStreamLayoutUpdateInFlight else { return }
-        requestSmartStreamLayoutUpdate(immediate: true)
+        requestSmartStreamLayoutUpdate()
     }
 
-    private func requestSmartStreamLayoutUpdate(immediate: Bool) {
+    private func requestSmartStreamLayoutUpdate() {
         recordSmartStreamHostRequest(
-            coalesced: isSmartStreamLayoutUpdateInFlight || pendingSmartStreamLayoutWorkItem != nil
+            coalesced: isSmartStreamLayoutUpdateInFlight
         )
         needsSmartStreamLayoutUpdate = true
-        needsImmediateSmartStreamLayoutFlush = needsImmediateSmartStreamLayoutFlush || immediate
         guard !isSmartStreamLayoutUpdateInFlight else { return }
-
-        if immediate {
-            pendingSmartStreamLayoutWorkItem?.cancel()
-            pendingSmartStreamLayoutWorkItem = nil
-            performSmartStreamLayoutUpdate()
-            return
-        }
-
-        guard pendingSmartStreamLayoutWorkItem == nil else { return }
-        let elapsed = CACurrentMediaTime() - lastSmartStreamLayoutUpdateTimestamp
-        let delay = max(0, smartStreamLayoutUpdateInterval - elapsed)
-        let workItem = DispatchWorkItem { [weak self] in
-            self?.performSmartStreamLayoutUpdate()
-        }
-        pendingSmartStreamLayoutWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        performSmartStreamLayoutUpdate()
     }
 
     private func performSmartStreamLayoutUpdate() {
-        pendingSmartStreamLayoutWorkItem = nil
         guard needsSmartStreamLayoutUpdate, !isSmartStreamLayoutUpdateInFlight else { return }
 
         needsSmartStreamLayoutUpdate = false
-        needsImmediateSmartStreamLayoutFlush = false
         isSmartStreamLayoutUpdateInFlight = true
-        lastSmartStreamLayoutUpdateTimestamp = CACurrentMediaTime()
         let batchStart = CACurrentMediaTime()
 
         let previousOffset = tableView.contentOffset
@@ -952,9 +744,7 @@ class TableViewStreamingViewController: UIViewController {
                 }
 
                 if self.needsSmartStreamLayoutUpdate {
-                    self.requestSmartStreamLayoutUpdate(
-                        immediate: self.needsImmediateSmartStreamLayoutFlush
-                    )
+                    self.requestSmartStreamLayoutUpdate()
                 }
             }
         }
@@ -1038,7 +828,7 @@ class TableViewStreamingViewController: UIViewController {
                 let endIdx = fullText.index(fullText.startIndex, offsetBy: endIndex)
                 let chunk = String(fullText[startIdx..<endIdx])
 
-                // ⭐️ 使用 appendStreamData 而不是 appendBlock
+                // 将网络 chunk 直接交给 StreamBuffer。
                 // 让 SmartBuffer 自动检测完整模块
                 self.realStreamCell?.appendStreamData(chunk)
                 //print("📤 [SmartStream] Sent chunk: \(chunk.count) chars, progress: \(Int(progress * 100))%")

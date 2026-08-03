@@ -670,7 +670,7 @@ scrollableMarkdownView.backToTableOfContentsSection()
     }
 ```
 
-### 真流式渲染（LLM/网络 API）- 1.5.0 新增
+### 智能流式渲染（LLM/网络 API）- 1.5.0 新增
 
 适用于 LLM API（如 ChatGPT、Claude）等内容分块到达的实时流式场景：
 
@@ -678,19 +678,19 @@ scrollableMarkdownView.backToTableOfContentsSection()
 class ChatViewController: UIViewController {
     private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
 
-    // 开启真流式模式
+    // 开启智能流式模式
     func startLLMStream() {
-        scrollableMarkdownView.markdownView.startRealStreaming()
+        scrollableMarkdownView.markdownView.beginRealStreaming()
     }
 
     // API 返回数据块时追加内容
     func onChunkReceived(_ chunk: String) {
-        scrollableMarkdownView.markdownView.appendStreamContent(chunk)
+        scrollableMarkdownView.markdownView.appendStreamData(chunk)
     }
 
     // 流式结束时调用
     func onStreamComplete() {
-        scrollableMarkdownView.markdownView.finishStreaming()
+        scrollableMarkdownView.markdownView.endRealStreaming()
     }
 }
 ```
@@ -1072,7 +1072,7 @@ ECharts 和 Mermaid 示例通过 CDN 加载脚本，首次展示需要网络。�
 - 📳 **流式输出震动反馈** - 新增流式输出时的震动反馈支持，提升用户交互体验
   - 新增 `StreamingHapticFeedbackStyle` 枚举，支持多种震动级别：`.none`、`.light`、`.medium`、`.heavy`、`.soft`、`.rigid`
   - 新增配置项 `streamingHapticFeedbackStyle`（震动反馈强度）和 `streamingHapticMinInterval`（震动最小间隔）
-  - 真流式（`appendStreamData`、`appendBlock`）和假流式（`startStreaming`）模式均支持
+  - 智能流式（`appendStreamData`）和假流式（`startStreaming`）模式均支持
 
 ### 1.6.0 (2026-01-30)
 

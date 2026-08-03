@@ -662,17 +662,17 @@ class ChatViewController: UIViewController {
 
     // Start real streaming mode
     func startLLMStream() {
-        scrollableMarkdownView.markdownView.startRealStreaming()
+        scrollableMarkdownView.markdownView.beginRealStreaming()
     }
 
     // Append chunks as they arrive from the API
     func onChunkReceived(_ chunk: String) {
-        scrollableMarkdownView.markdownView.appendStreamContent(chunk)
+        scrollableMarkdownView.markdownView.appendStreamData(chunk)
     }
 
     // Call when stream completes
     func onStreamComplete() {
-        scrollableMarkdownView.markdownView.finishStreaming()
+        scrollableMarkdownView.markdownView.endRealStreaming()
     }
 }
 ```
@@ -1054,7 +1054,7 @@ The ECharts and Mermaid examples load their scripts from a CDN, so the first ren
 - 📳 **Streaming Haptic Feedback** - Added haptic feedback support during streaming output for enhanced user experience
   - New `StreamingHapticFeedbackStyle` enum with options: `.none`, `.light`, `.medium`, `.heavy`, `.soft`, `.rigid`
   - New configuration options: `streamingHapticFeedbackStyle` (feedback intensity) and `streamingHapticMinInterval` (minimum interval)
-  - Supports both real streaming (`appendStreamData`, `appendBlock`) and fake streaming (`startStreaming`) modes
+  - Supports smart streaming (`appendStreamData`) and fake streaming (`startStreaming`) modes
 
 ### 1.6.0 (2026-01-30)
 

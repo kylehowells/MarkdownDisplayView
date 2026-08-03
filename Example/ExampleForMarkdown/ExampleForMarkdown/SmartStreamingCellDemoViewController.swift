@@ -219,7 +219,7 @@ final class SmartStreamingDemoCell: UITableViewCell {
 
     private func startStreaming() {
         currentChunkIndex = 0
-        markdownView.beginRealStreaming(autoScrollBottom: false, useSmartBuffer: true)
+        markdownView.beginRealStreaming(autoScrollBottom: false)
 
         streamTimer?.invalidate()
         streamTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] timer in

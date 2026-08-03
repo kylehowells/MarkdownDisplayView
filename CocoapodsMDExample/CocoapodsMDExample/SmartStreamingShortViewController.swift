@@ -138,8 +138,7 @@ final class SmartStreamingShortViewController: UIViewController {
 
         currentChunkIndex = 0
         scrollableMarkdownView.markdownView.beginRealStreaming(
-            autoScrollBottom: true,
-            useSmartBuffer: true
+            autoScrollBottom: true
         )
 
         streamTimer?.invalidate()

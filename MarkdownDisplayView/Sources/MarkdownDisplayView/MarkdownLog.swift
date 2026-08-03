@@ -5,9 +5,20 @@
 
 import Foundation
 
-private enum MarkdownLogConfiguration {
-    static let performanceOnly = ProcessInfo.processInfo.environment["MD_STREAM_PERF_ONLY"] == "1"
+enum MarkdownLogConfiguration {
+    static func verboseEnabled(environment: [String: String]) -> Bool {
+        environment["MD_VERBOSE_LOG"] == "1"
+            && environment["MD_STREAM_PERF_ONLY"] != "1"
+    }
+
+    #if DEBUG
+    static let verboseEnabled = verboseEnabled(environment: ProcessInfo.processInfo.environment)
+    #else
+    static let verboseEnabled = false
+    #endif
 }
+
+var mdVerboseLoggingEnabled: Bool { MarkdownLogConfiguration.verboseEnabled }
 
 /// 调试日志。
 ///
@@ -17,7 +28,7 @@ private enum MarkdownLogConfiguration {
 @inline(__always)
 func mdLog(_ message: @autoclosure () -> String) {
     #if DEBUG
-    if !MarkdownLogConfiguration.performanceOnly {
+    if mdVerboseLoggingEnabled {
         print(message())
     }
     #endif

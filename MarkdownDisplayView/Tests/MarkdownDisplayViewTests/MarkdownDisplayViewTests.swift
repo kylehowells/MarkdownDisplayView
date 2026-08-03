@@ -144,10 +144,10 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
-@Test func completeBlockStreamingPreservesOrderWithoutDuplicateViews() async throws {
+@Test func smartStreamingPreservesOrderWithoutDuplicateViews() async throws {
     let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
     view.enableTypewriterEffect = false
-    view.beginRealStreaming(useSmartBuffer: false)
+    view.beginRealStreaming()
 
     let blocks = [
         "# 目录\n\n1. [第一章](#第一章)\n2. [第二章](#第二章)\n",
@@ -155,7 +155,7 @@ import UIKit
         "## 第二章\n\n第二章正文。\n",
     ]
     for block in blocks {
-        view.appendBlock(block)
+        view.appendStreamData(block)
     }
 
     await withCheckedContinuation { continuation in
@@ -176,10 +176,12 @@ import UIKit
     #expect(view.tocSectionView === view.headingViews[headingIDs[0]])
     #expect(view.oldElements.count == view.contentStackView.arrangedSubviews.count)
     #expect(Set(viewTags).count == viewTags.count)
-    #expect(view.markdown == blocks.joined())
+    for block in blocks {
+        #expect(view.markdown.contains(block.trimmingCharacters(in: .whitespacesAndNewlines)))
+    }
 
-    view.beginRealStreaming(useSmartBuffer: false)
-    view.appendBlock("# 新目录\n\n新内容。\n")
+    view.beginRealStreaming()
+    view.appendStreamData("# 新目录\n\n新内容。\n")
     await withCheckedContinuation { continuation in
         view.endRealStreaming { continuation.resume() }
     }
@@ -348,13 +350,13 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
-@Test func realStreamIncrementalHeightMatchesFinalStackFitting() async throws {
+@Test func smartStreamIncrementalHeightMatchesFinalStackFitting() async throws {
     let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
     view.enableTypewriterEffect = true
     view.updateTypewriterSpeed(charsPerStep: 1_000, baseDuration: 0.001, elementGapDuration: 0)
     view.layoutIfNeeded()
-    view.beginRealStreaming(useSmartBuffer: false)
-    view.appendBlock("""
+    view.beginRealStreaming()
+    view.appendStreamData("""
     # Height Test
 
     A paragraph that wraps onto more than one line when rendered in a narrow container.

@@ -635,8 +635,10 @@ extension MarkdownViewTextKit {
         mdLog("[FOOTNOTE_DEBUG] 🚨 updateFootnotes CALLED! count=\(footnotes.count), isRealStreamingMode=\(isRealStreamingMode), isStreaming=\(isStreaming)")
         // 调用栈仅用于调试。Release 下连捕获和字符串拼接也必须完全移除。
         #if DEBUG
-        let callStack = Thread.callStackSymbols.prefix(8).joined(separator: "\n")
-        mdLog("[FOOTNOTE_DEBUG] 📚 Call stack:\n\(callStack)")
+        if mdVerboseLoggingEnabled {
+            let callStack = Thread.callStackSymbols.prefix(8).joined(separator: "\n")
+            mdLog("[FOOTNOTE_DEBUG] 📚 Call stack:\n\(callStack)")
+        }
         #endif
 
         // ⚡️ 使用无动画更新，避免闪烁

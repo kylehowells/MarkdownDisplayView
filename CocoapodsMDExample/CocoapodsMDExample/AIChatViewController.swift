@@ -1442,7 +1442,7 @@ final class AIChatMessageCell: UITableViewCell {
         hasStartedStreaming = true
         markdownView.enableTypewriterEffect = true
         markdownView.updateTypewriterSpeed(charsPerStep: typewriterCharsPerStep)
-        markdownView.beginRealStreaming(autoScrollBottom: false, useSmartBuffer: true)
+        markdownView.beginRealStreaming(autoScrollBottom: false)
         if !text.isEmpty {
             markdownView.appendStreamData(text)
         }

@@ -199,8 +199,10 @@ extension MarkdownViewTextKit {
         // [FOOTNOTE_DEBUG] 脚注视图创建
         mdLog("[FOOTNOTE_DEBUG] 🎨 createFootnoteView called! count=\(footnotes.count), isRealStreamingMode=\(isRealStreamingMode)")
         #if DEBUG
-        let callStack = Thread.callStackSymbols.prefix(6).joined(separator: "\n")
-        mdLog("[FOOTNOTE_DEBUG] 🎨 Call stack:\n\(callStack)")
+        if mdVerboseLoggingEnabled {
+            let callStack = Thread.callStackSymbols.prefix(6).joined(separator: "\n")
+            mdLog("[FOOTNOTE_DEBUG] 🎨 Call stack:\n\(callStack)")
+        }
         #endif
 
         let container = UIView()
@@ -438,7 +440,10 @@ extension MarkdownViewTextKit {
 
         guard let knownHeight else { return }
         invalidateIntrinsicContentSize()
-        scheduleHeightChangeNotification(knownStreamingHeight: knownHeight)
+        // Typewriter 已经按显示帧合并 reveal，这里的增量高度又是 O(1) 已知值。
+        // 立即提交给宿主，保证文字写入、Cell self-sizing 和最终 draw 位于同一轮
+        // 主线程事务；再次延迟 30Hz 会让新内容在旧 Cell 高度中被裁剪数帧。
+        notifyHeightChange(knownStreamingHeight: knownHeight)
     }
 
     private func measuredStreamingRootHeight(_ root: UIView) -> CGFloat {
@@ -496,6 +501,7 @@ extension MarkdownViewTextKit {
         // 只有 Typewriter 的 append 高度变化可以走 O(1) 增量值。图片回调、宽度变化和
         // 强制测高都必须清空该值，回退到完整布局以保证最终正确性。
         if knownStreamingHeight == nil || force {
+            invalidateIntrinsicHeightCache()
             pendingRequiresFullHeightMeasurement = true
             pendingKnownStreamingHeight = nil
         } else if !pendingRequiresFullHeightMeasurement {
@@ -504,18 +510,18 @@ extension MarkdownViewTextKit {
         pendingForcedHeightNotification = pendingForcedHeightNotification || force
         guard !heightNotificationScheduled else { return }
         heightNotificationScheduled = true
-        let now = CACurrentMediaTime()
+        let now = heightNotificationClock()
         // 流式 Cell 的一次高度通知会触发 UITableView self-sizing/batch update。
         // 30Hz 足以跟随打字机，同时避免对不断增长的 StackView 每帧完整测量。
         let frameInterval = isStreaming ? 1.0 / 30.0 : 1.0 / 60.0
         let delay = max(0, frameInterval - (now - lastHeightNotificationTimestamp))
         let generation = heightNotificationGeneration
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+        heightNotificationScheduler(delay) { [weak self] in
             guard let self else { return }
             guard generation == self.heightNotificationGeneration else { return }
             self.heightNotificationScheduled = false
-            self.lastHeightNotificationTimestamp = CACurrentMediaTime()
+            self.lastHeightNotificationTimestamp = self.heightNotificationClock()
             let shouldForce = self.pendingForcedHeightNotification
             self.pendingForcedHeightNotification = false
             let knownHeight = self.pendingRequiresFullHeightMeasurement
@@ -540,6 +546,7 @@ extension MarkdownViewTextKit {
            isRealStreamingMode,
            !force,
            knownStreamingHeight.isFinite {
+            cacheIntrinsicHeight(knownStreamingHeight, width: heightMeasurementWidth)
             let heightDiff = knownStreamingHeight - lastReportedHeight
             let shouldNotifyParent = abs(heightDiff) > 9.0
             if shouldNotifyParent {
@@ -564,12 +571,7 @@ extension MarkdownViewTextKit {
         self.contentStackView.layoutIfNeeded()
 
         // 使用稳定的测量宽度，避免父视图尚未完成布局时出现 width=0 导致测高抖动
-        let fallbackWidth = max(1, UIScreen.main.bounds.width - 32)
-        let fittingWidth: CGFloat = {
-            if self.bounds.width > 0 { return self.bounds.width }
-            if self.contentStackView.bounds.width > 0 { return self.contentStackView.bounds.width }
-            return fallbackWidth
-        }()
+        let fittingWidth = heightMeasurementWidth
 
         let frameBasedHeight = measuredVisibleContentStackHeight()
         let hasVisibleContent = contentStackView.arrangedSubviews.contains { !$0.isHidden }
@@ -608,6 +610,10 @@ extension MarkdownViewTextKit {
                 arrangedSubviews: contentStackView.arrangedSubviews.count
             )
             return
+        }
+
+        if newHeight.isFinite, newHeight >= 0 {
+            cacheIntrinsicHeight(newHeight, width: fittingWidth)
         }
 
         // 🔍 诊断日志：打印高度变化
@@ -665,14 +671,39 @@ extension MarkdownViewTextKit {
                 height: realStreamHeightAccumulator.totalHeight
             )
         }
+        let fittingWidth = heightMeasurementWidth
+        if let cachedWidth = cachedIntrinsicHeightWidth,
+           let cachedHeight = cachedIntrinsicHeight,
+           abs(cachedWidth - fittingWidth) <= 0.5 {
+            return CGSize(width: UIView.noIntrinsicMetric, height: cachedHeight)
+        }
+        intrinsicHeightMeasurementCount += 1
         let size = contentStackView.systemLayoutSizeFitting(
             CGSize(
-                width: bounds.width > 0 ? bounds.width : UIScreen.main.bounds.width - 32,
+                width: fittingWidth,
                 height: UIView.layoutFittingCompressedSize.height),
             withHorizontalFittingPriority: .required,
             verticalFittingPriority: .fittingSizeLevel
         )
+        cacheIntrinsicHeight(size.height, width: fittingWidth)
         return CGSize(width: UIView.noIntrinsicMetric, height: size.height)
+    }
+
+    var heightMeasurementWidth: CGFloat {
+        if bounds.width > 0 { return bounds.width }
+        if contentStackView.bounds.width > 0 { return contentStackView.bounds.width }
+        return max(1, UIScreen.main.bounds.width - 32)
+    }
+
+    func cacheIntrinsicHeight(_ height: CGFloat, width: CGFloat? = nil) {
+        guard height.isFinite, height >= 0 else { return }
+        cachedIntrinsicHeightWidth = width ?? heightMeasurementWidth
+        cachedIntrinsicHeight = height
+    }
+
+    func invalidateIntrinsicHeightCache() {
+        cachedIntrinsicHeightWidth = nil
+        cachedIntrinsicHeight = nil
     }
     
     public override func layoutSubviews() {
@@ -688,6 +719,7 @@ extension MarkdownViewTextKit {
     func consumeLayoutWidthChange(_ width: CGFloat) -> Bool {
         guard width > 0, abs(width - lastLayoutWidthForHeightMeasurement) > 0.5 else { return false }
         lastLayoutWidthForHeightMeasurement = width
+        invalidateIntrinsicHeightCache()
         return true
     }
     

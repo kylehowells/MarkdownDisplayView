@@ -102,6 +102,7 @@ public final class MarkdownViewTextKit: UIView {
     
     public var configuration: MarkdownConfiguration = .default {
         didSet {
+            invalidateIntrinsicHeightCache()
             streamBuffer.updateMinModuleLength(configuration.streamMinModuleLength)
             scheduleRerender()
         }
@@ -109,6 +110,7 @@ public final class MarkdownViewTextKit: UIView {
     
     public var markdown: String = "" {
         didSet {
+            invalidateIntrinsicHeightCache()
             // 🔍 性能监控：记录渲染开始时间
             if !isStreaming {
                 renderStartTime = CFAbsoluteTimeGetCurrent()
@@ -400,9 +402,6 @@ public final class MarkdownViewTextKit: UIView {
     var isRealStreamingMode = false
     var realStreamAccumulatedText = ""
     var realStreamParsedElementCount = 0
-    var realStreamBlockQueue: [String] = []
-    var realStreamOnComplete: (() -> Void)?
-    var useSmartBufferMode = false
     struct PendingRealStreamElement {
         var element: MarkdownRenderElement
         let globalIndex: Int
@@ -437,6 +436,13 @@ public final class MarkdownViewTextKit: UIView {
     var pendingKnownStreamingHeight: CGFloat?
     var pendingRequiresFullHeightMeasurement = false
     var heightNotificationGeneration = 0
+    var cachedIntrinsicHeightWidth: CGFloat?
+    var cachedIntrinsicHeight: CGFloat?
+    var intrinsicHeightMeasurementCount = 0
+    var heightNotificationClock: () -> CFTimeInterval = { CACurrentMediaTime() }
+    var heightNotificationScheduler: (TimeInterval, @escaping () -> Void) -> Void = { delay, action in
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
+    }
 
     // MARK: - Height reporting state
 

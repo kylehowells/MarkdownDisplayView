@@ -416,6 +416,7 @@ extension MarkdownViewTextKit {
                             self.realStreamHeightAccumulator.synchronize(totalHeight: totalHeight)
                             self.invalidateIntrinsicContentSize()
                         }
+                        self.cacheIntrinsicHeight(totalHeight)
                         self.lastReportedHeight = totalHeight
                         self.onHeightChange?(totalHeight)
                     }
@@ -452,6 +453,7 @@ extension MarkdownViewTextKit {
                         self.realStreamHeightAccumulator.synchronize(totalHeight: totalHeight)
                         self.invalidateIntrinsicContentSize()
                     }
+                    self.cacheIntrinsicHeight(totalHeight)
                     // 强制通知
                     self.lastReportedHeight = totalHeight
                     self.onHeightChange?(totalHeight)
