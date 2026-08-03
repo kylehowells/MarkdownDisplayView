@@ -55,6 +55,8 @@ extension MarkdownViewTextKit {
         realStreamDrainCompletion = nil
         isEndingRealStream = false
         realStreamBackpressureActive = false
+        realStreamNextModuleSequence = 0
+        streamPerformanceDiagnostics.begin(generation: realStreamRenderGeneration)
 
         // 清空现有内容
         markdown = ""
@@ -105,6 +107,9 @@ extension MarkdownViewTextKit {
         markDataReceived()
 
         mdLog("📥 [SmartBuffer] Received data: \(data.count) chars")
+        if MarkdownStreamPerformanceDiagnostics.enabled {
+            streamPerformanceDiagnostics.recordReceive(characters: data.count)
+        }
 
         // 使用 StreamBuffer 检测完整模块
         let result = streamBuffer.append(data)
@@ -131,14 +136,20 @@ extension MarkdownViewTextKit {
         realStreamAccumulatedText += moduleText
         if appendSeparator { realStreamAccumulatedText += "\n\n" }
         realStreamParseInFlightCount += 1
+        let moduleSequence = realStreamNextModuleSequence
+        realStreamNextModuleSequence += 1
         renderVersionLock.lock()
         let currentRenderVersion = renderVersion
         renderVersionLock.unlock()
         pendingSmartStreamModules.append(PendingSmartStreamModule(
             text: moduleText,
             renderVersion: currentRenderVersion,
-            renderGeneration: realStreamRenderGeneration
+            renderGeneration: realStreamRenderGeneration,
+            sequence: moduleSequence
         ))
+        streamPerformanceDiagnostics.recordModuleQueued(
+            pendingModules: realStreamParseInFlightCount
+        )
         startNextSmartStreamParseIfPossible()
     }
 
@@ -186,8 +197,20 @@ extension MarkdownViewTextKit {
                 if let tocId { self.tocSectionId = tocId }
 
                 mdLog("✅ [SmartBuffer] Parsed module: \(elements.count) elements, parse: \(String(format: "%.1f", parseDuration))ms, UI backlog: \(self.pendingRealStreamElements.count), typewriter: \(self.typewriterEngine.outstandingTaskCount)")
+                self.streamPerformanceDiagnostics.recordModuleParsed(
+                    sequence: module.sequence,
+                    durationMS: parseDuration,
+                    elements: elements.count,
+                    pendingModules: self.realStreamParseInFlightCount,
+                    pendingViews: self.pendingRealStreamElements.count,
+                    typewriter: self.typewriterEngine.outstandingTaskCount
+                )
                 if !elements.isEmpty {
-                    self.displayRealStreamElements(elements, startIndex: previousElementCount)
+                    self.displayRealStreamElements(
+                        elements,
+                        startIndex: previousElementCount,
+                        moduleSequence: module.sequence
+                    )
                 }
                 self.startNextSmartStreamParseIfPossible()
                 self.tryFinishRealStreamDrain()
@@ -263,14 +286,22 @@ extension MarkdownViewTextKit {
     }
 
     /// 显示真流式新增的元素
-    func displayRealStreamElements(_ elements: [MarkdownRenderElement], startIndex: Int) {
+    func displayRealStreamElements(
+        _ elements: [MarkdownRenderElement],
+        startIndex: Int,
+        moduleSequence: Int
+    ) {
         guard useSmartBufferMode else {
             displayLegacyRealStreamElements(elements, startIndex: startIndex)
             return
         }
 
         for (index, element) in elements.enumerated() {
-            pendingRealStreamElements.append(PendingRealStreamElement(element: element, globalIndex: startIndex + index))
+            pendingRealStreamElements.append(PendingRealStreamElement(
+                element: element,
+                globalIndex: startIndex + index,
+                moduleSequence: moduleSequence
+            ))
         }
         scheduleRealStreamRenderPump()
     }
@@ -346,6 +377,7 @@ extension MarkdownViewTextKit {
                 break
             }
             let createStart = CFAbsoluteTimeGetCurrent()
+            let duplicateElement = item.globalIndex < oldElements.count
             let view = createView(for: item.element, containerWidth: containerWidth)
             let createDuration = (CFAbsoluteTimeGetCurrent() - createStart) * 1000
             view.tag = 1000 + item.globalIndex
@@ -370,6 +402,15 @@ extension MarkdownViewTextKit {
             }
 
             createdCount += 1
+            if MarkdownStreamPerformanceDiagnostics.enabled {
+                streamPerformanceDiagnostics.recordViewCreated(
+                    sequence: item.moduleSequence,
+                    index: item.globalIndex,
+                    type: elementTypeString(item.element),
+                    durationMS: createDuration,
+                    duplicate: duplicateElement
+                )
+            }
             mdLog("⚙️ [SmartBuffer] View created: index=\(item.globalIndex), type=\(elementTypeString(item.element)), cost=\(String(format: "%.1f", createDuration))ms")
 
             if enableTypewriterEffect,
@@ -392,6 +433,15 @@ extension MarkdownViewTextKit {
             handleAutoScroll()
             mdLog("⚙️ [SmartBuffer] UI frame: created=\(createdCount), cost=\(String(format: "%.1f", (CACurrentMediaTime() - frameStart) * 1000))ms, pendingViews=\(pendingRealStreamElements.count), typewriter=\(typewriterEngine.outstandingTaskCount)")
         }
+
+        streamPerformanceDiagnostics.recordRenderFrame(
+            durationMS: (CACurrentMediaTime() - frameStart) * 1000,
+            created: createdCount,
+            pendingModules: realStreamParseInFlightCount,
+            pendingViews: pendingRealStreamElements.count,
+            typewriter: typewriterEngine.outstandingTaskCount,
+            arrangedSubviews: contentStackView.arrangedSubviews.count
+        )
 
         if !realStreamBackpressureActive { scheduleRealStreamRenderPump() }
         startNextSmartStreamParseIfPossible()
@@ -464,6 +514,12 @@ extension MarkdownViewTextKit {
 
             // 3. 通知最终高度
             self.notifyHeightChange()
+            self.streamPerformanceDiagnostics.end(
+                pendingModules: self.realStreamParseInFlightCount,
+                pendingViews: self.pendingRealStreamElements.count,
+                typewriter: self.typewriterEngine.outstandingTaskCount,
+                arrangedSubviews: self.contentStackView.arrangedSubviews.count
+            )
 
             // 4. 触发完成回调（先内部回调，再外部回调）
             pendingCompletion?()

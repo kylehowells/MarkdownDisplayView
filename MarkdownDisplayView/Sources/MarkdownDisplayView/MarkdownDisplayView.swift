@@ -37,6 +37,7 @@ public final class MarkdownViewTextKit: UIView {
         }
         engine.onOutstandingTaskCountChange = { [weak self] count in
             guard let self else { return }
+            self.streamPerformanceDiagnostics.recordTypewriterOutstanding(count)
             if self.realStreamBackpressureActive, count <= self.realStreamTypewriterLowWatermark {
                 self.realStreamBackpressureActive = false
                 self.scheduleRealStreamRenderPump()
@@ -372,6 +373,7 @@ public final class MarkdownViewTextKit: UIView {
     struct PendingRealStreamElement {
         var element: MarkdownRenderElement
         let globalIndex: Int
+        let moduleSequence: Int
     }
     var pendingRealStreamElements = TypewriterPendingQueue<PendingRealStreamElement>()
     var realStreamRenderPumpScheduled = false
@@ -381,6 +383,7 @@ public final class MarkdownViewTextKit: UIView {
         let text: String
         let renderVersion: Int
         let renderGeneration: Int
+        let sequence: Int
     }
     var pendingSmartStreamModules = TypewriterPendingQueue<PendingSmartStreamModule>()
     var smartStreamParseActive = false
@@ -390,6 +393,8 @@ public final class MarkdownViewTextKit: UIView {
     let realStreamTypewriterHighWatermark = 24
     let realStreamTypewriterLowWatermark = 12
     let realStreamFrameBudget: CFTimeInterval = 0.004
+    var realStreamNextModuleSequence = 0
+    let streamPerformanceDiagnostics = MarkdownStreamPerformanceDiagnostics()
 
     var heightNotificationScheduled = false
     var pendingForcedHeightNotification = false

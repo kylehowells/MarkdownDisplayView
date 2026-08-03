@@ -807,11 +807,25 @@ class TableViewStreamingViewController: UIViewController {
     private var needsImmediateSmartStreamLayoutFlush = false
     private var lastSmartStreamLayoutUpdateTimestamp: CFTimeInterval = 0
     private let smartStreamLayoutUpdateInterval: CFTimeInterval = 1.0 / 20.0
+    private static let streamPerfLoggingEnabled: Bool = {
+        #if DEBUG
+        ProcessInfo.processInfo.environment["MD_STREAM_PERF_LOG"] == "1"
+        #else
+        false
+        #endif
+    }()
+    private var streamPerfHostWindowStart = CACurrentMediaTime()
+    private var streamPerfHostRequests = 0
+    private var streamPerfHostCoalesced = 0
+    private var streamPerfHostBatches = 0
+    private var streamPerfHostBatchTotalMS = 0.0
+    private var streamPerfHostBatchMaxMS = 0.0
 
     /// 处理智能流式发送（模拟逐字符到达，测试 SmartBuffer）
     @objc private func handleSmartStreamSend() {
         guard !isSending else { return }
         isSending = true
+        resetSmartStreamHostPerformanceLog()
         flushSmartStreamLayoutUpdate(force: false)
 
         let userText = "请用智能流式给我写一段 Markdown。"
@@ -907,6 +921,9 @@ class TableViewStreamingViewController: UIViewController {
     }
 
     private func requestSmartStreamLayoutUpdate(immediate: Bool) {
+        recordSmartStreamHostRequest(
+            coalesced: isSmartStreamLayoutUpdateInFlight || pendingSmartStreamLayoutWorkItem != nil
+        )
         needsSmartStreamLayoutUpdate = true
         needsImmediateSmartStreamLayoutFlush = needsImmediateSmartStreamLayoutFlush || immediate
         guard !isSmartStreamLayoutUpdateInFlight else { return }
@@ -936,6 +953,7 @@ class TableViewStreamingViewController: UIViewController {
         needsImmediateSmartStreamLayoutFlush = false
         isSmartStreamLayoutUpdateInFlight = true
         lastSmartStreamLayoutUpdateTimestamp = CACurrentMediaTime()
+        let batchStart = CACurrentMediaTime()
 
         let previousOffset = tableView.contentOffset
         let indexPath = realStreamIndexPath
@@ -947,6 +965,7 @@ class TableViewStreamingViewController: UIViewController {
             tableView.performBatchUpdates(nil) { [weak self] _ in
                 guard let self else { return }
                 self.isSmartStreamLayoutUpdateInFlight = false
+                self.recordSmartStreamHostBatch(durationMS: (CACurrentMediaTime() - batchStart) * 1000)
 
                 if shouldFollowStream, let indexPath, indexPath.row < self.messages.count {
                     self.tableView.scrollToRow(at: indexPath, at: .bottom, animated: false)
@@ -961,6 +980,44 @@ class TableViewStreamingViewController: UIViewController {
                 }
             }
         }
+    }
+
+    private func resetSmartStreamHostPerformanceLog() {
+        guard Self.streamPerfLoggingEnabled else { return }
+        streamPerfHostWindowStart = CACurrentMediaTime()
+        streamPerfHostRequests = 0
+        streamPerfHostCoalesced = 0
+        streamPerfHostBatches = 0
+        streamPerfHostBatchTotalMS = 0
+        streamPerfHostBatchMaxMS = 0
+    }
+
+    private func recordSmartStreamHostRequest(coalesced: Bool) {
+        guard Self.streamPerfLoggingEnabled else { return }
+        streamPerfHostRequests += 1
+        if coalesced { streamPerfHostCoalesced += 1 }
+        reportSmartStreamHostPerformanceIfNeeded()
+    }
+
+    private func recordSmartStreamHostBatch(durationMS: Double) {
+        guard Self.streamPerfLoggingEnabled else { return }
+        streamPerfHostBatches += 1
+        streamPerfHostBatchTotalMS += durationMS
+        streamPerfHostBatchMaxMS = max(streamPerfHostBatchMaxMS, durationMS)
+        reportSmartStreamHostPerformanceIfNeeded()
+    }
+
+    private func reportSmartStreamHostPerformanceIfNeeded() {
+        let now = CACurrentMediaTime()
+        guard now - streamPerfHostWindowStart >= 1 else { return }
+        let cellHeight = realStreamCell?.bounds.height ?? 0
+        print("[MDPERF][HOST] scope=window window=\(String(format: "%.1f", now - streamPerfHostWindowStart))s requests=\(streamPerfHostRequests) coalesced=\(streamPerfHostCoalesced) batches=\(streamPerfHostBatches) batchLatencyMS=\(String(format: "%.1f", streamPerfHostBatchTotalMS))/\(String(format: "%.1f", streamPerfHostBatchMaxMS)) cellHeight=\(String(format: "%.1f", cellHeight)) contentHeight=\(String(format: "%.1f", tableView.contentSize.height))")
+        streamPerfHostWindowStart = now
+        streamPerfHostRequests = 0
+        streamPerfHostCoalesced = 0
+        streamPerfHostBatches = 0
+        streamPerfHostBatchTotalMS = 0
+        streamPerfHostBatchMaxMS = 0
     }
 
     /// 实际的智能流式定时器

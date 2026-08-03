@@ -100,6 +100,8 @@ final class MarkdownStreamBuffer {
 
     /// 未提交的尾部文本，即 accumulatedText 中 [lastSafePosition, 末尾) 的部分
     private var uncommittedText: String = ""
+    private var uncommittedCharacterCount = 0
+    private let performanceDiagnostics = MarkdownStreamBufferPerformanceDiagnostics()
 
     /// 已提交前缀结束处是否正处于代码块内部
     private var isInsideCodeBlockAtSafePosition = false
@@ -150,6 +152,8 @@ final class MarkdownStreamBuffer {
         lastSafePosition = 0
         committedElementCount = 0
         uncommittedText = ""
+        uncommittedCharacterCount = 0
+        performanceDiagnostics.reset()
         isInsideCodeBlockAtSafePosition = false
         fenceCounter = DelimiterCounter(pattern: "```")
         dollarCounter = DelimiterCounter(pattern: "$$")
@@ -173,8 +177,12 @@ final class MarkdownStreamBuffer {
     /// - Parameter text: 新到达的文本片段
     /// - Returns: 检测结果，包含可渲染的完整模块
     func append(_ text: String) -> ModuleDetectionResult {
+        let diagnosticsEnabled = MarkdownStreamPerformanceDiagnostics.enabled
+        let diagnosticsStart = diagnosticsEnabled ? CACurrentMediaTime() : 0
+        let inputCharacterCount = diagnosticsEnabled ? text.count : 0
         accumulatedText += text
         uncommittedText += text
+        if diagnosticsEnabled { uncommittedCharacterCount += inputCharacterCount }
         fenceCounter.consume(text)
         dollarCounter.consume(text)
         trackLines(text)
@@ -182,7 +190,18 @@ final class MarkdownStreamBuffer {
         // 仅为一行日志就在每个 token 上重走一遍全文
         mdLog("[StreamBuffer] 📥 Appended \(text.count) chars")
 
-        return detectCompleteModules()
+        let result = detectCompleteModules()
+        if diagnosticsEnabled {
+            performanceDiagnostics.record(
+                inputCharacters: inputCharacterCount,
+                tailCharacters: uncommittedCharacterCount,
+                durationMS: (CACurrentMediaTime() - diagnosticsStart) * 1000,
+                modules: result.completeModules.count,
+                hasPendingStructure: result.hasPendingStructure,
+                pendingType: result.pendingType
+            )
+        }
+        return result
     }
 
     /// 强制提交所有剩余内容（流式结束时调用）
@@ -225,6 +244,9 @@ final class MarkdownStreamBuffer {
 
         absorbIntoCommittedState(String(uncommittedText.prefix(delta)))
         uncommittedText.removeFirst(min(delta, uncommittedText.count))
+        if MarkdownStreamPerformanceDiagnostics.enabled {
+            uncommittedCharacterCount = max(0, uncommittedCharacterCount - delta)
+        }
         lastSafePosition = newPosition
     }
 

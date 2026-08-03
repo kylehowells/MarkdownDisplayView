@@ -5,6 +5,10 @@
 
 import Foundation
 
+private enum MarkdownLogConfiguration {
+    static let performanceOnly = ProcessInfo.processInfo.environment["MD_STREAM_PERF_ONLY"] == "1"
+}
+
 /// 调试日志。
 ///
 /// 使用 `@autoclosure` 而非直接把 `print` 包进 `#if DEBUG`：字符串插值是 eager 求值的，
@@ -13,6 +17,8 @@ import Foundation
 @inline(__always)
 func mdLog(_ message: @autoclosure () -> String) {
     #if DEBUG
-    print(message())
+    if !MarkdownLogConfiguration.performanceOnly {
+        print(message())
+    }
     #endif
 }

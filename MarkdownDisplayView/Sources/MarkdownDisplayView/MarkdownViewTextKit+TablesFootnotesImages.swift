@@ -420,6 +420,7 @@ extension MarkdownViewTextKit {
 
     /// 合并同一轮 RunLoop 内的测高请求，避免 Typewriter、建 View 和外层列表连续触发布局。
     func scheduleHeightChangeNotification(force: Bool = false) {
+        streamPerformanceDiagnostics.recordHeightRequest()
         pendingForcedHeightNotification = pendingForcedHeightNotification || force
         guard !heightNotificationScheduled else { return }
         heightNotificationScheduled = true
@@ -478,15 +479,24 @@ extension MarkdownViewTextKit {
 
         var newHeight = fittingHeight
         var usedFrameFallback = false
+        var measurementSource = isStreaming && frameBasedHeight > 0 && !force ? "frame" : "fitting"
 
         if !newHeight.isFinite || newHeight <= 0 {
             newHeight = frameBasedHeight
             usedFrameFallback = true
+            measurementSource = "frameFallback"
         }
 
         // 有可见内容但高度仍为 0，通常是布局尚未稳定；本轮跳过，等待下一次布局回调
         if newHeight <= 0, hasVisibleContent, !force {
             mdLog("📏 [Height] ⏳ Deferred notification (transient 0 with visible content)")
+            streamPerformanceDiagnostics.recordHeightMeasurement(
+                durationMS: (CFAbsoluteTimeGetCurrent() - start) * 1000,
+                notified: false,
+                force: force,
+                source: "deferred",
+                arrangedSubviews: contentStackView.arrangedSubviews.count
+            )
             return
         }
 
@@ -496,7 +506,8 @@ extension MarkdownViewTextKit {
 
         // 只有高度变化超过阈值才通知，避免浮点数误差导致的死循环
         // 如果 force 为 true，忽略防抖检查
-        if force || abs(newHeight - lastReportedHeight) > 9.0 {
+        let shouldNotifyParent = force || abs(newHeight - lastReportedHeight) > 9.0
+        if shouldNotifyParent {
             mdLog("📏 [Height] ✅ Notifying parent: \(String(format: "%.1f", lastReportedHeight)) -> \(String(format: "%.1f", newHeight))")
             lastReportedHeight = newHeight
             self.onHeightChange?(newHeight)
@@ -524,6 +535,13 @@ extension MarkdownViewTextKit {
         } else {
             mdLog("📏 [Height] ⚠️ Skipped notification (diff < 9.0pt)")
         }
+        streamPerformanceDiagnostics.recordHeightMeasurement(
+            durationMS: (CFAbsoluteTimeGetCurrent() - start) * 1000,
+            notified: shouldNotifyParent,
+            force: force,
+            source: measurementSource,
+            arrangedSubviews: contentStackView.arrangedSubviews.count
+        )
     }
     
     public override var intrinsicContentSize: CGSize {
