@@ -789,6 +789,7 @@ class TableViewStreamingViewController: UIViewController {
         realStreamTimer = nil
         smartStreamTimer?.invalidate()
         smartStreamTimer = nil
+        flushSmartStreamLayoutUpdate()
         realStreamCell?.endRealStreaming()
     }
 
@@ -800,11 +801,18 @@ class TableViewStreamingViewController: UIViewController {
     private var smartStreamCharIndex: Int = 0
     /// 智能流式完整文本
     private var smartStreamFullText: String = ""
+    private var pendingSmartStreamLayoutWorkItem: DispatchWorkItem?
+    private var isSmartStreamLayoutUpdateInFlight = false
+    private var needsSmartStreamLayoutUpdate = false
+    private var needsImmediateSmartStreamLayoutFlush = false
+    private var lastSmartStreamLayoutUpdateTimestamp: CFTimeInterval = 0
+    private let smartStreamLayoutUpdateInterval: CFTimeInterval = 1.0 / 20.0
 
     /// 处理智能流式发送（模拟逐字符到达，测试 SmartBuffer）
     @objc private func handleSmartStreamSend() {
         guard !isSending else { return }
         isSending = true
+        flushSmartStreamLayoutUpdate(force: false)
 
         let userText = "请用智能流式给我写一段 Markdown。"
         let aiResponseText = demoMarkdown
@@ -841,15 +849,7 @@ class TableViewStreamingViewController: UIViewController {
 
                 // 绑定高度回调
                 cell.onContentHeightChanged = { [weak self] in
-                    guard let self = self else { return }
-                    UIView.performWithoutAnimation {
-                        self.tableView.performBatchUpdates(nil, completion: nil)
-                    }
-                    if let indexPath = self.realStreamIndexPath,
-                       indexPath.row < self.messages.count,
-                       self.messages[indexPath.row].isStreaming {
-                        self.scrollToBottom(animated: false)
-                    }
+                    self?.scheduleSmartStreamLayoutUpdate()
                 }
 
                 // ⭐️ 关键：使用 useSmartBuffer: true 开启智能缓存模式
@@ -862,6 +862,7 @@ class TableViewStreamingViewController: UIViewController {
                     },
                     completion: { [weak self] in
                         guard let self = self else { return }
+                        self.flushSmartStreamLayoutUpdate()
                         self.messages[botIndexPath.row].content = aiResponseText
                         self.messages[botIndexPath.row].isStreaming = false
                         self.isSending = true
@@ -889,6 +890,77 @@ class TableViewStreamingViewController: UIViewController {
         print("[SmartStream] ⏰ Starting smart stream timer, fullText.count=\(smartStreamFullText.count)")
         hasSimulatedNetworkStall = false  // 重置标记
         startActualSmartStreamTimer()
+    }
+
+    /// 合并 Markdown 测高回调。逐字播放可能在一秒内产生几十次高度变化，直接为每次变化
+    /// 执行 UITableView batch update 和 scrollToRow 会让同一 Cell 连续重排，产生闪烁。
+    private func scheduleSmartStreamLayoutUpdate() {
+        requestSmartStreamLayoutUpdate(immediate: false)
+    }
+
+    private func flushSmartStreamLayoutUpdate(force: Bool = true) {
+        guard force
+                || pendingSmartStreamLayoutWorkItem != nil
+                || needsSmartStreamLayoutUpdate
+                || isSmartStreamLayoutUpdateInFlight else { return }
+        requestSmartStreamLayoutUpdate(immediate: true)
+    }
+
+    private func requestSmartStreamLayoutUpdate(immediate: Bool) {
+        needsSmartStreamLayoutUpdate = true
+        needsImmediateSmartStreamLayoutFlush = needsImmediateSmartStreamLayoutFlush || immediate
+        guard !isSmartStreamLayoutUpdateInFlight else { return }
+
+        if immediate {
+            pendingSmartStreamLayoutWorkItem?.cancel()
+            pendingSmartStreamLayoutWorkItem = nil
+            performSmartStreamLayoutUpdate()
+            return
+        }
+
+        guard pendingSmartStreamLayoutWorkItem == nil else { return }
+        let elapsed = CACurrentMediaTime() - lastSmartStreamLayoutUpdateTimestamp
+        let delay = max(0, smartStreamLayoutUpdateInterval - elapsed)
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.performSmartStreamLayoutUpdate()
+        }
+        pendingSmartStreamLayoutWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func performSmartStreamLayoutUpdate() {
+        pendingSmartStreamLayoutWorkItem = nil
+        guard needsSmartStreamLayoutUpdate, !isSmartStreamLayoutUpdateInFlight else { return }
+
+        needsSmartStreamLayoutUpdate = false
+        needsImmediateSmartStreamLayoutFlush = false
+        isSmartStreamLayoutUpdateInFlight = true
+        lastSmartStreamLayoutUpdateTimestamp = CACurrentMediaTime()
+
+        let previousOffset = tableView.contentOffset
+        let indexPath = realStreamIndexPath
+        let shouldFollowStream = indexPath.map {
+            $0.row < messages.count && messages[$0.row].isStreaming && shouldAutoScroll
+        } ?? false
+
+        UIView.performWithoutAnimation {
+            tableView.performBatchUpdates(nil) { [weak self] _ in
+                guard let self else { return }
+                self.isSmartStreamLayoutUpdateInFlight = false
+
+                if shouldFollowStream, let indexPath, indexPath.row < self.messages.count {
+                    self.tableView.scrollToRow(at: indexPath, at: .bottom, animated: false)
+                } else {
+                    self.tableView.setContentOffset(previousOffset, animated: false)
+                }
+
+                if self.needsSmartStreamLayoutUpdate {
+                    self.requestSmartStreamLayoutUpdate(
+                        immediate: self.needsImmediateSmartStreamLayoutFlush
+                    )
+                }
+            }
+        }
     }
 
     /// 实际的智能流式定时器

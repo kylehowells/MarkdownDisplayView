@@ -45,6 +45,7 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
 
     private var calculatedHeight: CGFloat = 0
     private var heightConstraint: NSLayoutConstraint?
+    private var lastDisplayInvalidationBoundsSize: CGSize = .zero
 
     // ⭐️ 管理自定义附件视图（如表格）
     private var attachmentProviders: [NSTextAttachment: NSTextAttachmentViewProvider] = [:]
@@ -331,14 +332,21 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
             layoutText()
         }
 
-        // ⭐️ 修复 3: 尺寸变化时强制重绘
-        // 当 StackView 展开时，bounds 从 0 变为有值，但 TextKit 可能需要一个显式的重绘信号，
-        // 尤其是在 backgroundColor 为 clear 的情况下。
-        //
-        // 这里刻意保持无条件：contentMode 为 .topLeft 时视图长高不会自动触发 draw，
-        // 而 applyLayout 的重算被 `force || widthChanged || calculatedHeight == 0` 挡住时
-        // 也不会重绘，此处是最后的兜底。
-        setNeedsDisplay()
+        // 内容写入路径会自行 setNeedsDisplay；这里只兜底处理真实尺寸变化。
+        // UITableView self-sizing 会反复调用所有子 TextView 的 layoutSubviews，若每次都
+        // 标脏全文，流式高度更新期间已经显示的段落会持续清空/重绘，表现为画面闪烁。
+        if consumeDisplayBoundsChange(bounds.size) {
+            setNeedsDisplay()
+        }
+    }
+
+    func consumeDisplayBoundsChange(_ size: CGSize) -> Bool {
+        guard size.width > 0, size.height > 0 else { return false }
+        let changed = abs(size.width - lastDisplayInvalidationBoundsSize.width) > 0.5
+            || abs(size.height - lastDisplayInvalidationBoundsSize.height) > 0.5
+        guard changed else { return false }
+        lastDisplayInvalidationBoundsSize = size
+        return true
     }
 
     override func draw(_ rect: CGRect) {

@@ -96,6 +96,17 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
+@Test func repeatedTextLayoutAtSameSizeDoesNotInvalidateDisplayAgain() async throws {
+    let textView = MarkdownTextViewTK2()
+
+    #expect(textView.consumeDisplayBoundsChange(CGSize(width: 320, height: 44)))
+    #expect(textView.consumeDisplayBoundsChange(CGSize(width: 320, height: 44)) == false)
+    #expect(textView.consumeDisplayBoundsChange(CGSize(width: 320.2, height: 44.2)) == false)
+    #expect(textView.consumeDisplayBoundsChange(CGSize(width: 320, height: 60)))
+}
+
+@available(iOS 15.0, *)
+@MainActor
 @Test func atomicQuoteDoesNotEnqueueEachNestedTextView() async throws {
     let markdownView = MarkdownViewTextKit()
     let quote = markdownView.createQuoteView(children: [], width: 320)
