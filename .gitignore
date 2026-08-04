@@ -11,3 +11,4 @@ Example/ExampleForMarkdown/ExampleForMarkdown/Config.local.json
 /.codex/skills
 /.derivedData-review
 /.code-abyss
+/cpu.trace

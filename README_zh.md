@@ -964,6 +964,17 @@ ECharts 和 Mermaid 示例通过 CDN 加载脚本，首次展示需要网络。�
 
 ## 更新日志
 
+### 1.9.8 (2026-08-04)
+
+- 🚀 **带背压的智能流式管线** - SmartBuffer 现在增量释放安全的完整前缀，在后台串行解析模块，并按照单帧预算和 Typewriter 高低水位控制视图创建。即使解析速度超过播放速度，输入顺序、UI 顺序和最终 drain 完成条件仍保持确定性。
+- ⚡ **基于 DisplayLink 的打字机调度** - 用 30 FPS `CADisplayLink` 时间线替换递归延迟 tick；标点延迟按 UTF-16 坐标预计算，待处理任务通过 O(1) FIFO head 消费，单帧追赶多个逻辑 step 时最多执行一次 reveal/布局回调。
+- 📏 **增量高度缓存** - 流式高度根据 root 首次可见和文本高度 delta 增长，不再反复 fitting 整棵 `UIStackView`；相同宽度的 intrinsic size 读取直接命中缓存，高度通知统一合并，结构变化仍安全回退到完整校准。
+- ✨ **稳定渲染，避免重复重绘闪烁** - TextKit 视图只在真实 bounds 变化时失效绘制；智能流式 TableView 更新串行合并，并保证结束时最终 flush，避免重叠的 self-sizing batch 反复重绘已展示内容。
+- 🧱 **富文本块布局工作量有界** - 表格复用稳定布局几何，引用块按原子模块展示，只有真实宽度变化才触发布局测高失效；随着文档增长，表格、引用等富文本不再放大全文布局开销。
+- 🔒 **模块与自定义扩展处理确定化** - 完整模块保持全局顺序和文档级标题 ID；fenced code 与 opaque 自定义块跨 chunk 时保持完整，自定义流式标签继续通过 `streamingBlockTagName` 显式启用。
+- 🧹 **智能流式 API 与示例收敛** - 智能流式统一使用 `beginRealStreaming()`、`appendStreamData(_:)` 和 `endRealStreaming(completion:)`；删除预切块 `appendBlock` 路径及未使用的流式示例控件。
+- 📊 **可选性能诊断与回归覆盖** - 新增通过 `MD_STREAM_PERF_LOG=1` / `MD_STREAM_PERF_ONLY=1` 开启的 `[MDPERF]` 聚合诊断，并覆盖 Unicode 标点、emoji 边界、FIFO 顺序、背压、重绘去重、高度缓存和最终 drain。合并基线已通过 68 项 iOS Simulator 测试以及 SwiftPM/CocoaPods 示例构建。
+
 ### 1.8.9 (2026-07-31)
 
 - 🔒 **自定义扩展注册表线程安全** - Parser、ViewProvider、ActionHandler 与代码块 Renderer 的注册和读取现已加锁；第三方 Parser 回调在锁外执行，避免重入死锁。

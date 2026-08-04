@@ -946,6 +946,17 @@ The ECharts and Mermaid examples load their scripts from a CDN, so the first ren
 
 ## Changelog
 
+### 1.9.8 (2026-08-04)
+
+- 🚀 **Backpressured Smart-Streaming Pipeline** - SmartBuffer now releases safe completed prefixes incrementally, parses modules serially off the main thread, and applies view creation under per-frame and Typewriter high/low-watermark budgets. Input order, UI order, and drain completion remain deterministic even when parsing outruns playback.
+- ⚡ **Display-Link Typewriter Scheduling** - Replaced recursive delayed ticks with a 30 FPS `CADisplayLink` timeline. Punctuation delays are precomputed in UTF-16 coordinates, pending work uses an O(1) FIFO head, and a catch-up frame performs at most one reveal/layout callback.
+- 📏 **Incremental Height Cache** - Streaming height now grows from known root visibility and text deltas instead of repeatedly fitting the complete `UIStackView`. Same-width intrinsic-size reads are cached, height notifications are coalesced, and structural changes still fall back to full reconciliation.
+- ✨ **Stable Rendering Without Repaint Flashes** - TextKit views only invalidate drawing when their real bounds change. Smart-stream table updates are serialized/coalesced with a guaranteed final flush, preventing overlapping self-sizing batches from repainting already displayed content.
+- 🧱 **Bounded Rich-Block Layout Work** - Tables reuse stable geometry, quotes are revealed as atomic blocks, and layout-driven height invalidation only runs after an actual width change. Rich Markdown no longer amplifies full-document layout work as the stream grows.
+- 🔒 **Deterministic Module and Extension Handling** - Complete modules preserve global ordering and document-wide heading IDs. Fenced code and opaque custom blocks remain intact across chunk boundaries, and custom streaming tags stay explicitly opt-in through `streamingBlockTagName`.
+- 🧹 **Smart-Streaming API and Demo Cleanup** - Smart-stream usage is consolidated around `beginRealStreaming()`, `appendStreamData(_:)`, and `endRealStreaming(completion:)`; the pre-split `appendBlock` path and unused streaming demo controls were removed.
+- 📊 **Opt-In Performance Diagnostics and Regression Coverage** - Added `[MDPERF]` aggregate diagnostics via `MD_STREAM_PERF_LOG=1` / `MD_STREAM_PERF_ONLY=1`, plus coverage for Unicode punctuation, emoji boundaries, FIFO ordering, backpressure, redraw deduplication, height caching, and final drain behavior. The merged baseline passed 68 iOS Simulator tests and SwiftPM/CocoaPods example builds.
+
 ### 1.8.9 (2026-07-31)
 
 - 🔒 **Thread-Safe Custom Extension Registry** - Parser, view-provider, action-handler, and code-block-renderer registration and lookup are now synchronized. Third-party parser callbacks execute outside the registry lock to avoid re-entrant deadlocks.
