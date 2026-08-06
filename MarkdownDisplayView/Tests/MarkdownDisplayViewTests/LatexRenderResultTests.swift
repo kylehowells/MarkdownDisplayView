@@ -10,7 +10,35 @@ private final class FormulaNodeStub: FormulaRenderNode {
     }
 
     func layout() {}
-    func draw(in context: CGContext, at point: CGPoint) {}
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {}
+}
+
+private final class FormulaColorCaptureNode: FormulaRenderNode {
+    let size = CGSize(width: 20, height: 20)
+    private(set) var foregroundColor: UIColor?
+
+    func layout() {}
+
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
+        self.foregroundColor = foregroundColor
+    }
+}
+
+@MainActor
+@Test func latexMathViewAppliesConfiguredTextColorToDrawingContext() {
+    let targetColor = UIColor(red: 0.31, green: 0.66, blue: 0.98, alpha: 1)
+    let rootNode = FormulaColorCaptureNode()
+    let formula = ParsedFormula.make(latex: "x", fontSize: 22) { rootNode }
+    let mathView = LatexMathView(parsedFormula: formula, textColor: targetColor)
+    mathView.frame = CGRect(x: 0, y: 0, width: 40, height: 40)
+
+    let renderer = UIGraphicsImageRenderer(size: mathView.bounds.size)
+    _ = renderer.image { _ in
+        mathView.draw(mathView.bounds)
+    }
+
+    #expect(rootNode.foregroundColor?.isEqual(targetColor) == true)
+    #expect(mathView.formulaTextColor.isEqual(targetColor))
 }
 
 @MainActor

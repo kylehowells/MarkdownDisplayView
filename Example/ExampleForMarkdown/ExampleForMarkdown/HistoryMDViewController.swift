@@ -8,14 +8,93 @@
 import UIKit
 import MarkdownDisplayView
 
+private final class HistoryMarkdownPreparationToken {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+}
+
+private final class HistoryMarkdownPreparedBox {
+    let row: Int
+    let markdown: String
+    let width: CGFloat
+    let content: MarkdownPreparedContent
+
+    init(row: Int, markdown: String, width: CGFloat, content: MarkdownPreparedContent) {
+        self.row = row
+        self.markdown = markdown
+        self.width = width
+        self.content = content
+    }
+}
+
+private final class HistoryMarkdownPreparationTask {
+    let row: Int
+    let markdown: String
+    let width: CGFloat
+    let token = HistoryMarkdownPreparationToken()
+    weak var operation: BlockOperation?
+
+    init(row: Int, markdown: String, width: CGFloat) {
+        self.row = row
+        self.markdown = markdown
+        self.width = width
+    }
+
+    func cancel() {
+        token.cancel()
+        operation?.cancel()
+    }
+
+    func matches(row: Int, markdown: String, width: CGFloat) -> Bool {
+        self.row == row && self.markdown == markdown && abs(self.width - width) <= 1
+    }
+}
+
+private struct HistoryMarkdownHeightEntry {
+    let markdown: String
+    let width: CGFloat
+    let height: CGFloat
+}
+
 final class HistoryMDViewController: UIViewController {
 
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let selectedTheme = MarkdownDemoThemeStore.selectedTheme
+    private var markdownConfiguration: MarkdownConfiguration {
+        selectedTheme?.makeConfiguration() ?? .default
+    }
     private var messages: [String] = []
-    private var cachedHeights: [Int: CGFloat] = [:]
+    private var cachedHeights: [Int: HistoryMarkdownHeightEntry] = [:]
+    private let preparedContentCache: NSCache<NSNumber, HistoryMarkdownPreparedBox> = {
+        let cache = NSCache<NSNumber, HistoryMarkdownPreparedBox>()
+        cache.countLimit = 16
+        cache.totalCostLimit = 24 * 1024 * 1024
+        return cache
+    }()
+    private var preparedContentWidth: CGFloat = 0
+    private var preparationTasks: [Int: HistoryMarkdownPreparationTask] = [:]
+    private var prefetchedRows = Set<Int>()
+    private let prepareQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "com.markdown.history.prepare"
+        queue.qualityOfService = .userInitiated
+        queue.maxConcurrentOperationCount = 1
+        return queue
+    }()
     private let cellVerticalPadding: CGFloat = 24
     private let firstRowExtraPadding: CGFloat = 12
-    private let initialPlaceholderRowHeightMultiplier: CGFloat = 3
 
     private var pendingHeightUpdateRows = Set<Int>()
     private var isHeightUpdateScheduled = false
@@ -35,10 +114,25 @@ final class HistoryMDViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let selectedTheme {
+            overrideUserInterfaceStyle = selectedTheme.interfaceStyle
+        }
         view.backgroundColor = .systemBackground
         setupTableView()
         setupCloseButton()
+        applySelectedTheme()
         prepareMessages()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+
+        let width = markdownContentWidth()
+        guard width > 1 else { return }
+        guard !messages.isEmpty else { return }
+        guard abs(width - preparedContentWidth) > 1 else { return }
+
+        updatePreparationWidth(width)
     }
 
     override func viewWillAppear(_ animated: Bool) {
@@ -73,8 +167,13 @@ final class HistoryMDViewController: UIViewController {
         )
     }
 
+    deinit {
+        cancelAllPreparationTasks()
+    }
+
     private func setupTableView() {
         tableView.dataSource = self
+        tableView.prefetchDataSource = self
         tableView.delegate = self
         tableView.separatorStyle = .none
         tableView.estimatedRowHeight = 120
@@ -100,6 +199,14 @@ final class HistoryMDViewController: UIViewController {
         ])
     }
 
+    private func applySelectedTheme() {
+        guard let theme = selectedTheme else { return }
+        view.backgroundColor = theme.canvasColor
+        tableView.backgroundColor = theme.canvasColor
+        tableView.indicatorStyle = theme.interfaceStyle == .dark ? .white : .black
+        closeButton.tintColor = theme.accentColor
+    }
+
     private func prepareMessages() {
         let baseTableArray = [
             "在 Android 上实现贝塞尔曲线动画，通常可以使用 `ValueAnimator` 与 `Path`、`PathInterpolator` 等类结合，实现平滑的曲线动画效果。下面是一个使用 **贝塞尔曲线（Bezier Curve）** 实现动画的示例代码，展示如何在屏幕上绘制一个点沿着贝塞尔曲线运动的动画。\n\n---\n\n## ✅ 示例代码：贝塞尔曲线动画（Android）\n\n### 📌 1. 在布局文件中添加一个 `View`\n\n```xml\n<!-- res/layout/activity_main.xml -->\n<FrameLayout\n    xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    android:layout_width=\"match_parent\"\n    android:layout_height=\"match_parent\">\n\n    <com.example.bezieranimation.BezierView\n        android:id=\"@+id/bezierView\"\n        android:layout_width=\"match_parent\"\n        android:layout_height=\"match_parent\" />\n</FrameLayout>\n```\n\n---\n\n### 📌 2. 自定义 `BezierView` 类\n\n```java\n// BezierView.java\npublic class BezierView extends View {\n\n    private static final int ANIMATION_DURATION = 2000;\n    private Path mPath;\n    private PathInterpolator mInterpolator;\n    private float mX, mY;\n\n    public BezierView(Context context) {\n        super(context);\n        init();\n    }\n\n    public BezierView(Context context, AttributeSet attrs) {\n        super(context, attrs);\n        init();\n    }\n\n    private void init() {\n        mPath = new Path();\n        mInterpolator = new PathInterpolator(0.4f, 0.2f, 0.6f, 0.9f);\n    }\n\n    @Override\n    protected void onDraw(Canvas canvas) {\n        super.onDraw(canvas);\n\n        Paint paint = new Paint();\n        paint.setColor(Color.RED);\n        paint.setStrokeWidth(5);\n        paint.setStyle(Paint.Style.STROKE);\n\n        // 绘制贝塞尔曲线\n        canvas.drawPath(mPath, paint);\n\n        // 绘制动画点\n        Paint pointPaint = new Paint();\n        pointPaint.setColor(Color.BLUE);\n        canvas.drawCircle(mX, mY, 10, pointPaint);\n    }\n\n    public void startAnimation() {\n        // 定义贝塞尔曲线路径\n        mPath.reset();\n        mPath.moveTo(100, 500); // 起点\n        mPath.cubicTo(300, 100, 500, 100, 700, 500); // 控制点1、控制点2、终点\n\n        // 创建动画\n        ValueAnimator animator = ValueAnimator.ofFloat(0, 1);\n        animator.setInterpolator(mInterpolator);\n        animator.setDuration(ANIMATION_DURATION);\n        animator.addUpdateListener(animation -> {\n            float t = animation.getAnimatedFraction();\n            float x = mPath.getInterpolation(t).x;\n            float y = mPath.getInterpolation(t).y;\n            mX = x;\n            mY = y;\n            invalidate();\n        });\n\n        animator.start();\n    }\n}\n```\n\n---\n\n### 📌 3. 在 `Activity` 中启动动画\n\n```java\n// MainActivity.java\npublic class MainActivity extends AppCompatActivity {\n\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        setContentView(R.layout.activity_main);\n\n        BezierView bezierView = findViewById(R.id.bezierView);\n        bezierView.startAnimation();\n    }\n}\n```\n\n---\n\n## ✅ 说明\n\n- `Path`：定义贝塞尔曲线的形状。\n- `PathInterpolator`：用于定义动画的插值方式（即曲线的缓动效果）。\n- `ValueAnimator`：用于控制动画的播放和更新。\n- `onDraw()`：用于绘制贝塞尔曲线和动画点。\n\n---\n\n## ✅ 可选扩展\n\n- 使用 `ObjectAnimator` 与 `PointF` 或 `Point` 实现更复杂的动画。\n- 使用 `BezierPathInterpolator`（自定义插值器）实现更精细的动画控制。\n- 使用 `Canvas` 的 `drawPath()` 方法绘制路径。\n- 使用 `XML` 定义动画路径，实现更灵活的动画定义。\n\n---\n\n## ✅ 总结\n\n在 Android 中实现贝塞尔曲线动画，可以使用以下组件：\n\n| 组件 | 作用 |\n|------|------|\n| `Path` | 定义贝塞尔曲线的形状 |\n| `PathInterpolator` | 定义动画的缓动曲线 |\n| `ValueAnimator` | 控制动画的播放和更新 |\n| `Canvas` | 绘制动画路径和点 |\n\n如需实现更复杂的动画（如多点动画、路径跟随等），可以进一步扩展该示例。\n\n---\n\n如果你希望我帮你实现更复杂的动画（如手势跟随、路径绘制动画等），也可以告诉我！",
@@ -111,7 +218,161 @@ final class HistoryMDViewController: UIViewController {
         ]
         messages = baseTableArray
         cachedHeights.removeAll()
+        preparedContentCache.removeAllObjects()
+        cancelAllPreparationTasks()
+        prefetchedRows.removeAll()
+        preparedContentWidth = 0
         tableView.reloadData()
+    }
+
+    private func markdownContentWidth() -> CGFloat {
+        let tableWidth: CGFloat
+        if tableView.bounds.width > 0 {
+            tableWidth = tableView.bounds.width
+        } else if view.bounds.width > 0 {
+            tableWidth = view.bounds.width
+        } else {
+            tableWidth = UIScreen.main.bounds.width
+        }
+        return max(1, tableWidth - 32)
+    }
+
+    private func updatePreparationWidth(_ width: CGFloat) {
+        guard width > 1 else { return }
+        preparedContentWidth = width
+        cancelAllPreparationTasks()
+        preparedContentCache.removeAllObjects()
+        cachedHeights.removeAll()
+        tableView.reloadData()
+    }
+
+    private func preparedContent(forRow row: Int, markdown: String, width: CGFloat) -> MarkdownPreparedContent? {
+        let key = NSNumber(value: row)
+        guard let cached = preparedContentCache.object(forKey: key) else { return nil }
+        guard cached.row == row,
+              cached.markdown == markdown,
+              abs(cached.width - width) <= 1,
+              abs(cached.content.preparedWidth - width) <= 1 else {
+            preparedContentCache.removeObject(forKey: key)
+            return nil
+        }
+        return cached.content
+    }
+
+    private func cachedHeight(forRow row: Int, markdown: String, width: CGFloat) -> CGFloat? {
+        guard let cached = cachedHeights[row],
+              cached.markdown == markdown,
+              abs(cached.width - width) <= 1 else {
+            cachedHeights[row] = nil
+            return nil
+        }
+        return cached.height
+    }
+
+    private func shouldPrepareMarkdown(_ markdown: String) -> Bool {
+        markdown.utf8.count >= 1_200
+    }
+
+    private func requestPreparation(forRow row: Int, width: CGFloat) {
+        guard messages.indices.contains(row), width > 1 else { return }
+        let markdown = messages[row]
+        guard shouldPrepareMarkdown(markdown) else { return }
+        guard preparedContent(forRow: row, markdown: markdown, width: width) == nil else { return }
+
+        if let existing = preparationTasks[row] {
+            if existing.matches(row: row, markdown: markdown, width: width) {
+                return
+            }
+            existing.cancel()
+            preparationTasks[row] = nil
+        }
+
+        let task = HistoryMarkdownPreparationTask(
+            row: row,
+            markdown: markdown,
+            width: width
+        )
+        let verticalPadding = cellVerticalPadding
+        let firstExtraPadding = firstRowExtraPadding
+        let configuration = markdownConfiguration
+        let operation = BlockOperation { [weak self, weak task] in
+            guard let task, !task.token.isCancelled else { return }
+            let renderer = MarkdownRenderer(configuration: configuration, containerWidth: width)
+            let prepared = renderer.prepare(markdown)
+            guard !task.token.isCancelled else { return }
+
+            let extraPadding = row == 0 ? firstExtraPadding : 0
+            let height = prepared.estimatedTotalHeight + verticalPadding + extraPadding
+            DispatchQueue.main.async { [weak self, weak task] in
+                guard let self, let task else { return }
+                self.finishPreparation(task, content: prepared, height: height)
+            }
+        }
+        operation.queuePriority = .normal
+        task.operation = operation
+        preparationTasks[row] = task
+        prepareQueue.addOperation(operation)
+    }
+
+    private func finishPreparation(
+        _ task: HistoryMarkdownPreparationTask,
+        content: MarkdownPreparedContent,
+        height: CGFloat
+    ) {
+        guard preparationTasks[task.row] === task else { return }
+        preparationTasks[task.row] = nil
+        guard !task.token.isCancelled,
+              messages.indices.contains(task.row),
+              messages[task.row] == task.markdown,
+              abs(markdownContentWidth() - task.width) <= 1,
+              abs(content.preparedWidth - task.width) <= 1 else {
+            return
+        }
+
+        let box = HistoryMarkdownPreparedBox(
+            row: task.row,
+            markdown: task.markdown,
+            width: task.width,
+            content: content
+        )
+        preparedContentCache.setObject(
+            box,
+            forKey: NSNumber(value: task.row),
+            cost: preparedContentCost(markdown: task.markdown, content: content)
+        )
+        cachedHeights[task.row] = HistoryMarkdownHeightEntry(
+            markdown: task.markdown,
+            width: task.width,
+            height: height
+        )
+
+        let indexPath = IndexPath(row: task.row, section: 0)
+        if let cell = tableView.cellForRow(at: indexPath) as? MarkdownHistoryCell {
+            _ = cell.apply(
+                preparedContent: content,
+                row: task.row,
+                markdown: task.markdown,
+                width: task.width
+            )
+            scheduleHeightUpdates(forRow: task.row)
+        }
+    }
+
+    private func preparedContentCost(markdown: String, content: MarkdownPreparedContent) -> Int {
+        let textCost = markdown.utf8.count * 4
+        let elementCost = content.elements.count * 512
+        let imageCost = content.imageAttachments.count * 64 * 1024
+        return max(1, textCost + elementCost + imageCost)
+    }
+
+    private func cancelPreparation(forRow row: Int) {
+        preparationTasks.removeValue(forKey: row)?.cancel()
+    }
+
+    private func cancelAllPreparationTasks() {
+        preparationTasks.values.forEach { $0.cancel() }
+        preparationTasks.removeAll()
+        prepareQueue.cancelAllOperations()
     }
 
     @objc private func closeTapped() {
@@ -156,34 +417,89 @@ extension HistoryMDViewController: UITableViewDataSource, UITableViewDelegate {
         ) as? MarkdownHistoryCell else {
             return UITableViewCell(style: .default, reuseIdentifier: "fallback")
         }
-        cell.configure(markdown: messages[safe: indexPath.row] ?? "")
+        let row = indexPath.row
+        let markdown = messages[safe: row] ?? ""
+        let width = markdownContentWidth()
+        prefetchedRows.remove(row)
+        cell.apply(theme: selectedTheme, configuration: markdownConfiguration)
 
         cell.onContentHeightChange = { [weak self, weak tableView, weak cell] contentHeight in
             guard let self, let tableView, let cell else { return }
-            guard let currentIndexPath = tableView.indexPath(for: cell) else { return }
-            let row = currentIndexPath.row
-            guard row < self.messages.count else { return }
+            guard tableView.indexPath(for: cell)?.row == row else { return }
+            guard cell.represents(row: row, markdown: markdown, width: width) else { return }
+            guard self.messages.indices.contains(row), self.messages[row] == markdown else { return }
+            guard abs(self.markdownContentWidth() - width) <= 1 else { return }
             guard contentHeight > 1 else { return }
 
             let extraPadding = row == 0 ? self.firstRowExtraPadding : 0
             let newRowHeight = contentHeight + self.cellVerticalPadding + extraPadding
 
-            if let cached = self.cachedHeights[row], abs(cached - newRowHeight) <= self.rowHeightUpdateThreshold {
+            if let cached = self.cachedHeight(forRow: row, markdown: markdown, width: width),
+               abs(cached - newRowHeight) <= self.rowHeightUpdateThreshold {
                 return
             }
-            self.cachedHeights[row] = newRowHeight
+            self.cachedHeights[row] = HistoryMarkdownHeightEntry(
+                markdown: markdown,
+                width: width,
+                height: newRowHeight
+            )
             self.scheduleHeightUpdates(forRow: row)
+        }
+
+        if let prepared = preparedContent(forRow: row, markdown: markdown, width: width) {
+            cell.configure(preparedContent: prepared, row: row, markdown: markdown, width: width)
+        } else if shouldPrepareMarkdown(markdown) {
+            cell.configurePreparationPlaceholder(row: row, markdown: markdown, width: width)
+            requestPreparation(forRow: row, width: width)
+        } else {
+            cell.configure(markdown: markdown, row: row, width: width)
         }
 
         return cell
     }
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        if let cachedHeight = cachedHeights[indexPath.row] {
+        let row = indexPath.row
+        let markdown = messages[safe: row] ?? ""
+        if let cachedHeight = cachedHeight(forRow: row, markdown: markdown, width: markdownContentWidth()) {
             return cachedHeight
         }
-        let viewHeight = view.bounds.height > 0 ? view.bounds.height : UIScreen.main.bounds.height
-        return max(tableView.estimatedRowHeight, viewHeight * initialPlaceholderRowHeightMultiplier)
+        return UITableView.automaticDimension
+    }
+
+    func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        let row = indexPath.row
+        let markdown = messages[safe: row] ?? ""
+        return cachedHeight(forRow: row, markdown: markdown, width: markdownContentWidth())
+            ?? tableView.estimatedRowHeight
+    }
+
+    func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        guard tableView.indexPathsForVisibleRows?.contains(indexPath) != true else { return }
+        if !prefetchedRows.contains(indexPath.row) {
+            cancelPreparation(forRow: indexPath.row)
+        }
+    }
+}
+
+extension HistoryMDViewController: UITableViewDataSourcePrefetching {
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        let width = markdownContentWidth()
+        for indexPath in indexPaths where messages.indices.contains(indexPath.row) {
+            prefetchedRows.insert(indexPath.row)
+            requestPreparation(forRow: indexPath.row, width: width)
+        }
+    }
+
+    func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
+        let visibleRows = Set(tableView.indexPathsForVisibleRows?.map(\.row) ?? [])
+        for indexPath in indexPaths {
+            prefetchedRows.remove(indexPath.row)
+            guard !visibleRows.contains(indexPath.row) else {
+                continue
+            }
+            cancelPreparation(forRow: indexPath.row)
+        }
     }
 }
 
@@ -191,10 +507,15 @@ final class MarkdownHistoryCell: UITableViewCell {
     static let reuseIdentifier = "MarkdownHistoryCell"
 
     private let markdownView = MarkdownViewTextKit()
+    private let preparationIndicator = UIActivityIndicatorView(style: .medium)
 
     var onContentHeightChange: ((CGFloat) -> Void)?
 
     private var renderToken = UUID()
+    private var representedRow: Int?
+    private var representedMarkdown: String?
+    private var representedWidth: CGFloat = 0
+    private var appliedThemeRawValue: Int?
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
@@ -213,13 +534,19 @@ final class MarkdownHistoryCell: UITableViewCell {
         }
 
         contentView.addSubview(markdownView)
+        preparationIndicator.hidesWhenStopped = true
+        preparationIndicator.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(preparationIndicator)
         let bottomConstraint = markdownView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -12)
         bottomConstraint.priority = .defaultHigh
         NSLayoutConstraint.activate([
             markdownView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 12),
             markdownView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             markdownView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            bottomConstraint
+            bottomConstraint,
+            contentView.heightAnchor.constraint(greaterThanOrEqualToConstant: 68),
+            preparationIndicator.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            preparationIndicator.centerYAnchor.constraint(equalTo: contentView.centerYAnchor)
         ])
     }
 
@@ -227,15 +554,87 @@ final class MarkdownHistoryCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(markdown: String) {
+    func apply(theme: MarkdownDemoTheme?, configuration: MarkdownConfiguration) {
+        guard let theme else { return }
+
+        if appliedThemeRawValue != theme.rawValue {
+            markdownView.configuration = configuration
+            appliedThemeRawValue = theme.rawValue
+        }
+
+        backgroundColor = .clear
+        contentView.backgroundColor = theme.panelColor
+        markdownView.backgroundColor = theme.panelColor
+        preparationIndicator.color = theme.accentColor
+    }
+
+    func configure(markdown: String, row: Int, width: CGFloat) {
         renderToken = UUID()
+        representedRow = row
+        representedMarkdown = markdown
+        representedWidth = width
+        preparationIndicator.stopAnimating()
+        markdownView.isHidden = false
         markdownView.markdown = markdown
         setNeedsLayout()
+    }
+
+    func configurePreparationPlaceholder(row: Int, markdown: String, width: CGFloat) {
+        renderToken = UUID()
+        representedRow = row
+        representedMarkdown = markdown
+        representedWidth = width
+        markdownView.resetForReuse()
+        markdownView.isHidden = true
+        preparationIndicator.startAnimating()
+        setNeedsLayout()
+    }
+
+    func configure(
+        preparedContent: MarkdownPreparedContent,
+        row: Int,
+        markdown: String,
+        width: CGFloat
+    ) {
+        renderToken = UUID()
+        representedRow = row
+        representedMarkdown = markdown
+        representedWidth = width
+        preparationIndicator.stopAnimating()
+        markdownView.isHidden = false
+        markdownView.setPreparedContent(preparedContent)
+        setNeedsLayout()
+    }
+
+    func apply(
+        preparedContent: MarkdownPreparedContent,
+        row: Int,
+        markdown: String,
+        width: CGFloat
+    ) -> Bool {
+        guard represents(row: row, markdown: markdown, width: width) else { return false }
+        renderToken = UUID()
+        preparationIndicator.stopAnimating()
+        markdownView.isHidden = false
+        markdownView.setPreparedContent(preparedContent)
+        setNeedsLayout()
+        return true
+    }
+
+    func represents(row: Int, markdown: String, width: CGFloat) -> Bool {
+        representedRow == row
+            && representedMarkdown == markdown
+            && abs(representedWidth - width) <= 1
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
         renderToken = UUID()
+        representedRow = nil
+        representedMarkdown = nil
+        representedWidth = 0
+        preparationIndicator.stopAnimating()
+        markdownView.isHidden = false
         onContentHeightChange = nil
         markdownView.resetForReuse()
     }

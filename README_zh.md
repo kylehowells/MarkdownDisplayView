@@ -589,6 +589,30 @@ let markdownView = MarkdownViewTextKit()
 // 需要自己管理滚动容器
 ```
 
+### 在聊天或历史 Cell 中复用预渲染结果
+
+持久化时仍以原始 Markdown 作为数据源。对于已经结束流式输出的稳定消息，可以在后台队列生成渲染结果，并按照消息标识、Markdown 内容、容器宽度和样式版本缓存在内存中：
+
+```swift
+let renderer = MarkdownRenderer(
+    configuration: configuration,
+    containerWidth: markdownWidth
+)
+let prepared = renderer.prepare(message.markdown)
+
+DispatchQueue.main.async {
+    markdownView.setPreparedContent(prepared)
+}
+```
+
+`setPreparedContent(_:)` 会跳过 Markdown 解析、渲染元素生成和第一次高度预估。Markdown 内容、宽度或配置变化后需要重新生成。`MarkdownPreparedContent` 适合作为内存渲染缓存；持久化聊天历史时仍应保存原始 Markdown，不建议把它直接归档为长期存储格式。
+
+当历史中有几十甚至上百篇长文档时，不要在进入页面时一次性预渲染全部内容。应通过 `UITableViewDataSourcePrefetching` 只准备可见区域附近的行，在快速滚动或宽度变化后取消过期任务，并同时设置 `NSCache.countLimit` 和 `totalCostLimit`，让富文本渲染结果可以在内存压力下被淘汰。
+
+示例控制器会让短 Markdown 继续走普通渲染；长文缓存未命中时显示轻量加载指示，并且只提交一次预渲染，避免同一份内容同时进行普通解析和缓存预解析。
+
+可见区域预取、有界渲染缓存和 Table 行高缓存可参考 `AIChatViewController.swift` 与 `HistoryMDViewController.swift`。
+
 ### 监听高度变化
 
 ```swift
@@ -962,7 +986,98 @@ ECharts 和 Mermaid 示例通过 CDN 加载脚本，首次展示需要网络。�
 
 **解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
 
+## Demo 主题与块级外观（1.9.9）
+
+`ExampleForMarkdown` Demo 新增了 **Theme Gallery**，内置暖纸张、鼠尾草、深海代码和暮紫夜色四套完整主题。选择主题后，Demo 会通过 `UserDefaults` 保存选择，并把同一份配置应用到 Markdown 预览、AI Chat 及其历史记录、长历史列表、TableView Streaming，以及两个智能流式示例中。
+
+在示例 App 首页进入 **Theme Gallery**，选择一张主题卡片，再进入上述任一页面即可查看效果。主题持久化由 Demo 内部的 `MarkdownDemoThemeStore` 实现，它不是 SDK 的全局主题单例。页面会在创建时读取当前主题，因此如果切换主题时目标页面已经打开，需要重新进入该页面刷新配置。
+
+四套主题的完整定义位于 [`MarkdownThemeGalleryViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownThemeGalleryViewController.swift)。业务 App 可以沿用相同思路：在自己的状态或 `UserDefaults` 中保存主题选择，生成一份完整的 `MarkdownConfiguration`，再赋给所有需要保持一致的 Markdown 视图。
+
+### 创建主题配置
+
+颜色和块级容器外观可以分别配置。`MarkdownBlockAppearance` 仅通过 `CALayer` 绘制圆角和边框，不会修改约束、内边距、测量高度或滚动范围。
+
+```swift
+var configuration = MarkdownConfiguration.default
+
+// 文字与块面颜色
+configuration.textColor = .label
+configuration.headingColor = .label
+configuration.linkColor = .systemIndigo
+configuration.codeTextColor = .label
+configuration.codeBackgroundColor = .secondarySystemBackground
+configuration.blockquoteTextColor = .label
+configuration.blockquoteBarColor = .systemIndigo
+configuration.blockquoteBackgroundColor = .secondarySystemBackground
+configuration.tableBorderColor = .separator
+configuration.tableHeaderBackgroundColor = .systemIndigo.withAlphaComponent(0.12)
+configuration.tableRowBackgroundColor = .systemBackground
+configuration.tableAlternateRowBackgroundColor = .secondarySystemBackground
+
+// 公式字形/线条颜色与公式背景
+configuration.latexTextColor = .label
+configuration.latexBackgroundColor = .secondarySystemBackground
+
+// 仅影响视觉的块级外观
+configuration.codeBlockAppearance = MarkdownBlockAppearance(
+    cornerRadius: 14,
+    borderWidth: 1,
+    borderColor: .separator
+)
+configuration.blockquoteAppearance = MarkdownBlockAppearance(
+    cornerRadius: 12,
+    borderWidth: 1,
+    borderColor: .separator
+)
+configuration.tableAppearance = MarkdownBlockAppearance(
+    cornerRadius: 12,
+    borderWidth: 1,
+    borderColor: .separator
+)
+configuration.imageAppearance = MarkdownBlockAppearance(
+    cornerRadius: 14 // 图片边框按需开启
+)
+configuration.latexAppearance = MarkdownBlockAppearance(
+    cornerRadius: 12,
+    borderWidth: 1,
+    borderColor: .separator
+)
+configuration.detailsAppearance = MarkdownBlockAppearance(
+    cornerRadius: 12,
+    borderWidth: 1,
+    borderColor: .separator
+)
+
+markdownView.configuration = configuration
+```
+
+`latexTextColor` 控制公式字形、分数线和根号等绘制线条的默认颜色；公式内显式声明的 LaTeX `\color{...}` 仍然优先。图片主题默认只保留圆角、不显示边框；只有业务确实需要图片描边时，再设置 `borderWidth` 与 `borderColor`。
+
+### 保持预渲染配置一致
+
+页面使用 `MarkdownRenderer.prepare(_:)` 时，需要给 Renderer 和最终展示视图传入同一份配置，避免缓存或预渲染内容残留另一套主题的颜色。
+
+```swift
+let renderer = MarkdownRenderer(
+    configuration: configuration,
+    containerWidth: contentWidth
+)
+let preparedContent = renderer.prepare(markdown)
+
+markdownView.configuration = configuration
+markdownView.setPreparedContent(preparedContent)
+```
+
 ## 更新日志
+
+### 1.9.9 (2026-08-06)
+
+- 🎨 **四套 Demo 主题与主题画廊** - 新增暖纸张、鼠尾草、深海代码和暮紫夜色四套主题预览，通过 Demo 自有的 `UserDefaults` 持久化选择，并统一覆盖 Markdown 预览、AI Chat/历史、长历史列表、TableView Streaming 与智能流式示例。
+- 🧱 **块级外观可配置** - 为代码块、引用块、表格、图片、LaTeX 和详情块新增圆角与边框配置；这些设置仅作用于 `CALayer`，不参与高度测量，也不会改变滚动范围。
+- ➗ **公式渲染跟随主题** - 新增 `latexTextColor`，让公式字形和绘制线条随主题切换，同时保留公式内显式 LaTeX `\color{...}` 的优先级。
+- 🔄 **预渲染样式保持一致** - Demo 页面为 `MarkdownRenderer` 和 Markdown 视图注入同一份主题配置，避免 AI Chat/历史缓存内容使用过期主题颜色。
+- 🖼 **更干净的图片默认外观** - Demo 主题保留图片圆角但默认关闭图片边框；边框能力仍作为可选外观配置提供。
 
 ### 1.9.8 (2026-08-04)
 

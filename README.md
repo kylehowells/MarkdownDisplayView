@@ -571,6 +571,30 @@ let markdownView = MarkdownViewTextKit()
 // You need to manage the scroll container yourself
 ```
 
+### Reusing Prepared Content in Chat or History Cells
+
+Persist the original Markdown as the source of truth. For stable, non-streaming messages, prepare the rendered content on a background queue and keep it in an in-memory cache keyed by message identity, Markdown content, container width, and style version:
+
+```swift
+let renderer = MarkdownRenderer(
+    configuration: configuration,
+    containerWidth: markdownWidth
+)
+let prepared = renderer.prepare(message.markdown)
+
+DispatchQueue.main.async {
+    markdownView.setPreparedContent(prepared)
+}
+```
+
+`setPreparedContent(_:)` skips Markdown parsing, render-element creation, and the first height-estimation pass. Rebuild the prepared content after the Markdown, width, or configuration changes. `MarkdownPreparedContent` is intended as an in-memory render cache; store the original Markdown rather than archiving it as the durable history format.
+
+For tens or hundreds of long documents, do not prepare the complete history eagerly. Use `UITableViewDataSourcePrefetching` to prepare only rows near the visible range, cancel obsolete work after fast scrolling or width changes, and use `NSCache` with both `countLimit` and `totalCostLimit` so prepared attributed strings can be evicted under memory pressure.
+
+The example controllers use the normal render path for short Markdown and show a lightweight loading indicator while a cache-missed long document is prepared once, avoiding simultaneous normal parsing and cache preparation for the same content.
+
+See `AIChatViewController.swift` and `HistoryMDViewController.swift` for visible-range prefetching, bounded prepared-content caches, and cached table-row estimates.
+
 ### Monitor Height Changes
 
 ```swift
@@ -944,7 +968,98 @@ The ECharts and Mermaid examples load their scripts from a CDN, so the first ren
 
 **Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
 
+## Demo Themes and Block Appearance (1.9.9)
+
+The `ExampleForMarkdown` app now includes a **Theme Gallery** with four complete Markdown themes: Parchment, Sage, Midnight, and Plum. Selecting a theme stores the choice in `UserDefaults` and reuses the same configuration in the Markdown preview, AI Chat and its history, the long-history example, TableView Streaming, and both smart-streaming examples.
+
+Open **Theme Gallery** from the example app, select a theme card, and then enter any of the pages above to inspect the result. Theme persistence is implemented only by the Demo's `MarkdownDemoThemeStore`; it is not a global SDK singleton. Pages read the selected theme when they are created, so reopen an already visible page after changing the theme.
+
+The complete theme definitions are available in [`MarkdownThemeGalleryViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownThemeGalleryViewController.swift). Product apps can use the same pattern: keep the selected theme in app state, create one complete `MarkdownConfiguration`, and assign it to every Markdown view that should share the theme.
+
+### Build a Theme
+
+Colors and block surfaces can be configured independently. `MarkdownBlockAppearance` draws its corner radius and border with `CALayer`; it does not change constraints, padding, measured height, or the scroll range.
+
+```swift
+var configuration = MarkdownConfiguration.default
+
+// Text and surface colors
+configuration.textColor = .label
+configuration.headingColor = .label
+configuration.linkColor = .systemIndigo
+configuration.codeTextColor = .label
+configuration.codeBackgroundColor = .secondarySystemBackground
+configuration.blockquoteTextColor = .label
+configuration.blockquoteBarColor = .systemIndigo
+configuration.blockquoteBackgroundColor = .secondarySystemBackground
+configuration.tableBorderColor = .separator
+configuration.tableHeaderBackgroundColor = .systemIndigo.withAlphaComponent(0.12)
+configuration.tableRowBackgroundColor = .systemBackground
+configuration.tableAlternateRowBackgroundColor = .secondarySystemBackground
+
+// Formula glyphs/rules and formula surface
+configuration.latexTextColor = .label
+configuration.latexBackgroundColor = .secondarySystemBackground
+
+// Visual-only block appearance
+configuration.codeBlockAppearance = MarkdownBlockAppearance(
+    cornerRadius: 14,
+    borderWidth: 1,
+    borderColor: .separator
+)
+configuration.blockquoteAppearance = MarkdownBlockAppearance(
+    cornerRadius: 12,
+    borderWidth: 1,
+    borderColor: .separator
+)
+configuration.tableAppearance = MarkdownBlockAppearance(
+    cornerRadius: 12,
+    borderWidth: 1,
+    borderColor: .separator
+)
+configuration.imageAppearance = MarkdownBlockAppearance(
+    cornerRadius: 14 // Image borders remain opt-in.
+)
+configuration.latexAppearance = MarkdownBlockAppearance(
+    cornerRadius: 12,
+    borderWidth: 1,
+    borderColor: .separator
+)
+configuration.detailsAppearance = MarkdownBlockAppearance(
+    cornerRadius: 12,
+    borderWidth: 1,
+    borderColor: .separator
+)
+
+markdownView.configuration = configuration
+```
+
+`latexTextColor` is the default color for formula glyphs and fraction/radical rules. An explicit LaTeX `\color{...}` command still takes precedence. Image themes default to rounded corners without a border; set `borderWidth` and `borderColor` only when a product specifically needs an image outline.
+
+### Keep Prepared Content in Sync
+
+When a screen uses `MarkdownRenderer.prepare(_:)`, give the renderer and the destination view the same configuration. This prevents cached/prepared content from retaining colors from another theme.
+
+```swift
+let renderer = MarkdownRenderer(
+    configuration: configuration,
+    containerWidth: contentWidth
+)
+let preparedContent = renderer.prepare(markdown)
+
+markdownView.configuration = configuration
+markdownView.setPreparedContent(preparedContent)
+```
+
 ## Changelog
+
+### 1.9.9 (2026-08-06)
+
+- 🎨 **Four Demo Themes and Theme Gallery** - Added Parchment, Sage, Midnight, and Plum theme previews, with Demo-only `UserDefaults` persistence and consistent selection across the Markdown preview, AI Chat/history, long-history, TableView Streaming, and smart-streaming examples.
+- 🧱 **Configurable Block Appearance** - Added corner-radius and border configuration for code blocks, blockquotes, tables, images, LaTeX, and details blocks. These `CALayer`-only settings do not participate in height measurement or change the scroll range.
+- ➗ **Theme-Aware Formula Rendering** - Added `latexTextColor` so formula glyphs and drawing rules follow the selected theme while explicit LaTeX `\color{...}` values continue to take precedence.
+- 🔄 **Consistent Prepared-Content Styling** - Demo screens now pass the selected configuration to both `MarkdownRenderer` and their Markdown views, preventing cached chat/history content from using stale theme colors.
+- 🖼 **Cleaner Image Defaults** - Demo themes keep image rounding but leave image borders disabled by default; borders remain available as an opt-in appearance setting.
 
 ### 1.9.8 (2026-08-04)
 

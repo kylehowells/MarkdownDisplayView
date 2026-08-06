@@ -119,7 +119,7 @@ final class CodeBlockAttachmentViewProvider: NSTextAttachmentViewProvider {
             height: totalHeight
         ))
         container.backgroundColor = attachment.configuration.codeBackgroundColor
-        container.layer.cornerRadius = 8
+        container.layer.applyMarkdownBlockAppearance(attachment.configuration.codeBlockAppearance)
         container.layer.masksToBounds = true
 
         // 2. 水平滚动视图

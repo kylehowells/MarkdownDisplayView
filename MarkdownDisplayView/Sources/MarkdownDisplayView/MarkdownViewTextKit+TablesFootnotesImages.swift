@@ -46,6 +46,8 @@ extension MarkdownViewTextKit {
     func createTableView(with tableData: MarkdownTableData, containerWidth: CGFloat) -> UIView {
         let container = UIView()
         container.translatesAutoresizingMaskIntoConstraints = false
+        container.layer.applyMarkdownBlockAppearance(configuration.tableAppearance)
+        container.layer.masksToBounds = configuration.tableAppearance.cornerRadius > 0
 
         let scrollView = UIScrollView()
         scrollView.showsHorizontalScrollIndicator = true

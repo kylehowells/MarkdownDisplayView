@@ -18,7 +18,7 @@ protocol FormulaRenderNode {
     // ✅ 新增：基线偏移量 (距离底部的距离，或者距离顶部的距离，看你坐标系)
     // 这里假设：从 Node 的底部 (Bottom) 向上到基线 (Baseline) 的距离
     var baselineOffset: CGFloat { get }
-    func draw(in context: CGContext, at point: CGPoint) // 绘制
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) // 绘制
 }
 
 // ✅ 核心魔法：提供默认实现，让它变成“可选”的
@@ -69,8 +69,11 @@ class TextNode: FormulaRenderNode {
           self.size = CGSize(width: width, height: ascent + descent)
       }
 
-      func draw(in context: CGContext, at point: CGPoint) {
-          let attributes: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor.black]
+      func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
+          let attributes: [NSAttributedString.Key: Any] = [
+              .font: font,
+              .foregroundColor: foregroundColor
+          ]
           let attrString = NSAttributedString(string: text, attributes: attributes)
           let line = CTLineCreateWithAttributedString(attrString)
 
@@ -124,7 +127,7 @@ class HorizontalNode: FormulaRenderNode {
             // 但对于简单 parser，直接在 draw 里算也行
         }
         
-        func draw(in context: CGContext, at point: CGPoint) {
+        func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
             var currentX = point.x
             
             // 获取当前行的统一基线位置 (相对于 point.y 顶部)
@@ -137,7 +140,11 @@ class HorizontalNode: FormulaRenderNode {
                 let childY = point.y + (rowBaselineOffset - child.baselineOffset)
                 
                 // 递归绘制子节点
-                child.draw(in: context, at: CGPoint(x: currentX, y: childY))
+                child.draw(
+                    in: context,
+                    at: CGPoint(x: currentX, y: childY),
+                    foregroundColor: foregroundColor
+                )
                 
                 // 移动 X 游标
                 currentX += child.size.width
@@ -170,14 +177,14 @@ class FractionNode: FormulaRenderNode {
         self.size = CGSize(width: width, height: height)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         // 分子
         let numX = point.x + (size.width - numerator.size.width) / 2
-        numerator.draw(in: context, at: CGPoint(x: numX, y: point.y))
+        numerator.draw(in: context, at: CGPoint(x: numX, y: point.y), foregroundColor: foregroundColor)
         
         // 分数线
         let lineY = point.y + numerator.size.height + padding
-        context.setStrokeColor(UIColor.black.cgColor)
+        context.setStrokeColor(foregroundColor.cgColor)
         context.setLineWidth(1.2)
         context.move(to: CGPoint(x: point.x, y: lineY))
         context.addLine(to: CGPoint(x: point.x + size.width, y: lineY))
@@ -186,7 +193,7 @@ class FractionNode: FormulaRenderNode {
         // 分母
         let denX = point.x + (size.width - denominator.size.width) / 2
         let denY = lineY + 1 + padding
-        denominator.draw(in: context, at: CGPoint(x: denX, y: denY))
+        denominator.draw(in: context, at: CGPoint(x: denX, y: denY), foregroundColor: foregroundColor)
     }
 }
 
@@ -219,9 +226,9 @@ class ScriptNode: FormulaRenderNode {
         self.size = CGSize(width: width, height: height)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         let baseY = point.y + (size.height - base.size.height) / 2
-        base.draw(in: context, at: CGPoint(x: point.x, y: baseY))
+        base.draw(in: context, at: CGPoint(x: point.x, y: baseY), foregroundColor: foregroundColor)
         
         let scriptX = point.x + base.size.width
         var scriptY = baseY
@@ -230,7 +237,7 @@ class ScriptNode: FormulaRenderNode {
         } else {
             scriptY += base.size.height * 0.5  // 下移
         }
-        script.draw(in: context, at: CGPoint(x: scriptX, y: scriptY))
+        script.draw(in: context, at: CGPoint(x: scriptX, y: scriptY), foregroundColor: foregroundColor)
     }
 }
 
@@ -252,11 +259,11 @@ class SqrtNode: FormulaRenderNode {
         self.size = CGSize(width: inner.size.width + 12, height: inner.size.height + 6)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         let innerPos = CGPoint(x: point.x + 10, y: point.y + 6)
-        inner.draw(in: context, at: innerPos)
+        inner.draw(in: context, at: innerPos, foregroundColor: foregroundColor)
         
-        context.setStrokeColor(UIColor.black.cgColor)
+        context.setStrokeColor(foregroundColor.cgColor)
         context.setLineWidth(1.5)
         context.beginPath()
         context.move(to: CGPoint(x: point.x, y: point.y + size.height * 0.6))
@@ -323,7 +330,7 @@ class OperatorNode: FormulaRenderNode {
         self.size = CGSize(width: maxWidth + 4, height: totalHeight)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         let centerX = point.x + size.width / 2
         
         var currentY = point.y
@@ -331,7 +338,7 @@ class OperatorNode: FormulaRenderNode {
         // 1. 画上限 (Top)
         if let upper = upper {
             let upperX = centerX - upper.size.width / 2
-            upper.draw(in: context, at: CGPoint(x: upperX, y: currentY))
+            upper.draw(in: context, at: CGPoint(x: upperX, y: currentY), foregroundColor: foregroundColor)
             currentY += upper.size.height + 2
         } else {
             // 如果没有上限，留一点空或者直接画符号
@@ -342,13 +349,13 @@ class OperatorNode: FormulaRenderNode {
         let symNode = TextNode(text: symbol, font: font)
         let symX = centerX - symNode.size.width / 2
         // 微调：让符号垂直居中看起来舒服点
-        symNode.draw(in: context, at: CGPoint(x: symX, y: currentY))
+        symNode.draw(in: context, at: CGPoint(x: symX, y: currentY), foregroundColor: foregroundColor)
         currentY += symNode.size.height + 2
         
         // 3. 画下限 (Bottom)
         if let lower = lower {
             let lowerX = centerX - lower.size.width / 2
-            lower.draw(in: context, at: CGPoint(x: lowerX, y: currentY))
+            lower.draw(in: context, at: CGPoint(x: lowerX, y: currentY), foregroundColor: foregroundColor)
         }
     }
 }
@@ -376,17 +383,17 @@ class DelimiterNode: FormulaRenderNode {
         self.size = CGSize(width: inner.size.width + padding * 2, height: inner.size.height)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         // 1. 绘制内部内容 (居中)
         let innerX = point.x + 10
-        inner.draw(in: context, at: CGPoint(x: innerX, y: point.y))
+        inner.draw(in: context, at: CGPoint(x: innerX, y: point.y), foregroundColor: foregroundColor)
         
         // 2. 绘制括号
+        context.setStrokeColor(foregroundColor.cgColor)
         drawDelimiters(context: context, rect: CGRect(origin: point, size: size))
     }
     
     private func drawDelimiters(context: CGContext, rect: CGRect) {
-        context.setStrokeColor(UIColor.black.cgColor)
         context.setLineWidth(1.2) // 稍微细一点更精致
         context.beginPath()
         
@@ -463,7 +470,7 @@ class MatrixNode: FormulaRenderNode {
         self.size = CGSize(width: totalW + paddingX * 2, height: totalH)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         let paddingX: CGFloat = type == .plain ? 0 : 10.0
         var currentY = point.y
         
@@ -479,7 +486,7 @@ class MatrixNode: FormulaRenderNode {
                 let cellX = currentX + (colW - node.size.width) / 2
                 let cellY = currentY + (rowH - node.size.height) / 2
                 
-                node.draw(in: context, at: CGPoint(x: cellX, y: cellY))
+                node.draw(in: context, at: CGPoint(x: cellX, y: cellY), foregroundColor: foregroundColor)
                 
                 currentX += colW + hSpacing
             }
@@ -487,6 +494,7 @@ class MatrixNode: FormulaRenderNode {
         }
         
         // 2. 绘制定界符 (括号)
+        context.setStrokeColor(foregroundColor.cgColor)
         drawDelimiters(in: context, at: point)
     }
     
@@ -494,9 +502,7 @@ class MatrixNode: FormulaRenderNode {
         let w = size.width
         let h = size.height
         
-        // 1. 设置通用样式
-        // 建议使用 UIColor.label.cgColor 以支持深色模式，或者直接用 black
-        context.setStrokeColor(UIColor.black.cgColor)
+        // 1. 设置通用样式（颜色继承当前公式绘制上下文）
         context.setLineWidth(1.5)
         context.beginPath() // 开始路径绘制
 
@@ -589,9 +595,9 @@ class AccentNode: FormulaRenderNode {
         self.size = CGSize(width: base.size.width, height: base.size.height + 4)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         // 1. 先画底下的字母
-                base.draw(in: context, at: point)
+                base.draw(in: context, at: point, foregroundColor: foregroundColor)
                 
                 // 2. 准备画上面的符号
                 let accentSize = accentChar.size(withAttributes: [.font: font])
@@ -635,7 +641,7 @@ class AccentNode: FormulaRenderNode {
                 // 3. 绘制符号
                 (accentChar as NSString).draw(at: accentPoint, withAttributes: [
                     .font: font,
-                    .foregroundColor: UIColor.label // 记得用动态颜色
+                    .foregroundColor: foregroundColor
                 ])
     }
 }
@@ -649,7 +655,7 @@ class SpaceNode: FormulaRenderNode {
     
     func layout() {} // 也就是个占位符，不用计算
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         // 啥也不用画，留白即可
     }
 }
@@ -674,30 +680,8 @@ class ColorNode: FormulaRenderNode {
         self.size = child.size
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
-        context.saveGState()
-        
-        // 设置填充和描边颜色
-        context.setFillColor(color.cgColor)
-        context.setStrokeColor(color.cgColor)
-        
-        // 绘制子节点 (子节点内部的 TextNode 使用 CoreText 绘制时通常是黑色，
-        // 但我们可以通过修改 context 的全局颜色或者让 TextNode 支持颜色参数来解决。
-        // 为了简单，这里假设 TextNode 会读取当前 Context 颜色，或者我们需要修改 TextNode)
-        
-        // *重要修正*：CoreText 默认颜色是黑色，不会自动继承 CGContext 的 SetFillColor。
-        // 所以最完美的做法是给 MathRenderNode 协议增加 color 属性，递归传下去。
-        // 但为了不伤筋动骨，我们利用 Blend Mode 或者重写 child 的 draw。
-        // 这里为了演示，我们假设 TextNode 已经被修改为支持外部颜色，
-        // 或者我们在 TextNode.draw 里把 foregroundColor 设为 context.fillColor?
-        // 最简单的 hack: 让 ColorNode 直接管理颜色，TextNode 使用传入的颜色。
-        
-        // 暂时方案：只在这里 save，真正的颜色应用需要在 TextNode 里配合
-        // 见下文对 TextNode 的微小修改建议。
-        
-        child.draw(in: context, at: point)
-        
-        context.restoreGState()
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
+        child.draw(in: context, at: point, foregroundColor: color)
     }
 }
 
@@ -744,21 +728,21 @@ class EnclosureNode: FormulaRenderNode {
           }
       }
     
-    func draw(in context: CGContext, at point: CGPoint) {
-        context.setStrokeColor(UIColor.black.cgColor)
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
+        context.setStrokeColor(foregroundColor.cgColor)
         context.setLineWidth(1.0)
         
         switch type {
         case .overline:
             // 内容下移，上面画线
-            child.draw(in: context, at: CGPoint(x: point.x, y: point.y + 4))
+            child.draw(in: context, at: CGPoint(x: point.x, y: point.y + 4), foregroundColor: foregroundColor)
             context.move(to: CGPoint(x: point.x, y: point.y + 1))
             context.addLine(to: CGPoint(x: point.x + size.width, y: point.y + 1))
             context.strokePath()
             
         case .underline:
             // 内容正常，下面画线
-            child.draw(in: context, at: point)
+            child.draw(in: context, at: point, foregroundColor: foregroundColor)
             context.move(to: CGPoint(x: point.x, y: point.y + size.height - 1))
             context.addLine(to: CGPoint(x: point.x + size.width, y: point.y + size.height - 1))
             context.strokePath()
@@ -768,7 +752,7 @@ class EnclosureNode: FormulaRenderNode {
             let rect = CGRect(origin: point, size: size)
             context.stroke(rect)
             // 居中绘制内容
-            child.draw(in: context, at: CGPoint(x: point.x + 4, y: point.y + 4))
+            child.draw(in: context, at: CGPoint(x: point.x + 4, y: point.y + 4), foregroundColor: foregroundColor)
         }
     }
 }
@@ -793,24 +777,28 @@ class BinomNode: FormulaRenderNode {
         self.size = CGSize(width: contentWidth + 16, height: contentHeight)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         let centerX = point.x + size.width / 2
         
         // 1. 画分子
         let numX = centerX - numerator.size.width / 2
-        numerator.draw(in: context, at: CGPoint(x: numX, y: point.y + 2))
+        numerator.draw(in: context, at: CGPoint(x: numX, y: point.y + 2), foregroundColor: foregroundColor)
         
         // 2. 画分母
         let denX = centerX - denominator.size.width / 2
         // 分母在分子下面
-        denominator.draw(in: context, at: CGPoint(x: denX, y: point.y + numerator.size.height + 4))
+        denominator.draw(
+            in: context,
+            at: CGPoint(x: denX, y: point.y + numerator.size.height + 4),
+            foregroundColor: foregroundColor
+        )
         
         // 3. 画两边的圆括号
+        context.setStrokeColor(foregroundColor.cgColor)
         drawParens(context: context, rect: CGRect(origin: point, size: size))
     }
     
     private func drawParens(context: CGContext, rect: CGRect) {
-        context.setStrokeColor(UIColor.black.cgColor)
         context.setLineWidth(1.0)
         context.beginPath()
         
@@ -872,32 +860,32 @@ class ArrowNode: FormulaRenderNode {
         self.size = CGSize(width: arrowWidth, height: totalHeight)
     }
     
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
         let centerX = point.x + size.width / 2
         var currentY = point.y
         
         // 1. 画上标
         if let upper = upper {
             let upX = centerX - upper.size.width / 2
-            upper.draw(in: context, at: CGPoint(x: upX, y: currentY))
+            upper.draw(in: context, at: CGPoint(x: upX, y: currentY), foregroundColor: foregroundColor)
             currentY += upper.size.height + 2
         } else {
             currentY += 2
         }
         
         // 2. 画箭头 (在 currentY 的位置)
+        context.setStrokeColor(foregroundColor.cgColor)
         drawArrowLine(context: context, x: point.x, y: currentY + 4, w: size.width)
         
         // 3. 画下标
         if let lower = lower {
             let lowY = currentY + 10 // 箭头下方
             let lowX = centerX - lower.size.width / 2
-            lower.draw(in: context, at: CGPoint(x: lowX, y: lowY))
+            lower.draw(in: context, at: CGPoint(x: lowX, y: lowY), foregroundColor: foregroundColor)
         }
     }
     
     private func drawArrowLine(context: CGContext, x: CGFloat, y: CGFloat, w: CGFloat) {
-        context.setStrokeColor(UIColor.black.cgColor)
         context.setLineWidth(1.0)
         context.setLineCap(.round)
         context.setLineJoin(.round)
@@ -1027,9 +1015,9 @@ class BenzeneNode: FormulaRenderNode {
     
     // ✅ 4. 绘制 (协议要求)
     // ✅ 替换 BenzeneNode.swift 中的 draw 方法
-    func draw(in context: CGContext, at point: CGPoint) {
+    func draw(in context: CGContext, at point: CGPoint, foregroundColor: UIColor) {
             context.saveGState()
-            context.setStrokeColor(UIColor.black.cgColor)
+            context.setStrokeColor(foregroundColor.cgColor)
             context.setLineWidth(lineWidth)
             context.setLineCap(.round)
             context.setLineJoin(.round)
@@ -1075,16 +1063,34 @@ class BenzeneNode: FormulaRenderNode {
                     // TNT
                     let substituents: [Int: String] = [0: "CH3", 1: "NO2", 3: "NO2", 5: "NO2"]
                     for (idx, txt) in substituents {
-                        drawSubstituent(context: context, vertex: vertices[idx], text: txt, angleIndex: idx)
+                        drawSubstituent(
+                            context: context,
+                            vertex: vertices[idx],
+                            text: txt,
+                            angleIndex: idx,
+                            foregroundColor: foregroundColor
+                        )
                     }
                 }
                 else if content.contains("OH") {
                     // 苯酚
-                    drawSubstituent(context: context, vertex: vertices[0], text: "OH", angleIndex: 0)
+                    drawSubstituent(
+                        context: context,
+                        vertex: vertices[0],
+                        text: "OH",
+                        angleIndex: 0,
+                        foregroundColor: foregroundColor
+                    )
                 }
                 // ✅ 新增：甲苯 (Toluene)
                 else if content.contains("CH_3") || content.contains("CH3") {
-                    drawSubstituent(context: context, vertex: vertices[0], text: "CH3", angleIndex: 0)
+                    drawSubstituent(
+                        context: context,
+                        vertex: vertices[0],
+                        text: "CH3",
+                        angleIndex: 0,
+                        foregroundColor: foregroundColor
+                    )
                 }
             }
             
@@ -1114,7 +1120,13 @@ class BenzeneNode: FormulaRenderNode {
         }
 
     // Helper method: Draw Bond and Text at a specific vertex
-        private func drawSubstituent(context: CGContext, vertex: CGPoint, text: String, angleIndex: Int) {
+        private func drawSubstituent(
+            context: CGContext,
+            vertex: CGPoint,
+            text: String,
+            angleIndex: Int,
+            foregroundColor: UIColor
+        ) {
             
             // 1. Pre-process text (NO2 -> NO₂)
             let prettyText = formatChemicalFormula(text) as NSString
@@ -1124,7 +1136,7 @@ class BenzeneNode: FormulaRenderNode {
             let smallFont = self.font.withSize(self.font.pointSize * 0.65)
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: smallFont,
-                .foregroundColor: UIColor.black
+                .foregroundColor: foregroundColor
             ]
             let textSize = prettyText.size(withAttributes: attrs)
             

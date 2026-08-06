@@ -292,6 +292,9 @@ class MarkdownTableCollectionView: UIView, UICollectionViewDataSource, UICollect
     required init?(coder: NSCoder) { fatalError() }
     
     private func setupCollectionView() {
+        layer.applyMarkdownBlockAppearance(attachment.configuration.tableAppearance)
+        layer.masksToBounds = attachment.configuration.tableAppearance.cornerRadius > 0
+
         let layout = MarkdownTableLayout()
         layout.columnWidths = attachment.columnWidths
         layout.rowHeights = attachment.rowHeights

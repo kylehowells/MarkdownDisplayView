@@ -10,6 +10,20 @@ import MarkdownDisplayView
 
 class ViewController: UIViewController {
 
+    private lazy var themeGalleryButton: UIButton = {
+        let button = UIButton(type: .system)
+        var configuration = UIButton.Configuration.filled()
+        configuration.title = "Theme Gallery"
+        configuration.image = UIImage(systemName: "paintpalette")
+        configuration.imagePadding = 8
+        configuration.cornerStyle = .capsule
+        button.configuration = configuration
+        button.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        button.addTarget(self, action: #selector(openThemeGallery), for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        return button
+    }()
+
     private lazy var syncButton: UIButton = {
         let button = UIButton(type: .system)
         button.setTitle("Sync MarkdownView Demo", for: .normal)
@@ -57,6 +71,7 @@ class ViewController: UIViewController {
         titleLabel.text = "MarkdownDisplayKit Demo"
         titleLabel.backgroundColor = .systemBackground
         view.addSubview(titleLabel)
+        view.addSubview(themeGalleryButton)
         view.addSubview(syncButton)
         view.addSubview(tableViewButton)
         view.addSubview(crashReproButton)
@@ -66,8 +81,12 @@ class ViewController: UIViewController {
             titleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
             titleLabel.heightAnchor.constraint(equalToConstant: 44),
 
+            themeGalleryButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            themeGalleryButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -110),
+            themeGalleryButton.heightAnchor.constraint(equalToConstant: 46),
+
             syncButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            syncButton.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -60),
+            syncButton.topAnchor.constraint(equalTo: themeGalleryButton.bottomAnchor, constant: 20),
 
             tableViewButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             tableViewButton.topAnchor.constraint(equalTo: syncButton.bottomAnchor, constant: 20),
@@ -80,11 +99,41 @@ class ViewController: UIViewController {
 
         ])
 
-        if ProcessInfo.processInfo.arguments.contains("-AutoOpenSyncDemo") {
+        if ProcessInfo.processInfo.arguments.contains("-AutoOpenThemeGallery") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.openThemeGallery()
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("-AutoOpenSyncDemo") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.openSyncDemo()
             }
+        } else if ProcessInfo.processInfo.arguments.contains("-AutoOpenAIChat") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.openAIChatDemo()
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("-AutoOpenHistory") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.openCrashReproDemo()
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("-AutoOpenTableStreaming") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.openTableViewDemo()
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("-AutoOpenSmartShort") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.openSmartShortDemo()
+            }
+        } else if ProcessInfo.processInfo.arguments.contains("-AutoOpenSmartCell") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.openSmartCellDemo()
+            }
         }
+    }
+
+    @objc private func openThemeGallery() {
+        let vc = MarkdownThemeGalleryViewController()
+        vc.modalPresentationStyle = .fullScreen
+        present(vc, animated: true)
     }
 
     @objc private func openSyncDemo() {
@@ -111,5 +160,16 @@ class ViewController: UIViewController {
         self.present(vc, animated: true, completion: nil)
     }
 
-}
+    private func openSmartShortDemo() {
+        let vc = SmartStreamingShortViewController()
+        vc.modalPresentationStyle = .fullScreen
+        present(vc, animated: true)
+    }
 
+    private func openSmartCellDemo() {
+        let vc = SmartStreamingCellDemoViewController()
+        vc.modalPresentationStyle = .fullScreen
+        present(vc, animated: true)
+    }
+
+}

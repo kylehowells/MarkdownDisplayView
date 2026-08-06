@@ -15,6 +15,7 @@ enum ChatRole: String, Codable {
 }
 
 struct AIChatMessage: Codable {
+    let id: UUID
     let role: ChatRole
     var content: String
     var isPlaceholder: Bool = false
@@ -22,12 +23,14 @@ struct AIChatMessage: Codable {
     var attachments: [AIChatImageAttachment] = []
 
     init(
+        id: UUID = UUID(),
         role: ChatRole,
         content: String,
         isPlaceholder: Bool = false,
         isStreaming: Bool = false,
         attachments: [AIChatImageAttachment] = []
     ) {
+        self.id = id
         self.role = role
         self.content = content
         self.isPlaceholder = isPlaceholder
@@ -37,11 +40,54 @@ struct AIChatMessage: Codable {
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         role = try container.decode(ChatRole.self, forKey: .role)
         content = try container.decode(String.self, forKey: .content)
         isPlaceholder = try container.decodeIfPresent(Bool.self, forKey: .isPlaceholder) ?? false
         isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
         attachments = try container.decodeIfPresent([AIChatImageAttachment].self, forKey: .attachments) ?? []
+    }
+
+    var renderedMarkdown: String {
+        let attachmentSummary = attachments.isEmpty
+            ? ""
+            : "\n\n*已识别 \(attachments.count) 张图片中的文字*"
+        return content + attachmentSummary
+    }
+}
+
+private final class AIChatPreparedContentBox {
+    let markdown: String
+    let widthBucket: Int
+    let content: MarkdownPreparedContent
+
+    init(markdown: String, widthBucket: Int, content: MarkdownPreparedContent) {
+        self.markdown = markdown
+        self.widthBucket = widthBucket
+        self.content = content
+    }
+}
+
+private struct AIChatPreparationKey: Hashable {
+    let messageID: UUID
+    let markdown: String
+    let widthBucket: Int
+}
+
+private final class AIChatPreparationToken {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
     }
 }
 
@@ -475,6 +521,7 @@ private final class AIChatStreamSession: NSObject, URLSessionDataDelegate {
 final class AIChatViewController: UIViewController {
 
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let selectedTheme = MarkdownDemoThemeStore.selectedTheme
     private var messages: [AIChatMessage] = []
     private var isRequesting = false
     private var pendingAssistantIndex: Int?
@@ -489,6 +536,19 @@ final class AIChatViewController: UIViewController {
     private let conversationStore = AIChatConversationStore.shared
     private var currentConversation = AIChatConversation(title: "新对话")
     private var selectedHistoryConversationIDs = Set<UUID>()
+    private let preparedContentCache: NSCache<NSUUID, AIChatPreparedContentBox> = {
+        let cache = NSCache<NSUUID, AIChatPreparedContentBox>()
+        cache.countLimit = 100
+        cache.totalCostLimit = 32 * 1024 * 1024
+        return cache
+    }()
+    private let markdownPreparationQueue = DispatchQueue(
+        label: "com.markdown.aichat.prepare",
+        qos: .userInitiated
+    )
+    private var pendingPreparationKeys = Set<AIChatPreparationKey>()
+    private var pendingPreparationTokens: [AIChatPreparationKey: AIChatPreparationToken] = [:]
+    private var lastMarkdownWidthBucket: Int?
     private let ocrService = AIChatOCRService()
     private var selectedImages: [AIChatSelectedImage] = []
     /// 清空选图后自增，用于丢弃已在执行中的 OCR 回调
@@ -555,10 +615,14 @@ final class AIChatViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let selectedTheme {
+            overrideUserInterfaceStyle = selectedTheme.interfaceStyle
+        }
         view.backgroundColor = .systemBackground
         setupHeader()
         setupTableView()
         setupInputArea()
+        applySelectedTheme()
         loadConfig()
         loadConversationHistory()
         registerKeyboardNotifications()
@@ -566,9 +630,33 @@ final class AIChatViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        if config == nil {
+        if config == nil,
+           !ProcessInfo.processInfo.arguments.contains("-SuppressAIConfigAlert") {
             showConfigAlert()
         }
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+
+        let width = markdownContentWidth()
+        guard width > 1 else { return }
+        let widthBucket = Self.widthBucket(for: width)
+        guard lastMarkdownWidthBucket != widthBucket else { return }
+        let hadPreviousWidth = lastMarkdownWidthBucket != nil
+        cancelPendingMarkdownPreparation()
+        lastMarkdownWidthBucket = widthBucket
+        if hadPreviousWidth {
+            preparedContentCache.removeAllObjects()
+            prepareVisibleMarkdown(width: width)
+        }
+    }
+
+    override func didReceiveMemoryWarning() {
+        super.didReceiveMemoryWarning()
+        cancelPendingMarkdownPreparation()
+        preparedContentCache.removeAllObjects()
+        prepareVisibleMarkdown(width: markdownContentWidth())
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -579,6 +667,7 @@ final class AIChatViewController: UIViewController {
     }
 
     deinit {
+        pendingPreparationTokens.values.forEach { $0.cancel() }
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -611,6 +700,7 @@ final class AIChatViewController: UIViewController {
     private func setupTableView() {
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.prefetchDataSource = self
         tableView.separatorStyle = .none
         tableView.estimatedRowHeight = 140
         tableView.rowHeight = UITableView.automaticDimension
@@ -694,6 +784,26 @@ final class AIChatViewController: UIViewController {
         updateComposerState(animated: false)
     }
 
+    private func applySelectedTheme() {
+        guard let theme = selectedTheme else { return }
+
+        view.backgroundColor = theme.canvasColor
+        tableView.backgroundColor = theme.canvasColor
+        tableView.indicatorStyle = theme.interfaceStyle == .dark ? .white : .black
+        titleLabel.backgroundColor = theme.canvasColor
+        titleLabel.textColor = theme.primaryTextColor
+
+        [closeButton, stopButton, historyButton, imageButton, sendButton].forEach {
+            $0.tintColor = theme.accentColor
+        }
+
+        inputContainer.backgroundColor = theme.panelColor
+        inputTextView.backgroundColor = theme.blockColor
+        inputTextView.textColor = theme.primaryTextColor
+        inputTextView.tintColor = theme.accentColor
+        inputTextView.layer.borderColor = theme.borderColor.cgColor
+    }
+
     private func loadConversationHistory() {
         do {
             _ = try conversationStore.load()
@@ -742,6 +852,7 @@ final class AIChatViewController: UIViewController {
     }
 
     private func openConversation(_ conversation: AIChatConversation) {
+        cancelPendingMarkdownPreparation()
         currentConversation = conversation
         messages = conversation.messages.map {
             var message = $0
@@ -759,6 +870,7 @@ final class AIChatViewController: UIViewController {
     }
 
     private func startNewConversation() {
+        cancelPendingMarkdownPreparation()
         currentConversation = AIChatConversation(title: "新对话")
         messages = []
         pendingAssistantIndex = nil
@@ -768,6 +880,135 @@ final class AIChatViewController: UIViewController {
         tableView.reloadData()
         titleLabel.text = "AI 对话"
         updateHistoryButtonState()
+    }
+
+    private static func widthBucket(for width: CGFloat) -> Int {
+        Int(width.rounded())
+    }
+
+    private func markdownContentWidth() -> CGFloat {
+        let tableWidth = tableView.bounds.width > 0 ? tableView.bounds.width : view.bounds.width
+        return max(1, tableWidth * 0.78 - 36)
+    }
+
+    private func cachedPreparedContent(
+        for message: AIChatMessage,
+        width: CGFloat
+    ) -> MarkdownPreparedContent? {
+        let markdown = message.renderedMarkdown
+        let widthBucket = Self.widthBucket(for: width)
+        guard let cached = preparedContentCache.object(forKey: message.id as NSUUID),
+              cached.widthBucket == widthBucket,
+              cached.markdown == markdown else {
+            return nil
+        }
+        return cached.content
+    }
+
+    private func shouldPrepareMarkdown(for message: AIChatMessage) -> Bool {
+        !message.isStreaming
+            && !message.isPlaceholder
+            && message.renderedMarkdown.utf8.count >= 1_200
+    }
+
+    private func prepareVisibleMarkdown(width: CGFloat) {
+        guard width > 1 else { return }
+        for indexPath in tableView.indexPathsForVisibleRows ?? [] {
+            guard messages.indices.contains(indexPath.row) else { continue }
+            prepareMarkdownIfNeeded(for: messages[indexPath.row], width: width)
+        }
+    }
+
+    private func prepareMarkdownIfNeeded(
+        for message: AIChatMessage,
+        width: CGFloat
+    ) {
+        guard width > 1, shouldPrepareMarkdown(for: message) else { return }
+        guard cachedPreparedContent(for: message, width: width) == nil else { return }
+
+        let markdown = message.renderedMarkdown
+        let widthBucket = Self.widthBucket(for: width)
+        let key = AIChatPreparationKey(
+            messageID: message.id,
+            markdown: markdown,
+            widthBucket: widthBucket
+        )
+        guard pendingPreparationKeys.insert(key).inserted else { return }
+
+        let obsoleteKeys = pendingPreparationKeys.filter {
+            $0.messageID == message.id && $0 != key
+        }
+        for obsoleteKey in obsoleteKeys {
+            pendingPreparationTokens[obsoleteKey]?.cancel()
+            pendingPreparationTokens.removeValue(forKey: obsoleteKey)
+            pendingPreparationKeys.remove(obsoleteKey)
+        }
+
+        let token = AIChatPreparationToken()
+        pendingPreparationTokens[key] = token
+
+        let configuration = AIChatMessageCell.markdownConfiguration(theme: selectedTheme)
+        markdownPreparationQueue.async { [weak self] in
+            guard !token.isCancelled else { return }
+            let renderer = MarkdownRenderer(configuration: configuration, containerWidth: width)
+            let prepared = renderer.prepare(markdown)
+            guard !token.isCancelled else { return }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                guard self.pendingPreparationTokens[key] === token else { return }
+                self.pendingPreparationTokens.removeValue(forKey: key)
+                self.pendingPreparationKeys.remove(key)
+                guard Self.widthBucket(for: self.markdownContentWidth()) == widthBucket else { return }
+                guard let row = self.messages.firstIndex(where: { $0.id == message.id }),
+                      self.messages[row].renderedMarkdown == markdown,
+                      !self.messages[row].isStreaming else {
+                    return
+                }
+
+                self.preparedContentCache.setObject(
+                    AIChatPreparedContentBox(
+                        markdown: markdown,
+                        widthBucket: widthBucket,
+                        content: prepared
+                    ),
+                    forKey: message.id as NSUUID,
+                    cost: max(
+                        1,
+                        markdown.utf8.count * 4
+                            + prepared.elements.count * 512
+                            + prepared.imageAttachments.count * 64 * 1024
+                    )
+                )
+
+                let indexPath = IndexPath(row: row, section: 0)
+                guard let cell = self.tableView.cellForRow(at: indexPath) as? AIChatMessageCell,
+                      cell.representedMessageID == message.id else {
+                    return
+                }
+                cell.configure(
+                    with: self.messages[row],
+                    preparedContent: prepared,
+                    theme: self.selectedTheme
+                )
+                self.scheduleRowHeightUpdate(followStreaming: false)
+            }
+        }
+    }
+
+    private func cancelPendingMarkdownPreparation() {
+        pendingPreparationTokens.values.forEach { $0.cancel() }
+        pendingPreparationTokens.removeAll()
+        pendingPreparationKeys.removeAll()
+    }
+
+    private func cancelMarkdownPreparation(for messageIDs: Set<UUID>) {
+        let keys = pendingPreparationKeys.filter { messageIDs.contains($0.messageID) }
+        for key in keys {
+            pendingPreparationTokens[key]?.cancel()
+            pendingPreparationTokens.removeValue(forKey: key)
+            pendingPreparationKeys.remove(key)
+        }
     }
 
     private func persistCurrentConversation() {
@@ -790,7 +1031,13 @@ final class AIChatViewController: UIViewController {
     }
 
     private func updateHistoryButtonState() {
-        historyButton.tintColor = selectedHistoryConversationIDs.isEmpty ? .systemBlue : .systemOrange
+        if let selectedTheme {
+            historyButton.tintColor = selectedHistoryConversationIDs.isEmpty
+                ? selectedTheme.secondaryTextColor
+                : selectedTheme.accentColor
+        } else {
+            historyButton.tintColor = selectedHistoryConversationIDs.isEmpty ? .systemBlue : .systemOrange
+        }
         historyButton.accessibilityValue = selectedHistoryConversationIDs.isEmpty
             ? "未引用历史会话"
             : "已引用 \(selectedHistoryConversationIDs.count) 个历史会话"
@@ -1304,7 +1551,7 @@ final class AIChatViewController: UIViewController {
     }
 }
 
-extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
+extension AIChatViewController: UITableViewDataSource, UITableViewDelegate, UITableViewDataSourcePrefetching {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         messages.count
     }
@@ -1320,11 +1567,52 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
         cell.onHeightChange = { [weak self] in
             self?.scheduleRowHeightUpdate(followStreaming: message.isStreaming)
         }
-        cell.configure(with: message)
+        let preparedContent = cachedPreparedContent(
+            for: message,
+            width: markdownContentWidth()
+        )
+        let needsPreparation = preparedContent == nil && shouldPrepareMarkdown(for: message)
+        cell.configure(
+            with: message,
+            preparedContent: preparedContent,
+            showsPreparationPlaceholder: needsPreparation,
+            theme: selectedTheme
+        )
+        if needsPreparation {
+            prepareMarkdownIfNeeded(for: message, width: markdownContentWidth())
+        }
         if message.isStreaming {
             cell.startStreaming(withInitial: message.content)
         }
         return cell
+    }
+
+    func tableView(_ tableView: UITableView, prefetchRowsAt indexPaths: [IndexPath]) {
+        let width = markdownContentWidth()
+        guard width > 1 else { return }
+        for indexPath in indexPaths {
+            guard messages.indices.contains(indexPath.row) else { continue }
+            prepareMarkdownIfNeeded(for: messages[indexPath.row], width: width)
+        }
+    }
+
+    func tableView(_ tableView: UITableView, cancelPrefetchingForRowsAt indexPaths: [IndexPath]) {
+        let messageIDs = Set(indexPaths.compactMap { indexPath -> UUID? in
+            guard tableView.cellForRow(at: indexPath) == nil,
+                  messages.indices.contains(indexPath.row) else {
+                return nil
+            }
+            return messages[indexPath.row].id
+        })
+        cancelMarkdownPreparation(for: messageIDs)
+    }
+
+    func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        guard messages.indices.contains(indexPath.row),
+              tableView.indexPathsForVisibleRows?.contains(indexPath) != true else {
+            return
+        }
+        cancelMarkdownPreparation(for: [messages[indexPath.row].id])
     }
 
     /// 合并同一主循环的高度变化，避免从 MarkdownView.layoutSubviews 同步重入 TableView 布局。
@@ -1474,11 +1762,28 @@ final class AIChatMessageCell: UITableViewCell {
 
     private let bubbleView = UIView()
     private let markdownView = MarkdownViewTextKit()
+    private let preparationIndicator = UIActivityIndicatorView(style: .medium)
     private var alignConstraints: [NSLayoutConstraint] = []
+    private var appliedThemeRawValue: Int?
     private var hasStartedStreaming = false
     private let typewriterCharsPerStep = 1
 
+    static func markdownConfiguration(theme: MarkdownDemoTheme?) -> MarkdownConfiguration {
+        var configuration = theme?.makeConfiguration() ?? MarkdownConfiguration.default
+        configuration.typewriterTextMode = .append
+        configuration.typewriterHeightUpdateInterval = 20
+        configuration.streamMinModuleLength = 10
+        configuration.streamingHapticFeedbackStyle = .medium
+        configuration.latexAlignment = .left
+        if theme == nil {
+            configuration.latexBackgroundColor = .systemBlue.withAlphaComponent(0.1)
+        }
+        configuration.latexPadding = 16
+        return configuration
+    }
+
     var onHeightChange: (() -> Void)?
+    private(set) var representedMessageID: UUID?
 
     var isStreamingActive: Bool {
         hasStartedStreaming
@@ -1492,22 +1797,17 @@ final class AIChatMessageCell: UITableViewCell {
         bubbleView.layer.cornerRadius = 12
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(bubbleView)
-        var config = MarkdownConfiguration.default
-        
-        config.typewriterTextMode = .append
-        config.typewriterHeightUpdateInterval = 20
-        config.streamMinModuleLength = 10
-        config.streamingHapticFeedbackStyle = .medium
-        config.latexAlignment = .left                // 设置为居左对齐
-        config.latexBackgroundColor = .systemBlue.withAlphaComponent(0.1)  // 设置背景颜色
-        config.latexPadding = 16
-        markdownView.configuration = config
+        markdownView.configuration = Self.markdownConfiguration(theme: nil)
         markdownView.enableTypewriterEffect = false
         markdownView.translatesAutoresizingMaskIntoConstraints = false
         markdownView.onHeightChange = { [weak self] _ in
             self?.onHeightChange?()
         }
         bubbleView.addSubview(markdownView)
+
+        preparationIndicator.hidesWhenStopped = true
+        preparationIndicator.translatesAutoresizingMaskIntoConstraints = false
+        bubbleView.addSubview(preparationIndicator)
 
         let bottomConstraint = bubbleView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
         bottomConstraint.priority = .defaultHigh
@@ -1529,7 +1829,10 @@ final class AIChatMessageCell: UITableViewCell {
             markdownView.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 10),
             markdownView.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 10),
             markdownView.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -10),
-            markdownView.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -10)
+            markdownView.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -10),
+            bubbleView.heightAnchor.constraint(greaterThanOrEqualToConstant: 52),
+            preparationIndicator.centerXAnchor.constraint(equalTo: bubbleView.centerXAnchor),
+            preparationIndicator.centerYAnchor.constraint(equalTo: bubbleView.centerYAnchor)
         ])
     }
 
@@ -1540,20 +1843,46 @@ final class AIChatMessageCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         hasStartedStreaming = false
+        representedMessageID = nil
+        preparationIndicator.stopAnimating()
+        markdownView.isHidden = false
         onHeightChange = nil
         markdownView.resetForReuse()
     }
 
-    func configure(with message: AIChatMessage) {
+    func configure(
+        with message: AIChatMessage,
+        preparedContent: MarkdownPreparedContent? = nil,
+        showsPreparationPlaceholder: Bool = false,
+        theme: MarkdownDemoTheme? = nil
+    ) {
+        let isUser = message.role == .user
+        if let theme, appliedThemeRawValue != theme.rawValue {
+            markdownView.configuration = Self.markdownConfiguration(theme: theme)
+            appliedThemeRawValue = theme.rawValue
+        }
+        apply(theme: theme, isUser: isUser)
+        representedMessageID = message.id
         markdownView.enableTypewriterEffect = message.isStreaming
         if !message.isStreaming {
-            let attachmentSummary = message.attachments.isEmpty
-                ? ""
-                : "\n\n*已识别 \(message.attachments.count) 张图片中的文字*"
-            markdownView.markdown = message.content + attachmentSummary
+            if let preparedContent {
+                preparationIndicator.stopAnimating()
+                markdownView.isHidden = false
+                markdownView.setPreparedContent(preparedContent)
+            } else if showsPreparationPlaceholder {
+                markdownView.resetForReuse()
+                markdownView.isHidden = true
+                preparationIndicator.startAnimating()
+            } else {
+                preparationIndicator.stopAnimating()
+                markdownView.isHidden = false
+                markdownView.markdown = message.renderedMarkdown
+            }
+        } else {
+            preparationIndicator.stopAnimating()
+            markdownView.isHidden = false
         }
 
-        let isUser = message.role == .user
         if isUser {
             NSLayoutConstraint.deactivate([alignConstraints[0], alignConstraints[1]])
             NSLayoutConstraint.activate([alignConstraints[2], alignConstraints[3]])
@@ -1562,12 +1891,29 @@ final class AIChatMessageCell: UITableViewCell {
             NSLayoutConstraint.activate([alignConstraints[0], alignConstraints[1]])
         }
 
-        bubbleView.backgroundColor = isUser ? UIColor.systemGray5 : UIColor.systemGray6
         if isUser {
             bubbleView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMinXMaxYCorner]
         } else {
             bubbleView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMaxXMaxYCorner]
         }
+    }
+
+    private func apply(theme: MarkdownDemoTheme?, isUser: Bool) {
+        guard let theme else {
+            bubbleView.backgroundColor = isUser ? .systemGray5 : .systemGray6
+            bubbleView.layer.borderWidth = 0
+            return
+        }
+
+        backgroundColor = .clear
+        contentView.backgroundColor = .clear
+        markdownView.backgroundColor = .clear
+        bubbleView.backgroundColor = isUser
+            ? theme.accentColor.withAlphaComponent(theme.interfaceStyle == .dark ? 0.26 : 0.14)
+            : theme.panelColor
+        bubbleView.layer.borderWidth = 1
+        bubbleView.layer.borderColor = (isUser ? theme.accentColor : theme.borderColor).cgColor
+        preparationIndicator.color = theme.accentColor
     }
 
     func startStreaming(withInitial text: String) {

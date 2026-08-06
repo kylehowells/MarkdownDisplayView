@@ -135,7 +135,8 @@ extension MarkdownViewTextKit {
 
         let container = UIView()
         container.backgroundColor = configuration.blockquoteBackgroundColor
-        container.layer.cornerRadius = 4
+        container.layer.applyMarkdownBlockAppearance(configuration.blockquoteAppearance)
+        container.layer.masksToBounds = true
         container.translatesAutoresizingMaskIntoConstraints = false
         outerContainer.addSubview(container)
 
@@ -253,11 +254,13 @@ extension MarkdownViewTextKit {
         let buttonPadding = configuration.detailsContentPadding
         buttonConfig.contentInsets = NSDirectionalEdgeInsets(top: buttonPadding * 0.8, leading: buttonPadding, bottom: buttonPadding * 0.8, trailing: buttonPadding)
         buttonConfig.background.backgroundColor = configuration.codeBackgroundColor.withAlphaComponent(0.3)
-        buttonConfig.background.cornerRadius = 6
+        buttonConfig.background.cornerRadius = max(0, configuration.detailsAppearance.cornerRadius)
         buttonConfig.baseForegroundColor = configuration.detailsSummaryTextColor
         buttonConfig.titleAlignment = .leading
 
         summaryButton.configuration = buttonConfig
+        summaryButton.layer.applyMarkdownBlockAppearance(configuration.detailsAppearance)
+        summaryButton.layer.masksToBounds = true
         summaryButton.titleLabel?.font = configuration.detailsSummaryFont
         summaryButton.contentHorizontalAlignment = .left
         summaryButton.isUserInteractionEnabled = true  // 确保可点击
@@ -277,7 +280,7 @@ extension MarkdownViewTextKit {
         contentWrapper.isHidden = true
         contentWrapper.translatesAutoresizingMaskIntoConstraints = false
         contentWrapper.backgroundColor = configuration.codeBackgroundColor
-        contentWrapper.layer.cornerRadius = 6
+        contentWrapper.layer.applyMarkdownBlockAppearance(configuration.detailsAppearance)
         contentWrapper.layer.masksToBounds = true
         container.addArrangedSubview(contentWrapper)
 
@@ -507,7 +510,7 @@ extension MarkdownViewTextKit {
             var availableWidth = currentWidth
             if let superview = textView.superview {
                 // CodeBlock container
-                if superview.layer.cornerRadius == 8 {
+                if superview.accessibilityIdentifier == "CodeBlockContainer" {
                     availableWidth = max(0, currentWidth - 24)
                 } 
                 // Quote container

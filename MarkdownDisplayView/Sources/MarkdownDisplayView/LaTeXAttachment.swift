@@ -26,6 +26,12 @@ public final class LaTeXAttachment: NSTextAttachment {
     /// 背景颜色
     let backgroundColor: UIColor
 
+    /// 公式的默认前景色
+    let textColor: UIColor
+
+    /// 圆角与边框外观，不参与公式测量。
+    let appearance: MarkdownBlockAppearance
+
     /// 测量和绘制全链路共享的唯一渲染结果。
     let renderResult: LatexRenderResult
 
@@ -44,7 +50,9 @@ public final class LaTeXAttachment: NSTextAttachment {
         fontSize: CGFloat = 22,
         maxWidth: CGFloat,
         padding: CGFloat = 20,
-        backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5)
+        backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5),
+        textColor: UIColor = .label,
+        appearance: MarkdownBlockAppearance = MarkdownBlockAppearance(cornerRadius: 8)
     ) {
         let calcStart = CFAbsoluteTimeGetCurrent()
         let renderResult = LatexRenderResult.parse(
@@ -60,6 +68,8 @@ public final class LaTeXAttachment: NSTextAttachment {
             maxWidth: maxWidth,
             padding: padding,
             backgroundColor: backgroundColor,
+            textColor: textColor,
+            appearance: appearance,
             renderResult: renderResult
         )
     }
@@ -70,6 +80,8 @@ public final class LaTeXAttachment: NSTextAttachment {
         maxWidth: CGFloat,
         padding: CGFloat,
         backgroundColor: UIColor,
+        textColor: UIColor = .label,
+        appearance: MarkdownBlockAppearance = MarkdownBlockAppearance(cornerRadius: 8),
         renderResult: LatexRenderResult
     ) {
         let initStart = CFAbsoluteTimeGetCurrent()
@@ -80,6 +92,8 @@ public final class LaTeXAttachment: NSTextAttachment {
         self.maxWidth = maxWidth
         self.padding = padding
         self.backgroundColor = backgroundColor
+        self.textColor = textColor
+        self.appearance = appearance
         self.renderResult = renderResult
 
         super.init(data: nil, ofType: nil)
@@ -173,7 +187,9 @@ public final class LaTeXAttachmentViewProvider: NSTextAttachmentViewProvider {
         let viewStart = CFAbsoluteTimeGetCurrent()
         let (formulaView, _) = LatexMathView.createScrollableView(
             renderResult: attachment.renderResult,
-            backgroundColor: attachment.backgroundColor
+            backgroundColor: attachment.backgroundColor,
+            textColor: attachment.textColor,
+            appearance: attachment.appearance
         )
         mdLog("[STREAM] 📐📐📐 loadView 视图创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - viewStart) * 1000))ms")
 

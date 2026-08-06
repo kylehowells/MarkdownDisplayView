@@ -108,6 +108,9 @@ class LatexMathView: UIView {
 
     private var parsedFormula: ParsedFormula?
 
+    /// 公式节点未显式指定颜色时使用的前景色。
+    private(set) var formulaTextColor: UIColor = .label
+
     /// 供附件渲染链验证是否复用了同一次解析结果。
     var renderedFormula: ParsedFormula? { parsedFormula }
 
@@ -118,8 +121,9 @@ class LatexMathView: UIView {
         FontLoader.ensureFontsRegistered()
     }
 
-    convenience init(parsedFormula: ParsedFormula) {
+    convenience init(parsedFormula: ParsedFormula, textColor: UIColor = .label) {
         self.init(frame: .zero)
+        formulaTextColor = textColor
         apply(parsedFormula)
     }
 
@@ -146,6 +150,8 @@ class LatexMathView: UIView {
     
     override func draw(_ rect: CGRect) {
         guard let context = UIGraphicsGetCurrentContext(), let root = parsedFormula?.rootNode else { return }
+
+        let resolvedTextColor = formulaTextColor.resolvedColor(with: traitCollection)
         
         // 居中绘制
         let startX = (rect.width - root.size.width) / 2
@@ -154,7 +160,11 @@ class LatexMathView: UIView {
         // 翻转坐标系 (如果需要的话，但这里我们尽量使用了 UIKit 坐标)
         // 我们的 Node 实现是基于左上角(Upper-Left)的逻辑，配合 UIKit
         
-        root.draw(in: context, at: CGPoint(x: startX, y: startY))
+        root.draw(
+            in: context,
+            at: CGPoint(x: startX, y: startY),
+            foregroundColor: resolvedTextColor
+        )
     }
     
     override var intrinsicContentSize: CGSize {
@@ -178,7 +188,9 @@ extension LatexMathView {
           fontSize: CGFloat = 22,
           maxWidth: CGFloat,
           padding: CGFloat = 20,
-          backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5)
+          backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5),
+          textColor: UIColor = .label,
+          appearance: MarkdownBlockAppearance = MarkdownBlockAppearance(cornerRadius: 8)
       ) -> (view: UIView, contentSize: CGSize) {
           let renderResult = LatexRenderResult.parse(
               latex: latex,
@@ -188,24 +200,26 @@ extension LatexMathView {
           )
           return createScrollableView(
               renderResult: renderResult,
-              backgroundColor: backgroundColor
+              backgroundColor: backgroundColor,
+              textColor: textColor,
+              appearance: appearance
           )
       }
 
       /// 使用已经解析好的结果创建视图，测量与绘制不会再次解析公式。
       static func createScrollableView(
           renderResult: LatexRenderResult,
-          backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5)
+          backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5),
+          textColor: UIColor = .label,
+          appearance: MarkdownBlockAppearance = MarkdownBlockAppearance(cornerRadius: 8)
       ) -> (view: UIView, contentSize: CGSize) {
           let totalStart = CFAbsoluteTimeGetCurrent()
           mdLog("[STREAM] 📐📐 createScrollableView 开始: \(renderResult.formula.latex.prefix(40))...")
 
           // 1. MathView 直接使用附件解析结果，不再解析。
           let mathViewStart = CFAbsoluteTimeGetCurrent()
-          let mathView = LatexMathView(parsedFormula: renderResult.formula)
+          let mathView = LatexMathView(parsedFormula: renderResult.formula, textColor: textColor)
           mathView.backgroundColor = backgroundColor
-          mathView.layer.cornerRadius = 8
-          mathView.layer.masksToBounds = true
           mdLog("[STREAM] 📐📐 LatexMathView 实例化耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - mathViewStart) * 1000))ms")
 
           // 2. 计算尺寸
@@ -221,6 +235,8 @@ extension LatexMathView {
           if contentWidth <= renderResult.maxWidth {
               // 不需要滚动，直接返回 mathView
               mathView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
+              mathView.layer.applyMarkdownBlockAppearance(appearance)
+              mathView.layer.masksToBounds = true
               mdLog("[STREAM] 📐📐 createScrollableView 完成(无滚动)，总耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - totalStart) * 1000))ms")
               return (mathView, contentSize)
           } else {
@@ -229,7 +245,9 @@ extension LatexMathView {
               scrollView.contentSize = contentSize
               scrollView.showsHorizontalScrollIndicator = false
               scrollView.alwaysBounceHorizontal = false
-              scrollView.backgroundColor = .clear
+              scrollView.backgroundColor = backgroundColor
+              scrollView.layer.applyMarkdownBlockAppearance(appearance)
+              scrollView.layer.masksToBounds = true
 
               mathView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
               scrollView.addSubview(mathView)

@@ -491,7 +491,9 @@ extension MarkdownViewTextKit {
             fontSize: configuration.latexFontSize,
             maxWidth: width - configuration.latexPadding * 2,  // 留出容器padding
             padding: configuration.latexPadding,
-            backgroundColor: configuration.latexBackgroundColor
+            backgroundColor: configuration.latexBackgroundColor,
+            textColor: configuration.latexTextColor,
+            appearance: configuration.latexAppearance
         )
         mdLog("[STREAM] 📐 LaTeXAttachment 创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - attachmentStart) * 1000))ms")
 
@@ -559,7 +561,9 @@ extension MarkdownViewTextKit {
             let fallbackStart = CFAbsoluteTimeGetCurrent()
             let created = LatexMathView.createScrollableView(
                 renderResult: attachment.renderResult,
-                backgroundColor: configuration.latexBackgroundColor
+                backgroundColor: configuration.latexBackgroundColor,
+                textColor: configuration.latexTextColor,
+                appearance: configuration.latexAppearance
             )
             formulaView = created.view
             mdLog("[STREAM] 📐 回退创建耗时: \(String(format: "%.1f", (CFAbsoluteTimeGetCurrent() - fallbackStart) * 1000))ms")
@@ -609,7 +613,7 @@ extension MarkdownViewTextKit {
         imageView.clipsToBounds = true
         imageView.translatesAutoresizingMaskIntoConstraints = false
         imageView.isUserInteractionEnabled = true
-        imageView.layer.cornerRadius = 8
+        imageView.layer.applyMarkdownBlockAppearance(configuration.imageAppearance)
         container.addSubview(imageView)
         
         // 点击手势
@@ -700,7 +704,10 @@ extension MarkdownViewTextKit {
         return renderer.image { _ in
             configuration.imagePlaceholderColor.setFill()
             let rect = CGRect(origin: .zero, size: size)
-            UIBezierPath(roundedRect: rect, cornerRadius: 8).fill()
+            UIBezierPath(
+                roundedRect: rect,
+                cornerRadius: max(0, configuration.imageAppearance.cornerRadius)
+            ).fill()
             
             let iconSize: CGFloat = 40
             let iconRect = CGRect(
@@ -773,7 +780,7 @@ extension MarkdownViewTextKit {
     func createCodeBlockView(with attributedString: NSAttributedString, width: CGFloat, fixedHeight: CGFloat? = nil) -> UIView {
         let container = UIView()
         container.backgroundColor = configuration.codeBackgroundColor
-        container.layer.cornerRadius = 8
+        container.layer.applyMarkdownBlockAppearance(configuration.codeBlockAppearance)
         container.layer.masksToBounds = true
         container.translatesAutoresizingMaskIntoConstraints = false
         // [CODEBLOCK_DEBUG] 添加标识符，便于调试

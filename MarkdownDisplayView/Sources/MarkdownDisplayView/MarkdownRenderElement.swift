@@ -188,6 +188,35 @@ public struct MarkdownLineSpacingConfiguration: Sendable {
     }
 }
 
+// MARK: - Block Appearance Configuration
+
+/// 不参与布局测量的块级元素外观配置。
+///
+/// 圆角和边框均通过 `CALayer` 绘制，不会改变元素的约束、内边距或 attachment bounds。
+public struct MarkdownBlockAppearance: Sendable {
+    public var cornerRadius: CGFloat
+    public var borderWidth: CGFloat
+    public var borderColor: UIColor
+
+    public init(
+        cornerRadius: CGFloat = 0,
+        borderWidth: CGFloat = 0,
+        borderColor: UIColor = .clear
+    ) {
+        self.cornerRadius = cornerRadius
+        self.borderWidth = borderWidth
+        self.borderColor = borderColor
+    }
+}
+
+extension CALayer {
+    func applyMarkdownBlockAppearance(_ appearance: MarkdownBlockAppearance) {
+        cornerRadius = max(0, appearance.cornerRadius)
+        borderWidth = max(0, appearance.borderWidth)
+        borderColor = appearance.borderColor.cgColor
+    }
+}
+
 // MARK: - MarkdownConfiguration
 public struct MarkdownConfiguration: Sendable {
     
@@ -235,9 +264,18 @@ public struct MarkdownConfiguration: Sendable {
     public var paragraphTopSpacing: CGFloat     // 普通段落上方间距
     public var paragraphBottomSpacing: CGFloat = 5 // 普通段落下方间距
 
+    // MARK: - 块级元素外观（不参与高度计算）
+    public var codeBlockAppearance = MarkdownBlockAppearance(cornerRadius: 8)
+    public var blockquoteAppearance = MarkdownBlockAppearance(cornerRadius: 4)
+    public var tableAppearance = MarkdownBlockAppearance()
+    public var imageAppearance = MarkdownBlockAppearance(cornerRadius: 8)
+    public var latexAppearance = MarkdownBlockAppearance(cornerRadius: 8)
+    public var detailsAppearance = MarkdownBlockAppearance(cornerRadius: 6)
+
     // MARK: - LaTeX 公式配置
     public var latexFontSize: CGFloat = 22      // LaTeX 公式字号
     public var latexAlignment: NSTextAlignment = .center  // LaTeX 公式对齐方式（居中/居左/居右）
+    public var latexTextColor: UIColor = .label // LaTeX 公式默认前景色（\color 指定的局部颜色优先）
     public var latexBackgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5)  // LaTeX 公式背景颜色
     public var latexPadding: CGFloat = 20       // LaTeX 公式内边距
 
@@ -363,6 +401,7 @@ public struct MarkdownConfiguration: Sendable {
         config.tableHeaderBackgroundColor = UIColor(white: 0.2, alpha: 1)
         config.tableAlternateRowBackgroundColor = UIColor(white: 0.15, alpha: 0.5)
         config.imagePlaceholderColor = UIColor(white: 0.2, alpha: 1)
+        config.latexTextColor = .white
         config.latexBackgroundColor = UIColor(white: 0.15, alpha: 0.5)
         config.syntaxColors = .xcodeDark
         return config

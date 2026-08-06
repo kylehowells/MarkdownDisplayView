@@ -9,6 +9,67 @@ import UIKit
     #expect(configuration.listBottomPadding == 0)
 }
 
+@Test func blockAppearanceDefaultsPreserveExistingCornerRadii() async throws {
+    let configuration = MarkdownConfiguration.default
+
+    #expect(configuration.codeBlockAppearance.cornerRadius == 8)
+    #expect(configuration.blockquoteAppearance.cornerRadius == 4)
+    #expect(configuration.tableAppearance.cornerRadius == 0)
+    #expect(configuration.imageAppearance.cornerRadius == 8)
+    #expect(configuration.latexAppearance.cornerRadius == 8)
+    #expect(configuration.detailsAppearance.cornerRadius == 6)
+
+    #expect(configuration.codeBlockAppearance.borderWidth == 0)
+    #expect(configuration.blockquoteAppearance.borderWidth == 0)
+    #expect(configuration.tableAppearance.borderWidth == 0)
+    #expect(configuration.imageAppearance.borderWidth == 0)
+    #expect(configuration.latexAppearance.borderWidth == 0)
+    #expect(configuration.detailsAppearance.borderWidth == 0)
+}
+
+@Test func latexTextColorHasAdaptiveDefaults() async throws {
+    #expect(MarkdownConfiguration.default.latexTextColor.isEqual(UIColor.label))
+    #expect(MarkdownConfiguration.dark.latexTextColor.isEqual(UIColor.white))
+}
+
+@MainActor
+@Test func customBlockAppearanceAppliesWithoutChangingViewConstraints() async throws {
+    var configuration = MarkdownConfiguration.default
+    let borderColor = UIColor(red: 0.22, green: 0.18, blue: 0.72, alpha: 1)
+    configuration.codeBlockAppearance = MarkdownBlockAppearance(
+        cornerRadius: 14,
+        borderWidth: 2,
+        borderColor: borderColor
+    )
+    configuration.blockquoteAppearance = MarkdownBlockAppearance(
+        cornerRadius: 10,
+        borderWidth: 1,
+        borderColor: borderColor
+    )
+
+    let markdownView = MarkdownViewTextKit()
+    markdownView.configuration = configuration
+
+    let codeBlock = markdownView.createCodeBlockView(
+        with: NSAttributedString(string: "let value = 1"),
+        width: 320
+    )
+    #expect(codeBlock.layer.cornerRadius == 14)
+    #expect(codeBlock.layer.borderWidth == 2)
+    #expect(UIColor(cgColor: try #require(codeBlock.layer.borderColor)).isEqual(borderColor))
+
+    let quote = markdownView.createQuoteView(children: [], width: 320)
+    let quoteContainer = try #require(quote.subviews.first)
+    #expect(quoteContainer.layer.cornerRadius == 10)
+    #expect(quoteContainer.layer.borderWidth == 1)
+    #expect(UIColor(cgColor: try #require(quoteContainer.layer.borderColor)).isEqual(borderColor))
+
+    let widthConstraint = codeBlock.constraints.first {
+        $0.firstAttribute == .width && $0.relation == .equal
+    }
+    #expect(widthConstraint?.constant == 320)
+}
+
 @available(iOS 15.0, *)
 @Test func imageViewNormalizesImageURLsBeforeLoading() async throws {
     let httpURL = try #require(ImageView.normalizedImageURL(from: "http://example.com/photo.png"))

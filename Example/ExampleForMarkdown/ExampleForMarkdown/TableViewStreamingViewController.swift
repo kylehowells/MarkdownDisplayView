@@ -84,6 +84,10 @@ class TypingIndicatorView: UIView {
     func stopAnimating() {
         dots.forEach { $0.layer.removeAllAnimations() }
     }
+
+    func apply(color: UIColor) {
+        dots.forEach { $0.backgroundColor = color }
+    }
 }
 
 
@@ -93,6 +97,7 @@ class ChatMarkdownCell: UITableViewCell {
     private let markdownView = MarkdownViewTextKit()
     private let typingIndicator = TypingIndicatorView() // 确保你有这个类
     private let bgView = UIView()
+    private var appliedThemeRawValue: Int?
     // 新增：记录上一次通知的高度，防止重复通知
     private var lastReportedHeight: CGFloat = 0
 
@@ -244,13 +249,24 @@ class ChatMarkdownCell: UITableViewCell {
     }
     
     // MARK: - Configuration (修复核心)
-    func configure(with message: ChatMessage) {
+    func configure(with message: ChatMessage, theme: MarkdownDemoTheme?) {
 
         // 1. 设置左右对齐颜色
         // ⭐️ 修复：只在颜色需要改变时才设置，避免触发 scheduleRerender
-        let targetColor: UIColor = message.isUser ? .white : .label
-        if markdownView.configuration.textColor != targetColor {
-            markdownView.configuration.textColor = targetColor
+        if let theme {
+            if appliedThemeRawValue != theme.rawValue {
+                markdownView.configuration = theme.makeConfiguration()
+                appliedThemeRawValue = theme.rawValue
+            }
+            bgView.layer.borderWidth = 1
+            bgView.layer.borderColor = (message.isUser ? theme.accentColor : theme.borderColor).cgColor
+            typingIndicator.apply(color: theme.accentColor)
+        } else {
+            let targetColor: UIColor = message.isUser ? .white : .label
+            if markdownView.configuration.textColor != targetColor {
+                markdownView.configuration.textColor = targetColor
+            }
+            bgView.layer.borderWidth = 0
         }
 
         if message.isUser {
@@ -259,14 +275,17 @@ class ChatMarkdownCell: UITableViewCell {
             alignConstraints[1].isActive = false  // AI width
             alignConstraints[2].isActive = true   // User trailing
             alignConstraints[3].isActive = true   // User width
-            bgView.backgroundColor = .systemBlue
+            bgView.backgroundColor = theme.map {
+                $0.accentColor.withAlphaComponent($0.interfaceStyle == .dark ? 0.26 : 0.14)
+            } ?? .systemBlue
         } else {
             // AI 消息：左对齐 + 固定宽度
             alignConstraints[0].isActive = true   // AI leading
             alignConstraints[1].isActive = true   // AI width
             alignConstraints[2].isActive = false  // User trailing
             alignConstraints[3].isActive = false  // User width
-            bgView.backgroundColor = UIColor(red: 242/255, green: 242/255, blue: 247/255, alpha: 1) // 系统灰
+            bgView.backgroundColor = theme?.panelColor
+                ?? UIColor(red: 242/255, green: 242/255, blue: 247/255, alpha: 1) // 系统灰
         }
 
         // 2. 彻底解决冲突：二选一激活约束
@@ -376,6 +395,7 @@ class ChatMarkdownCell: UITableViewCell {
 class TableViewStreamingViewController: UIViewController {
 
     private let tableView = UITableView()
+    private let selectedTheme = MarkdownDemoThemeStore.selectedTheme
     private let inputContainer = UIView() // 模拟底部输入框区域
     private var messages: [ChatMessage] = []
 
@@ -388,9 +408,13 @@ class TableViewStreamingViewController: UIViewController {
     
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let selectedTheme {
+            overrideUserInterfaceStyle = selectedTheme.interfaceStyle
+        }
         view.backgroundColor = .systemBackground
         setupTableView()
         setupInputArea()
+        applySelectedTheme()
         
         // 初始欢迎语
         messages.append(ChatMessage(content: "你好！请点击下方按钮开始测试。", isUser: false))
@@ -419,6 +443,7 @@ class TableViewStreamingViewController: UIViewController {
         closeButton.setTitle("Close", for: .normal)
         closeButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
         closeButton.addTarget(self, action: #selector(dismissSelf), for: .touchUpInside)
+        closeButton.tintColor = selectedTheme?.accentColor ?? .systemBlue
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(closeButton)
 
@@ -427,6 +452,7 @@ class TableViewStreamingViewController: UIViewController {
         stopButton.setTitle("Stop", for: .normal)
         stopButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
         stopButton.addTarget(self, action: #selector(stopStreaming), for: .touchUpInside)
+        stopButton.tintColor = selectedTheme?.accentColor ?? .systemBlue
         stopButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(stopButton)
         NSLayoutConstraint.activate([
@@ -465,8 +491,8 @@ class TableViewStreamingViewController: UIViewController {
         // ⭐️ 新增：智能流式按钮（使用 SmartBuffer 自动检测模块）
         let smartStreamButton = UIButton(type: .system)
         smartStreamButton.setTitle("智能流式", for: .normal)
-        smartStreamButton.backgroundColor = .systemOrange
-        smartStreamButton.setTitleColor(.white, for: .normal)
+        smartStreamButton.backgroundColor = selectedTheme?.accentColor ?? .systemOrange
+        smartStreamButton.setTitleColor(selectedTheme?.canvasColor ?? .white, for: .normal)
         smartStreamButton.layer.cornerRadius = 20
         smartStreamButton.addTarget(self, action: #selector(handleSmartStreamSend), for: .touchUpInside)
 
@@ -480,6 +506,14 @@ class TableViewStreamingViewController: UIViewController {
             smartStreamButton.widthAnchor.constraint(equalToConstant: 80),
             smartStreamButton.heightAnchor.constraint(equalToConstant: 44)
         ])
+    }
+
+    private func applySelectedTheme() {
+        guard let theme = selectedTheme else { return }
+        view.backgroundColor = theme.canvasColor
+        tableView.backgroundColor = theme.canvasColor
+        tableView.indicatorStyle = theme.interfaceStyle == .dark ? .white : .black
+        inputContainer.backgroundColor = theme.panelColor
     }
     
     /// 当前智能流式的 Cell
@@ -791,7 +825,7 @@ extension TableViewStreamingViewController: UITableViewDataSource, UITableViewDe
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "ChatCell", for: indexPath) as! ChatMarkdownCell
         let msg = messages[indexPath.row]
-        cell.configure(with: msg)
+        cell.configure(with: msg, theme: selectedTheme)
 
         // ⭐️ 设置用户交互回调：当用户点击目录、链接等元素时，停止自动滚动
         cell.onUserInteraction = { [weak self] in

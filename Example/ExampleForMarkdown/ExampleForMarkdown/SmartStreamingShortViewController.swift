@@ -11,6 +11,7 @@ import MarkdownDisplayView
 final class SmartStreamingShortViewController: UIViewController {
 
     private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
+    private let selectedTheme = MarkdownDemoThemeStore.selectedTheme
     private var streamTimer: Timer?
     private var hasStarted = false
     private var currentChunkIndex = 0
@@ -79,8 +80,12 @@ final class SmartStreamingShortViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let selectedTheme {
+            overrideUserInterfaceStyle = selectedTheme.interfaceStyle
+        }
         view.backgroundColor = .systemBackground
         setupUI()
+        applySelectedTheme()
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -118,6 +123,18 @@ final class SmartStreamingShortViewController: UIViewController {
             scrollableMarkdownView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollableMarkdownView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    private func applySelectedTheme() {
+        guard let theme = selectedTheme else { return }
+        view.backgroundColor = theme.canvasColor
+        titleLabel.backgroundColor = theme.canvasColor
+        titleLabel.textColor = theme.primaryTextColor
+        closeButton.tintColor = theme.accentColor
+        scrollableMarkdownView.backgroundColor = theme.panelColor
+        scrollableMarkdownView.markdownView.backgroundColor = theme.panelColor
+        scrollableMarkdownView.configuration = theme.makeConfiguration()
+        scrollableMarkdownView.indicatorStyle = theme.interfaceStyle == .dark ? .white : .black
     }
 
     private func startStreamingIfNeeded() {

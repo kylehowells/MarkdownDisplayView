@@ -11,6 +11,7 @@ import MarkdownDisplayView
 final class SmartStreamingCellDemoViewController: UIViewController {
 
     private let tableView = UITableView(frame: .zero, style: .plain)
+    private let selectedTheme = MarkdownDemoThemeStore.selectedTheme
     private var isHeightUpdateScheduled = false
 
     private let demoChunks: [String] = [
@@ -41,9 +42,13 @@ final class SmartStreamingCellDemoViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let selectedTheme {
+            overrideUserInterfaceStyle = selectedTheme.interfaceStyle
+        }
         view.backgroundColor = .systemBackground
         setupTableView()
         setupUI()
+        applySelectedTheme()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -80,6 +85,16 @@ final class SmartStreamingCellDemoViewController: UIViewController {
             tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
+    }
+
+    private func applySelectedTheme() {
+        guard let theme = selectedTheme else { return }
+        view.backgroundColor = theme.canvasColor
+        titleLabel.backgroundColor = theme.canvasColor
+        titleLabel.textColor = theme.primaryTextColor
+        closeButton.tintColor = theme.accentColor
+        tableView.backgroundColor = theme.canvasColor
+        tableView.indicatorStyle = theme.interfaceStyle == .dark ? .white : .black
     }
 
     private func scheduleHeightUpdate() {
@@ -120,7 +135,7 @@ extension SmartStreamingCellDemoViewController: UITableViewDataSource, UITableVi
         ) as? SmartStreamingDemoCell else {
             return UITableViewCell(style: .default, reuseIdentifier: "fallback")
         }
-        cell.configure(chunks: demoChunks)
+        cell.configure(chunks: demoChunks, theme: selectedTheme)
         cell.onContentHeightChange = { [weak self] in
             self?.scheduleHeightUpdate()
         }
@@ -137,6 +152,7 @@ final class SmartStreamingDemoCell: UITableViewCell {
     private var hasStarted = false
     private var currentChunkIndex = 0
     private var streamChunks: [String] = []
+    private var appliedThemeRawValue: Int?
 
     var onContentHeightChange: (() -> Void)?
 
@@ -192,8 +208,22 @@ final class SmartStreamingDemoCell: UITableViewCell {
         onContentHeightChange = nil
     }
 
-    func configure(chunks: [String]) {
+    func configure(chunks: [String], theme: MarkdownDemoTheme?) {
         streamChunks = chunks
+        guard let theme else { return }
+
+        backgroundColor = .clear
+        contentView.backgroundColor = theme.canvasColor
+        markdownView.backgroundColor = theme.panelColor
+        if appliedThemeRawValue != theme.rawValue {
+            markdownView.configuration = theme.makeConfiguration()
+            appliedThemeRawValue = theme.rawValue
+        }
+        markdownView.layer.cornerRadius = 12
+        markdownView.layer.borderWidth = 1
+        markdownView.layer.borderColor = theme.borderColor.cgColor
+        markdownView.clipsToBounds = true
+        startButton.tintColor = theme.accentColor
     }
 
     func stopStreaming() {

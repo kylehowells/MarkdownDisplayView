@@ -20,19 +20,29 @@ class MarkdownExampleViewController: UIViewController {
     }
 
     private func setupUI() {
-        
-        self.view.backgroundColor = .white
+        let selectedTheme = MarkdownDemoThemeStore.selectedTheme
+        if let selectedTheme {
+            overrideUserInterfaceStyle = selectedTheme.interfaceStyle
+            view.backgroundColor = selectedTheme.canvasColor
+            scrollableMarkdownView.backgroundColor = selectedTheme.panelColor
+            scrollableMarkdownView.markdownView.backgroundColor = selectedTheme.panelColor
+            scrollableMarkdownView.configuration = selectedTheme.makeConfiguration()
+        } else {
+            view.backgroundColor = .white
+        }
+
         let titleLabel = UILabel()
         titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
         titleLabel.text = "Sync Markdown Preview"
-        titleLabel.backgroundColor = .systemBackground
-        titleLabel.textColor = .systemBlue
+        titleLabel.backgroundColor = .clear
+        titleLabel.textColor = selectedTheme?.accentColor ?? .systemBlue
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(titleLabel)
         
         let backButton = UIButton(type: .system)
         backButton.setTitle("返回目录", for: .normal)
         backButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
+        backButton.tintColor = selectedTheme?.accentColor ?? .systemBlue
         backButton.addTarget(self, action: #selector(backToMenus), for: .touchUpInside)
         backButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(backButton)
@@ -41,6 +51,7 @@ class MarkdownExampleViewController: UIViewController {
         let closeButton = UIButton(type: .system)
         closeButton.setTitle("关闭", for: .normal)
         closeButton.titleLabel?.font = .systemFont(ofSize: 16, weight: .medium)
+        closeButton.tintColor = selectedTheme?.accentColor ?? .systemBlue
         closeButton.addTarget(self, action: #selector(dismissSelf), for: .touchUpInside)
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(closeButton)
@@ -96,6 +107,19 @@ class MarkdownExampleViewController: UIViewController {
     private func loadSampleMarkdown() {
         let start = CFAbsoluteTimeGetCurrent()
         scrollableMarkdownView.markdown = sampleMarkdown
+
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("-AutoFocusLatex") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard let self,
+                      let formulaSection = scrollableMarkdownView.tableOfContents.first(where: {
+                          $0.title == "一、公式测试"
+                      }) else { return }
+                scrollableMarkdownView.scrollToTOCItem(formulaSection)
+            }
+        }
+        #endif
+
         let end = CFAbsoluteTimeGetCurrent()
         print(
             "[MarkdownViewExample] Sync View Render Time: \(String(format: "%.2f", (end - start) * 1000))ms"

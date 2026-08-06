@@ -168,6 +168,7 @@ final class AIChatHistoryViewController: UIViewController {
 
     private var conversations: [AIChatConversation]
     private var selectedIDs: Set<UUID>
+    private let selectedTheme = MarkdownDemoThemeStore.selectedTheme
     private let tableView = UITableView(frame: .zero, style: .insetGrouped)
     private lazy var applyButton = UIBarButtonItem(title: "引用", style: .done, target: self, action: #selector(applySelection))
 
@@ -183,6 +184,9 @@ final class AIChatHistoryViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if let selectedTheme {
+            overrideUserInterfaceStyle = selectedTheme.interfaceStyle
+        }
         title = "历史会话"
         view.backgroundColor = .systemGroupedBackground
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .close, target: self, action: #selector(close))
@@ -199,6 +203,12 @@ final class AIChatHistoryViewController: UIViewController {
         configuration.image = UIImage(systemName: "square.and.pencil")
         configuration.imagePadding = 8
         newButton.configuration = configuration
+        if let selectedTheme {
+            var themedConfiguration = newButton.configuration
+            themedConfiguration?.baseBackgroundColor = selectedTheme.accentColor
+            themedConfiguration?.baseForegroundColor = selectedTheme.canvasColor
+            newButton.configuration = themedConfiguration
+        }
         newButton.addTarget(self, action: #selector(createConversation), for: .touchUpInside)
         newButton.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(newButton)
@@ -213,6 +223,15 @@ final class AIChatHistoryViewController: UIViewController {
             newButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
             newButton.heightAnchor.constraint(equalToConstant: 48)
         ])
+        if let selectedTheme {
+            view.backgroundColor = selectedTheme.canvasColor
+            tableView.backgroundColor = selectedTheme.canvasColor
+            tableView.tintColor = selectedTheme.accentColor
+            navigationController?.navigationBar.tintColor = selectedTheme.accentColor
+            navigationController?.navigationBar.titleTextAttributes = [
+                .foregroundColor: selectedTheme.primaryTextColor
+            ]
+        }
         updateApplyButton()
     }
 
@@ -265,7 +284,16 @@ extension AIChatHistoryViewController: UITableViewDataSource, UITableViewDelegat
         // selectedIDs 是唯一数据源；不再调用 tableView.selectRow，避免与 reloadRows 互相覆盖。
         let isSelected = selectedIDs.contains(conversation.id)
         cell.imageView?.image = UIImage(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-        cell.imageView?.tintColor = isSelected ? .systemBlue : .tertiaryLabel
+        if let selectedTheme {
+            cell.backgroundColor = selectedTheme.panelColor
+            cell.textLabel?.textColor = selectedTheme.primaryTextColor
+            cell.detailTextLabel?.textColor = selectedTheme.secondaryTextColor
+            cell.imageView?.tintColor = isSelected
+                ? selectedTheme.accentColor
+                : selectedTheme.secondaryTextColor
+        } else {
+            cell.imageView?.tintColor = isSelected ? .systemBlue : .tertiaryLabel
+        }
         cell.accessibilityValue = isSelected ? "已引用" : "未引用"
         return cell
     }
