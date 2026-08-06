@@ -37,7 +37,7 @@ A powerful iOS Markdown rendering component built on TextKit 2, providing smooth
 ![Normal Rendering](./Effects/normal.gif)
 
 ### Streaming Rendering
-- Simulated streaming
+- Real AI/SSE chunk streaming
 
 ![Streaming Rendering](./Effects/streaming.gif)
 
@@ -654,52 +654,32 @@ scrollableMarkdownView.markdown = sampleMarkdown
 scrollableMarkdownView.backToTableOfContentsSection()
 ```
 
-### Streaming Markdown Display
+### Real-Time Streaming Markdown (LLM/SSE)
 
-- Other aspects are consistent with the scrollable markdown view above
-
-```Swift
-    // Difference is in displaying content
-    private func loadSampleMarkdown() {
-        // Streaming render (typewriter effect)
-        scrollableMarkdownView.startStreaming(
-            sampleMarkdown,
-            unit: .word,
-            unitsPerChunk: 2,
-            interval: 0.1,
-        )
-    }
-
-    // If you need to show all content immediately (e.g., user clicks skip)
-    @objc private func skipButtonTapped() {
-        scrollableMarkdownView.markdownView.finishStreaming()
-    }
-```
-
-### Real-Time Streaming (LLM/Network APIs) - New in 1.5.0
-
-For real-time streaming from LLM APIs (like ChatGPT, Claude) where content arrives in chunks:
+Use the real streaming API when an AI model or SSE connection delivers text fragments over time. Start the stream once, append every decoded content delta in arrival order, and end it only after the server signals completion. Pass through the original chunk boundaries instead of assembling and replaying a complete Markdown document.
 
 ```Swift
 class ChatViewController: UIViewController {
     private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
 
-    // Start real streaming mode
+    // Call before opening/consuming the response body.
     func startLLMStream() {
         scrollableMarkdownView.markdownView.beginRealStreaming()
     }
 
-    // Append chunks as they arrive from the API
+    // Call for each decoded AI/SSE content delta.
     func onChunkReceived(_ chunk: String) {
         scrollableMarkdownView.markdownView.appendStreamData(chunk)
     }
 
-    // Call when stream completes
+    // Call after the server's completion event or a clean EOF.
     func onStreamComplete() {
         scrollableMarkdownView.markdownView.endRealStreaming()
     }
 }
 ```
+
+The two `StreamingMarkdownController` demos schedule local chunks only to stand in for network callbacks. Production code should call the same three methods directly from its `URLSession`/SSE client as deltas arrive.
 
 Recommended configuration for streaming AI chat in table/collection cells:
 
@@ -1180,7 +1160,7 @@ markdownView.setPreparedContent(preparedContent)
 - 📳 **Streaming Haptic Feedback** - Added haptic feedback support during streaming output for enhanced user experience
   - New `StreamingHapticFeedbackStyle` enum with options: `.none`, `.light`, `.medium`, `.heavy`, `.soft`, `.rigid`
   - New configuration options: `streamingHapticFeedbackStyle` (feedback intensity) and `streamingHapticMinInterval` (minimum interval)
-  - Supports smart streaming (`appendStreamData`) and fake streaming (`startStreaming`) modes
+  - Feedback follows content revealed by the real streaming pipeline (`appendStreamData`)
 
 ### 1.6.0 (2026-01-30)
 

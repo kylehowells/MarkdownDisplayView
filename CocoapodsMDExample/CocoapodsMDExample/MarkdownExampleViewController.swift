@@ -198,7 +198,7 @@ let sampleMarkdown = """
 
     ## 1.10 颜色与装饰符
 
-    $$\\bar{x} = \\frac{1}{n} \\color{red}{\\sum_{i=1}^{n} x_i}$$
+    $$\\bar{x} = \\frac{1}{n} \\color{systemRed}{\\sum_{i=1}^{n} x_i}$$
 
     ## 1.11 各类重音符号
 
@@ -206,7 +206,7 @@ let sampleMarkdown = """
 
     ## 1.12 文本混排
 
-    $$\\text{if } x > 0, \\quad y = \\color{blue}{\\sqrt{x}}$$
+    $$\\text{if } x > 0, \\quad y = \\color{systemBlue}{\\sqrt{x}}$$
 
     ## 1.13 物理平均速度
 

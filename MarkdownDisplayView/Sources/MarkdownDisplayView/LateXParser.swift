@@ -91,7 +91,8 @@ struct LatexSymbols {
     static let colorMap: [String: UIColor] = [
         "red": .red, "blue": .blue, "green": .green, "black": .black,
         "white": .white, "gray": .gray, "cyan": .cyan, "magenta": .magenta,
-        "yellow": .yellow, "orange": .orange, "purple": .purple, "brown": .brown
+        "yellow": .yellow, "orange": .orange, "purple": .purple, "brown": .brown,
+        "systemRed": .systemRed, "systemBlue": .systemBlue
     ]
 }
 

@@ -407,11 +407,3 @@ public struct MarkdownConfiguration: Sendable {
         return config
     }
 }
-
-
-
-public enum StreamingUnit {
-    case character  // 字符
-    case word       // 词（推荐）
-    case sentence   // 句子
-}

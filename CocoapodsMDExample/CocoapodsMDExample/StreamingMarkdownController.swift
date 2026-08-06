@@ -11,6 +11,7 @@ import MarkdownDisplayKit
 class StreamingMarkdownController: UIViewController {
 
     private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
+    private var streamingTask: Task<Void, Never>?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -68,23 +69,42 @@ class StreamingMarkdownController: UIViewController {
     }
 
     @objc private func dismissSelf() {
+        streamingTask?.cancel()
         dismiss(animated: true, completion: nil)
     }
-    
-    
-    
+
     private func loadSampleMarkdown() {
-        // 流式渲染（打字机效果）
-        scrollableMarkdownView.startStreaming(
-            sampleMarkdown,
-            unit: .word,
-            unitsPerChunk: 2,
-            interval: 0.1,
-        )
+        // Demo 使用本地分片模拟 AI/SSE 网络回调；实际项目应在收到每个字符串分片时直接追加。
+        let chunks = makeNetworkChunks(from: sampleMarkdown)
+        scrollableMarkdownView.markdownView.beginRealStreaming()
+
+        streamingTask = Task { @MainActor [weak self] in
+            for chunk in chunks {
+                guard !Task.isCancelled else { return }
+                self?.scrollableMarkdownView.markdownView.appendStreamData(chunk)
+                try? await Task.sleep(nanoseconds: 80_000_000)
+            }
+
+            guard !Task.isCancelled else { return }
+            self?.scrollableMarkdownView.markdownView.endRealStreaming()
+            self?.streamingTask = nil
+        }
     }
 
-    // 如果需要立即显示全部（比如用户点击跳过）
-    @objc private func skipButtonTapped() {
-        scrollableMarkdownView.markdownView.finishStreaming()
+    private func makeNetworkChunks(from text: String, maximumLength: Int = 48) -> [String] {
+        var chunks: [String] = []
+        var start = text.startIndex
+
+        while start < text.endIndex {
+            let end = text.index(
+                start,
+                offsetBy: maximumLength,
+                limitedBy: text.endIndex
+            ) ?? text.endIndex
+            chunks.append(String(text[start..<end]))
+            start = end
+        }
+
+        return chunks
     }
 }

@@ -24,6 +24,11 @@ private final class FormulaColorCaptureNode: FormulaRenderNode {
     }
 }
 
+@Test func latexSystemColorAliasesUseAdaptiveUIKitColors() {
+    #expect(LatexSymbols.colorMap["systemRed"]?.isEqual(UIColor.systemRed) == true)
+    #expect(LatexSymbols.colorMap["systemBlue"]?.isEqual(UIColor.systemBlue) == true)
+}
+
 @MainActor
 @Test func latexMathViewAppliesConfiguredTextColorToDrawingContext() {
     let targetColor = UIColor(red: 0.31, green: 0.66, blue: 0.98, alpha: 1)

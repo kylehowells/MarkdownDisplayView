@@ -252,6 +252,38 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
+@Test func realStreamingAcceptsCharacterSizedNetworkFragmentsAndDrainsFootnotes() async throws {
+    let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+    view.enableTypewriterEffect = false
+    view.beginRealStreaming()
+
+    let markdown = """
+    # Character Stream
+
+    Content arriving one character at a time.[^1]
+
+    [^1]: Footnote content
+    """
+    for character in markdown {
+        view.appendStreamData(String(character))
+    }
+
+    await withCheckedContinuation { continuation in
+        view.endRealStreaming { continuation.resume() }
+    }
+
+    #expect(view.isRealStreamingMode == false)
+    #expect(view.isStreaming == false)
+    #expect(view.markdown == view.realStreamAccumulatedText)
+    #expect(view.markdown == markdown)
+    #expect(view.markdown.contains("Character Stream"))
+    #expect(view.markdown.contains("Footnote content"))
+    #expect(view.tableOfContents.map(\.title) == ["Character Stream"])
+    #expect(view.contentStackView.arrangedSubviews.last?.accessibilityIdentifier == "FootnoteContainer")
+}
+
+@available(iOS 15.0, *)
+@MainActor
 @Test func appendTypewriterSeparatesCharacterRevealFromHeightChanges() async throws {
     let textView = MarkdownTextViewTK2()
     textView.typewriterTextMode = .append

@@ -8,80 +8,10 @@
 import UIKit
 import Foundation
 import Combine
-import NaturalLanguage
 
 @available(iOS 15.0, *)
 extension MarkdownViewTextKit {
-    // MARK: - ⚠️ 视图复用优化（已禁用）
-
-    /// 生成元素的唯一ID用于缓存（已禁用，保留代码供参考）
-    @available(*, deprecated, message: "缓存策略会导致内容错位，已禁用")
-    func generateElementID(_ element: MarkdownRenderElement, width: CGFloat) -> String {
-        let widthKey = Int(width) // 宽度作为key的一部分
-
-        switch element {
-        case .attributedText(let text):
-            // 使用文本内容的hash + 长度
-            let textHash = text.string.prefix(100).hashValue  // 只取前100字符的hash
-            return "text_\(textHash)_\(text.length)_\(widthKey)"
-
-        case .heading(let id, let text):
-            return "heading_\(id)_\(text.length)_\(widthKey)"
-
-        case .quote(let children, let level):
-            // ⚡️ 修复：quote 是递归的，使用 children 数量作为 key
-            return "quote_\(level)_\(children.count)_\(widthKey)"
-
-        case .codeBlock(let lang, let code):
-            let codeHash = code.string.prefix(100).hashValue
-            let langKey = lang ?? "plain"
-            return "code_\(langKey)_\(codeHash)_\(code.length)_\(widthKey)"
-
-        case .table(let data):
-            return "table_\(data.headers.count)_\(data.rows.count)_\(widthKey)"
-
-        case .thematicBreak:
-            return "hr_\(widthKey)"
-
-        case .image(let source, _):
-            return "img_\(source.hashValue)_\(widthKey)"
-
-        case .latex(let formula):
-            let formulaHash = formula.prefix(50).hashValue
-            return "latex_\(formulaHash)_\(widthKey)"
-
-        case .details(let summary, let children):
-            return "details_\(summary.hashValue)_\(children.count)_\(widthKey)"
-
-        case .list(let items, let level):
-            // ⚡️ 新增：list case
-            return "list_\(items.count)_\(level)_\(widthKey)"
-
-        case .rawHTML:
-            return "html_\(widthKey)"
-
-        case .custom(let data):
-            return "custom_\(data.type)_\(data.rawText.hashValue)_\(widthKey)"
-        }
-    }
-
-    /// 清理视图缓存（已禁用）
-    func clearViewCache() {
-        // ⚠️ 缓存已禁用，无需清理
-        // viewCache.removeAll()
-
-        // ⚡️ 清理预渲染的脚注缓存
-        cachedFootnoteView = nil
-    }
-
     func createView(for element: MarkdownRenderElement, containerWidth: CGFloat, suppressTopSpacing: Bool = false, suppressBottomSpacing: Bool = false, precalculatedHeight: CGFloat? = nil) -> UIView {
-        // ⚠️ 缓存已禁用，直接创建视图
-        // 原因：缓存策略会导致内容错位问题
-        return createViewInternal(for: element, containerWidth: containerWidth, suppressTopSpacing: suppressTopSpacing, suppressBottomSpacing: suppressBottomSpacing, precalculatedHeight: precalculatedHeight)
-    }
-
-    /// 实际创建视图的内部方法（原createView逻辑）
-    func createViewInternal(for element: MarkdownRenderElement, containerWidth: CGFloat, suppressTopSpacing: Bool = false, suppressBottomSpacing: Bool = false, precalculatedHeight: CGFloat? = nil) -> UIView {
         switch element {
         case .heading(_, let attributedString):
             let topSpacing = suppressTopSpacing ? 0 : configuration.headingTopSpacing

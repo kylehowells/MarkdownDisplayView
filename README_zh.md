@@ -37,7 +37,7 @@
 
 ### 流式渲染
 
-- 模拟流式
+- 真实 AI/SSE 分片流式
 
 ![Streaming Rendering](./Effects/streaming.gif)
 
@@ -672,52 +672,32 @@ scrollableMarkdownView.markdown = sampleMarkdown
 scrollableMarkdownView.backToTableOfContentsSection()
 ```
 
-### 流式Readme展示
+### 实时流式 Markdown（LLM/SSE）
 
-- 其他与上面滚动markdown view一致
-
-```Swift
-    //不一致是显示内容
-    private func loadSampleMarkdown() {
-        // 流式渲染（打字机效果）
-        scrollableMarkdownView.startStreaming(
-            sampleMarkdown,
-            unit: .word,
-            unitsPerChunk: 2,
-            interval: 0.1,
-        )
-    }
-
-    // 如果需要立即显示全部（比如用户点击跳过）
-    @objc private func skipButtonTapped() {
-        scrollableMarkdownView.markdownView.finishStreaming()
-    }
-```
-
-### 智能流式渲染（LLM/网络 API）- 1.5.0 新增
-
-适用于 LLM API（如 ChatGPT、Claude）等内容分块到达的实时流式场景：
+当 AI 模型或 SSE 连接持续返回字符串分片时，使用真实流式 API：响应开始前开启一次流式模式，按到达顺序追加每个解码后的 content delta，并在服务端发送完成事件或连接正常结束后收尾。请直接传递真实分片，不要先拼成完整 Markdown 再回放。
 
 ```Swift
 class ChatViewController: UIViewController {
     private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
 
-    // 开启智能流式模式
+    // 打开或开始消费响应体之前调用
     func startLLMStream() {
         scrollableMarkdownView.markdownView.beginRealStreaming()
     }
 
-    // API 返回数据块时追加内容
+    // 每收到一个解码后的 AI/SSE content delta 时调用
     func onChunkReceived(_ chunk: String) {
         scrollableMarkdownView.markdownView.appendStreamData(chunk)
     }
 
-    // 流式结束时调用
+    // 收到服务端完成事件或连接正常结束后调用
     func onStreamComplete() {
         scrollableMarkdownView.markdownView.endRealStreaming()
     }
 }
 ```
+
+两个 `StreamingMarkdownController` 示例会定时发送本地分片，仅用于代替网络回调。生产环境应在 `URLSession`/SSE 客户端收到 delta 时直接调用同一组 API。
 
 用于 Table/Collection Cell 的 AI 对话流式推荐配置：
 
@@ -1198,7 +1178,7 @@ markdownView.setPreparedContent(preparedContent)
 - 📳 **流式输出震动反馈** - 新增流式输出时的震动反馈支持，提升用户交互体验
   - 新增 `StreamingHapticFeedbackStyle` 枚举，支持多种震动级别：`.none`、`.light`、`.medium`、`.heavy`、`.soft`、`.rigid`
   - 新增配置项 `streamingHapticFeedbackStyle`（震动反馈强度）和 `streamingHapticMinInterval`（震动最小间隔）
-  - 智能流式（`appendStreamData`）和假流式（`startStreaming`）模式均支持
+  - 震动反馈跟随真实流式管线（`appendStreamData`）展示的内容
 
 ### 1.6.0 (2026-01-30)
 

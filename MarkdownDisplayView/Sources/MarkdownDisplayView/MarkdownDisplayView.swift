@@ -56,12 +56,6 @@ public final class MarkdownViewTextKit: UIView {
         engine.onComplete = { [weak self] in
             // 队列播放完毕的回调
             mdLog("✅ [Typewriter] All animations completed")
-
-            // ⭐️ [FOOTNOTE_DEBUG] 调试日志
-            mdLog("[FOOTNOTE_DEBUG] 🔔 TypewriterEngine.onComplete triggered, isRealStreamingMode=\(self?.isRealStreamingMode ?? false), isStreaming=\(self?.isStreaming ?? false)")
-
-            // ⚡️ 流式优化：打字机动画完成后渲染脚注
-            self?.renderFootnotesIfPending()
             self?.tryFinishRealStreamDrain()
         }
         // ⚡️ 核心修复：当打字机揭示了新视图（导致高度变化）时，立即通知父视图更新高度
@@ -155,12 +149,6 @@ public final class MarkdownViewTextKit: UIView {
     public var onStreamingStep: (() -> Void)?
     public var onTOCItemTap: ((MarkdownTOCItem) -> Void)?
     let inlineSegmentAttributeKey = NSAttributedString.Key("MarkdownInlineSegment")
-    // 🆕 新增：用于暂存流式输出结束时的回调
-    var onStreamComplete: (() -> Void)?
-    // 新增属性来存储原子区间
-    var streamAtomicRanges: [NSRange] = []
-    // ⚡️ 性能优化：原子区间起始位置索引（O(1)查找）
-    var atomicRangeStartSet: Set<Int> = []
     
     public internal(set) var tableOfContents: [MarkdownTOCItem] = []
     
@@ -187,38 +175,16 @@ public final class MarkdownViewTextKit: UIView {
     var renderVersion: Int = 0
     let renderVersionLock = NSLock()
     
-    /// About streaming
-    var streamTimer: Timer?
+    /// Streaming diagnostics and session state
     var streamingStartTimestamp: CFAbsoluteTime = 0  // ⭐️ 流式开始时间戳
-    var firstLatexShown: Bool = false  // ⭐️ 是否已显示第一个公式
-    var streamFullText: String = ""
-    var streamCurrentIndex: Int = 0
     var isStreaming = false  // ✅ 默认非流式模式
-
-    var streamTokens: [String] = []
-    var streamTokenIndex: Int = 0
-    var currentStreamingUnit: StreamingUnit = .word
-
-    // ⭐️ 新增：暂停显示控制
-    var isPausedForDisplay: Bool = false
 
     // ⭐️ 新增：用户交互锁定标记，防止流式更新打断点击事件处理
     var isUserInteractingWithDetails: Bool = false
 
-    // ⚠️ 视图复用缓存已禁用（会导致内容错位问题）
-    // 原因：基于内容hash的缓存策略会导致不同位置的相似内容被错误复用
-    // private var viewCache: [String: UIView] = [:]
-    // private let maxCacheSize: Int = 100
-    
     // 添加属性
     var tocSectionView: UIView?
     var tocSectionId: String?
-    
-    // 脚注优化缓存
-    var currentFootnotes: [MarkdownFootnote] = []
-    var cachedFootnoteView: UIView?
-    /// 标记是否有待渲染的脚注（等待打字机动画完成）
-    var pendingFootnoteRender = false
 
     // ⚡️ 首屏优化：分批渲染配置
     /// 首屏渲染目标高度（屏幕高度的倍数，默认3屏）
@@ -264,29 +230,6 @@ public final class MarkdownViewTextKit: UIView {
         dispatchPrecondition(condition: .onQueue(.main))
         return UIScreen.main.bounds.width - 32
     }
-
-    /// 配置哈希值（用于检测配置变化）
-    var configurationHash: Int = 0
-
-    // MARK: - 预解析流式显示（方案B - 进度百分比映射）
-
-    /// 预解析的所有元素
-    var streamParsedElements: [MarkdownRenderElement] = []
-
-    /// 已显示的元素数量
-    var streamDisplayedCount: Int = 0
-
-    /// 预解析的脚注
-    var streamParsedFootnotes: [MarkdownFootnote] = []
-
-    /// 预解析的附件
-    var streamParsedAttachments: [(attachment: MarkdownImageAttachment, urlString: String)] = []
-
-    /// 预解析是否完成
-    var streamPreParseCompleted: Bool = false
-
-    /// 流式文本总长度
-    var streamTotalTextLength: Int = 0
 
     func recordCost(for type: String, duration: Double) {
         renderCosts[type, default: 0] += duration
@@ -448,15 +391,6 @@ public final class MarkdownViewTextKit: UIView {
 
     var lastReportedHeight: CGFloat = 0
 
-    // MARK: - Fake streaming state
-    var fakeStreamLastSafePosition: Int = 0
-    var fakeStreamParseDebounceItem: DispatchWorkItem?
-    var fakeStreamUseIncrementalParse: Bool = true
-    var fakeStreamLastParseTime: CFAbsoluteTime = 0
-    var fakeStreamParseScheduled: Bool = false
-    var fakeStreamChunks: [String] = []  // 分片列表
-    var fakeStreamChunkIndex: Int = 0     // 当前解析到的片段索引
-    var fakeStreamParsedText: String = "" // 已解析的文本
     // MARK: - Initialization
 
     public override init(frame: CGRect) {
@@ -472,8 +406,6 @@ public final class MarkdownViewTextKit: UIView {
     deinit {
         // ⚡️ 取消待执行的离屏渲染任务
         offscreenRenderWorkItem?.cancel()
-        // ⚡️ 移除内存警告监听
-        NotificationCenter.default.removeObserver(self)
     }
 
     public convenience init(markdown: String, configuration: MarkdownConfiguration = .default) {
@@ -493,17 +425,6 @@ public final class MarkdownViewTextKit: UIView {
             contentStackView.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
 
-        // ⚡️ 监听内存警告，清理视图缓存
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(handleMemoryWarning),
-            name: UIApplication.didReceiveMemoryWarningNotification,
-            object: nil
-        )
-    }
-
-    @objc private func handleMemoryWarning() {
-        clearViewCache()
     }
     
     // MARK: - Public Methods

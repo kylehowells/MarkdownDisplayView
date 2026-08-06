@@ -7,8 +7,6 @@
 
 import UIKit
 import Foundation
-import Combine
-import NaturalLanguage
 
 @available(iOS 15.0, *)
 extension MarkdownViewTextKit {
@@ -20,7 +18,7 @@ extension MarkdownViewTextKit {
         mdLog("[FOOTNOTE_DEBUG] 🟢 beginRealStreaming called")
 
         // 停止任何现有流式
-        stopStreaming()
+        resetForReuse()
 
         // Cell 可能刚在 configure 中调度过普通 Markdown 渲染。进入真流式前必须
         // 同时取消尚未执行的任务，并让已经在后台解析的结果失效，禁止其回写流式 UI。
@@ -114,6 +112,9 @@ extension MarkdownViewTextKit {
             streamPerformanceDiagnostics.recordReceive(characters: data.count)
         }
 
+        // 原样累计网络 delta。StreamBuffer 只决定渲染边界，不得改写最终 Markdown。
+        realStreamAccumulatedText += data
+
         // 使用 StreamBuffer 检测完整模块
         let result = streamBuffer.append(data)
 
@@ -132,12 +133,10 @@ extension MarkdownViewTextKit {
     }
 
     /// 串行后台解析模块。renderQueue 保证完成顺序与输入顺序一致；UIKit 更新只回到主线程执行。
-    func enqueueSmartStreamModule(_ moduleText: String, appendSeparator: Bool = true) {
+    func enqueueSmartStreamModule(_ moduleText: String) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard isRealStreamingMode else { return }
 
-        realStreamAccumulatedText += moduleText
-        if appendSeparator { realStreamAccumulatedText += "\n\n" }
         realStreamParseInFlightCount += 1
         let moduleSequence = realStreamNextModuleSequence
         realStreamNextModuleSequence += 1
@@ -492,83 +491,6 @@ extension MarkdownViewTextKit {
         completion()
     }
 
-    // MARK: - ⭐️ 暂停/恢复显示 API
-
-    /// 暂停显示更新（停止 UI 刷新，但保留流式状态）
-    /// 适用场景：用户滚动到上方阅读时，避免底部流式输出导致的 UI 闪烁
-    public func pauseDisplayUpdates() {
-        guard isStreaming, !isPausedForDisplay else { return }
-
-        isPausedForDisplay = true
-        // 停止 Timer，避免继续追加 token
-        streamTimer?.invalidate()
-        streamTimer = nil
-        // 注意：不设置 isStreaming = false，保留流式状态
-    }
-
-    /// 恢复显示更新（10倍速追赶）
-    /// 快速流式输出剩余内容，避免一次性渲染卡顿
-    public func resumeDisplayUpdates() {
-        guard isStreaming, isPausedForDisplay else { return }
-
-        isPausedForDisplay = false
-
-        // ⭐️ 计算剩余内容
-        let remainingTokens = streamTokens.count - streamTokenIndex
-
-        if remainingTokens <= 0 {
-            // 已经全部输出完毕
-            // 1. ⚡️ 优化：如果有脚注，则延迟结束流式状态
-            if cachedFootnoteView != nil || !streamParsedFootnotes.isEmpty {
-                pendingFootnoteRender = true
-                mdLog("🔖 [Footnotes] Deferred rendering (resume completed)")
-                // 保持 isStreaming = true，直到脚注渲染完成
-                return
-            }
-
-            // 2. 没有脚注，立即结束流式模式
-            isStreaming = false
-            // 3. 清理缓存（脚注已在上方延迟处理，这里仅清理缓存）
-            clearViewCache()
-            // 4. 触发完成回调
-            onStreamComplete?()
-            onStreamComplete = nil
-            return
-        }
-
-        // ⭐️ 10倍速追赶（150ms间隔，50个token/次）
-        // 相比暂停前的 15ms/5token，这是 10 倍速
-        let catchUpChunkSize = 50
-        let catchUpInterval: TimeInterval = 0.15
-
-        streamTimer = Timer.scheduledTimer(withTimeInterval: catchUpInterval, repeats: true) { [weak self] _ in
-            self?.appendNextTokensAtomic(count: catchUpChunkSize)
-        }
-    }
-
-    func appendNextChunk(chunkSize: Int) {
-        guard streamCurrentIndex < streamFullText.count else {
-            stopStreaming()
-            return
-        }
-        
-        var endIndex = min(streamCurrentIndex + chunkSize, streamFullText.count)
-        
-        // 尝试在空格或换行处断开，更自然
-        let searchEnd = min(endIndex + 10, streamFullText.count)
-        let startIdx = streamFullText.index(streamFullText.startIndex, offsetBy: endIndex)
-        let searchIdx = streamFullText.index(streamFullText.startIndex, offsetBy: searchEnd)
-        let searchRange = startIdx..<searchIdx
-        
-        if let spaceRange = streamFullText.range(of: " ", range: searchRange) {
-            endIndex = streamFullText.distance(from: streamFullText.startIndex, to: spaceRange.lowerBound) + 1
-        }
-        
-        let index = streamFullText.index(streamFullText.startIndex, offsetBy: endIndex)
-        markdown = String(streamFullText[..<index])
-        streamCurrentIndex = endIndex
-    }
-    
     /// 向上查找宿主 UIScrollView
     func findEnclosingScrollView() -> UIScrollView? {
         var superview = self.superview

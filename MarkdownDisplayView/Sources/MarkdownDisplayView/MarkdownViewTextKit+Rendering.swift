@@ -635,9 +635,6 @@ extension MarkdownViewTextKit {
     }
     
     func scheduleRerender() {
-        // ⭐️ 如果暂停显示，跳过渲染
-        guard !isPausedForDisplay else { return }
-
         renderWorkItem?.cancel()
         // ⚡️ 取消待执行的离屏渲染任务（因为内容已变更）
         offscreenRenderWorkItem?.cancel()
@@ -648,8 +645,7 @@ extension MarkdownViewTextKit {
             placeholderView = nil
         }
 
-        // ⚡️ 流式模式优化：增量解析已在 appendNextTokensWithIncrementalParse 中触发
-        // 流式模式直接返回，避免重复渲染
+        // Real streaming owns its incremental parse/render pipeline.
         if isStreaming {
             return
         }

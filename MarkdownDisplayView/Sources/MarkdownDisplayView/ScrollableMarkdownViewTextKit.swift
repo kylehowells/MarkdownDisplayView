@@ -90,9 +90,6 @@ public final class ScrollableMarkdownViewTextKit: UIScrollView {
         setContentOffset(CGPoint(x: 0, y: -contentInset.top), animated: animated)
     }
 
-    /// 流式渲染时是否自动滚动
-    public var autoScrollOnStreaming: Bool = true
-    
     /// 跳转到文档内的目录区域
     public func backToTableOfContentsSection() {
         markdownView.backToTableOfContentsSection()
@@ -101,32 +98,5 @@ public final class ScrollableMarkdownViewTextKit: UIScrollView {
     /// 是否存在目录区域
     public var hasTableOfContentsSection: Bool {
         return markdownView.hasTableOfContentsSection
-    }
-}
-
-//MARK: - streaming extension
-extension ScrollableMarkdownViewTextKit {
-    // 在 ScrollableMarkdownViewTextKt 中添加
-    public func startStreaming(_ text: String, unit: StreamingUnit = .word, unitsPerChunk: Int = 2, interval: TimeInterval = 0.05, autoScrollBottom: Bool = true) {
-        autoScrollOnStreaming = autoScrollBottom
-        markdownView.startStreaming(text, unit: unit, unitsPerChunk: unitsPerChunk, interval: interval, autoScrollBottom: autoScrollBottom)
-    }
-
-    public func stopStreaming() {
-        markdownView.stopStreaming()
-    }
-
-    public func finishStreaming() {
-        markdownView.finishStreaming()
-    }
-
-    // 返回目录按钮点击
-    @objc func backToTOCTapped() {
-        if markdownView.hasTableOfContentsSection {
-            markdownView.backToTableOfContentsSection()
-        } else {
-            // 没有目录区域，可以滚动到顶部或提示
-            markdownView.scrollToTop()
-        }
     }
 }

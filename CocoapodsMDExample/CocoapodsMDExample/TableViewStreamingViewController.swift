@@ -17,7 +17,6 @@ struct ChatMessage {
     var isStreaming: Bool = false // 是否正在打字
     var isLoading: Bool = false   // 是否正在思考(网络请求中)
 }
-
 // MARK: - Cell
 
 class TypingIndicatorView: UIView {
@@ -101,9 +100,6 @@ class ChatMarkdownCell: UITableViewCell {
 
     // ⭐️ 用户交互回调（当用户点击目录、链接等元素时通知外部）
     var onUserInteraction: (() -> Void)?
-
-    // ⭐️ 方案C优化版：暂停状态（简化，由 MarkdownViewTextKit 管理内部状态）
-    private var isPaused: Bool = false
 
     // MARK: - 流式状态标记
     private var isCurrentlyStreaming: Bool = false
@@ -310,70 +306,6 @@ class ChatMarkdownCell: UITableViewCell {
         }
     }
     
-    // 修改方法签名，增加 onStart 回调参数
-    func startStreaming(text: String, onStart: (() -> Void)? = nil, completion: @escaping () -> Void) {
-
-        // 重置暂停状态
-        isPaused = false
-
-        // ⭐️ 标记为流式状态
-        isCurrentlyStreaming = true
-
-        markdownView.startStreaming(
-            text,
-            unit: .character,
-            unitsPerChunk: 4,
-            interval: 0.06,
-            autoScrollBottom: false,
-
-            // 🟢 onStart: 后台算完了，马上要出字了
-            onStart: { [weak self] in
-                guard let self = self else { return }
-
-                // 1. 执行原有的 UI 切换逻辑
-                self.typingIndicator.isHidden = true
-                self.typingIndicator.stopAnimating()
-                self.markdownView.isHidden = false
-                NSLayoutConstraint.deactivate(self.loadingConstraints)
-                NSLayoutConstraint.activate(self.contentConstraints)
-                self.layoutIfNeeded()
-
-                // 2. 🔥 通知外部：我真的开始了
-                onStart?()
-            },
-
-            onComplete: { [weak self] in
-                // ⭐️ 流式结束，清除标记
-                self?.isCurrentlyStreaming = false
-                completion()
-            }
-        )
-    }
-
-    // ⭐️ 方案C优化版：暂停渲染（使用 MarkdownViewTextKit 新 API）
-    func pauseRendering() {
-        guard !isPaused else { return }
-        isPaused = true
-
-        // ⭐️ 使用新 API：暂停显示但保留状态
-        markdownView.pauseDisplayUpdates()
-    }
-
-    // ⭐️ 方案C优化版：恢复渲染（使用 MarkdownViewTextKit 新 API）
-    func resumeRendering() {
-        guard isPaused else { return }
-        isPaused = false
-
-        // ⭐️ 使用新 API：直接显示完整文本，无需重新解析
-        markdownView.resumeDisplayUpdates()
-    }
-    
-    func stopStreaming() {
-        markdownView.stopStreaming()
-        // ⭐️ 停止时清除流式标记
-        isCurrentlyStreaming = false
-    }
-
     // MARK: - 智能流式 API
 
     /// 智能流式完成回调（保存以便后续调用）
@@ -384,8 +316,6 @@ class ChatMarkdownCell: UITableViewCell {
     ///   - onStart: 开始回调
     ///   - completion: 完成回调
     func beginRealStreaming(onStart: (() -> Void)? = nil, completion: @escaping () -> Void) {
-        // 重置状态
-        isPaused = false
         isCurrentlyStreaming = true
         realStreamCompletion = completion
         lastReportedHeight = 0
@@ -433,9 +363,6 @@ class ChatMarkdownCell: UITableViewCell {
         lastReportedHeight = 0
         // ⭐️ 重置流式标记
         isCurrentlyStreaming = false
-
-        // ⭐️ 重置暂停状态
-        isPaused = false
 
         // 复用时重置为默认状态 (假设是内容模式)
         markdownView.isHidden = false
@@ -528,11 +455,6 @@ class TableViewStreamingViewController: UIViewController {
             if msg.isStreaming {
                 messages[index].isStreaming = false
                 self.isSending = true
-                // 这里假设 Cell 还在屏幕上，可以直接获取并停止
-                let indexPath = IndexPath(row: index, section: 0)
-                if let cell = tableView.cellForRow(at: indexPath) as? ChatMarkdownCell {
-                    cell.stopStreaming()
-                }
                 break
             }
         }
@@ -828,92 +750,6 @@ class TableViewStreamingViewController: UIViewController {
         }
     }
 
-    @objc private func handleSend() {
-            guard !isSending else { return }
-            isSending = true
-            
-            let userText = "请给我写一段 Markdown。"
-            let aiResponseText = demoMarkdown // 假设这是那个长文本
-            
-            // 1. 用户消息... (省略)
-            let userMsg = ChatMessage(content: userText, isUser: true)
-            messages.append(userMsg)
-            insertRowAndScroll(animated: true)
-            
-            // 2. 插入 Bot Loading... (省略)
-            var botMsg = ChatMessage(content: "", isUser: false, isStreaming: false, isLoading: true)
-            messages.append(botMsg)
-            let botIndexPath = IndexPath(row: messages.count - 1, section: 0)
-            tableView.insertRows(at: [botIndexPath], with: .bottom)
-            scrollToBottom(animated: true)
-            
-            // 3. 模拟网络请求
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                guard let self = self else { return }
-                self.isSending = false
-                
-                // --- 更新数据源状态 ---
-                self.messages[botIndexPath.row].isLoading = false
-                self.messages[botIndexPath.row].isStreaming = true
-                self.messages[botIndexPath.row].content = ""
-                self.isSending = false
-                
-                // --- 获取 Cell ---
-                if let cell = self.tableView.cellForRow(at: botIndexPath) as? ChatMarkdownCell {
-                    
-                    // ❌ 删掉这行！不要调用 configure！
-                    // cell.configure(with: self.messages[botIndexPath.row])
-                    // 原因：调用 configure 会立即隐藏 Loading 动画，导致接下来的几秒钟白屏。
-                    // 我们现在的策略是：保持当前 UI (Loading状态) 不变，直接 startStreaming。
-                    
-                    // 绑定高度回调
-                    // ⚠️ 使用数据源的 isStreaming 状态，而不是 Cell 的状态
-                    cell.onContentHeightChanged = { [weak self] in
-                        guard let self = self else { return }
-
-                        // ⭐️ 核心修复 2：去除隐式动画
-                        // performBatchUpdates 默认带有动画，高频调用会导致闪烁。
-                        // 使用 performWithoutAnimation 强制关闭动画，使高度变化平滑。
-                        UIView.performWithoutAnimation {
-                            self.tableView.performBatchUpdates(nil, completion: nil)
-                        }
-
-                        // ⭐️ 关键修复：使用数据源状态判断，避免 Cell 状态被复用重置
-                        if botIndexPath.row < self.messages.count,
-                           self.messages[botIndexPath.row].isStreaming {
-                            self.isSending = false
-                            self.scrollToBottom(animated: false)
-                        }
-                    }
-                    
-                    // 开始流式输出 (Cell 内部会在准备好后自动切换 UI)
-                            cell.startStreaming(
-                                text: aiResponseText,
-                                // ✅ 新增：在回调里才更新状态
-                                onStart: { [weak self] in
-                                    // 只有当 Cell 真的准备好显示文字时，才告诉数据源“加载结束”
-                                    // 这样在那 4 秒预处理期间，UI 依然保持 Loading 状态
-                                    self?.messages[botIndexPath.row].isLoading = false
-                                    self?.messages[botIndexPath.row].isStreaming = true
-                                    self?.messages[botIndexPath.row].content = ""
-                                    self?.isSending = false
-                                },
-                                completion: { [weak self] in
-                                    self?.messages[botIndexPath.row].content = aiResponseText
-                                    self?.messages[botIndexPath.row].isStreaming = false
-                                    self?.isSending = true
-                                }
-                            )
-                } else {
-                    // 如果 Cell 不可见，直接刷新显示最终结果
-                    self.messages[botIndexPath.row].content = aiResponseText
-                    self.messages[botIndexPath.row].isStreaming = false
-                    self.isSending = true
-                    self.tableView.reloadRows(at: [botIndexPath], with: .none)
-                }
-            }
-        }
-
     // 辅助方法：插入并滚动
     private func insertRowAndScroll(animated: Bool) {
         let indexPath = IndexPath(row: messages.count - 1, section: 0)
@@ -929,58 +765,6 @@ class TableViewStreamingViewController: UIViewController {
 
     // 简单的防连点标记
     private var isSending = false
-    
-    private func startBotResponse() {
-        // 1. 先插入一个内容为空的 Bot 消息
-        // isStreaming = true 告诉 Cell 不要直接渲染 content，而是等我们手动调用 stream
-        let botMsg = ChatMessage(content: "", isUser: false, isStreaming: true)
-        messages.append(botMsg)
-        
-        let indexPath = IndexPath(row: messages.count - 1, section: 0)
-        tableView.insertRows(at: [indexPath], with: .fade)
-        scrollToBottom(animated: true)
-        
-        // 2. 获取刚才插入的 Cell 实例
-        // 注意：必须 layout 之后才能拿到 cell，否则可能为 nil
-        tableView.layoutIfNeeded()
-        
-        guard let cell = tableView.cellForRow(at: indexPath) as? ChatMarkdownCell else { return }
-        
-        // 3. 配置高度变化回调
-        // ⚠️ 使用数据源的 isStreaming 状态，而不是 Cell 的状态
-        cell.onContentHeightChanged = { [weak self] in
-            guard let self = self else { return }
-
-            // ⭐️ 核心逻辑：通知 TableView 高度变了，请重新布局
-            // 使用 performBatchUpdates(nil) 不会 reload cell，只会平滑调整高度
-            self.tableView.performBatchUpdates(nil, completion: nil)
-
-            // ⭐️ 关键修复：使用数据源状态判断，避免 Cell 状态被复用重置
-            if indexPath.row < self.messages.count,
-               self.messages[indexPath.row].isStreaming {
-                self.scrollToBottom(animated: false)
-            }
-        }
-        
-        // 4. 开始流式输出
-        // 实际开发中，这里你会监听网络 socket/SSE 的数据包，不断调用 markdownView.append()
-        // 这里使用工具类自带的模拟器
-        cell.startStreaming(text: demoMarkdown) { [weak self] in
-            // 完成后更新数据源，标记不再 streaming
-            self?.messages[indexPath.row].content = self?.demoMarkdown ?? ""
-            self?.messages[indexPath.row].isStreaming = false
-            self?.isSending = false
-        }
-        
-        // 为了确保模型数据同步（如果 Cell 复用导致数据丢失），
-        // 理想情况下你应该在 socket 收到 chunk 时同时更新 messages[index].content
-    }
-    
-    private func insertRowAndScroll() {
-        let indexPath = IndexPath(row: messages.count - 1, section: 0)
-        tableView.insertRows(at: [indexPath], with: .bottom)
-        scrollToBottom(animated: true)
-    }
     
     private func scrollToBottom(animated: Bool) {
         // ⭐️ 关键修复：只有当允许自动滚动时才执行
@@ -1038,34 +822,7 @@ extension TableViewStreamingViewController: UITableViewDataSource, UITableViewDe
         // 计算距离底部的距离
         let distanceFromBottom = contentHeight - contentOffsetY - scrollViewHeight + bottomInset
 
-        // ⭐️ 方案C：检测 shouldAutoScroll 的变化
-        let wasAutoScroll = shouldAutoScroll
         shouldAutoScroll = distanceFromBottom <= autoScrollThreshold
-
-        // ⭐️ 当状态变化时，通知正在流式的 Cell
-        if wasAutoScroll != shouldAutoScroll {
-            handleAutoScrollStateChange()
-        }
     }
 
-    // ⭐️ 方案C：处理自动滚动状态变化
-    private func handleAutoScrollStateChange() {
-        // 找到正在流式输出的消息
-        guard let streamingIndex = messages.firstIndex(where: { $0.isStreaming }) else {
-            return
-        }
-
-        let indexPath = IndexPath(row: streamingIndex, section: 0)
-        guard let cell = tableView.cellForRow(at: indexPath) as? ChatMarkdownCell else {
-            return
-        }
-
-        if shouldAutoScroll {
-            // 用户滚回底部 → 恢复渲染
-            cell.resumeRendering()
-        } else {
-            // 用户向上滚动 → 暂停渲染
-            cell.pauseRendering()
-        }
-    }
 }

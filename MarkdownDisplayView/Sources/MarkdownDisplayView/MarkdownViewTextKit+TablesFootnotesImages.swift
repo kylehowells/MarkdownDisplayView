@@ -8,36 +8,6 @@
 import UIKit
 import Foundation
 import Combine
-import NaturalLanguage
-
-/// Immutable, shared regex set for streaming atomic ranges.
-///
-/// The order and overlap behavior intentionally match the original implementation:
-/// results are sorted by location but overlapping image/link and math ranges are not merged.
-enum AtomicRangeMatcher {
-    private static let patterns = [
-        "(?s)\\$\\$.*?\\$\\$", // block math
-        "\\$[^\\n\\$]+?\\$",  // inline math
-        "!\\[.*?\\]\\(.*?\\)", // image
-        "\\[.*?\\]\\(.*?\\)",  // link
-    ]
-
-    private static let regularExpressions: [NSRegularExpression] = patterns.compactMap {
-        try? NSRegularExpression(pattern: $0, options: [])
-    }
-
-    static func ranges(in text: String) -> [NSRange] {
-        let fullRange = NSRange(location: 0, length: (text as NSString).length)
-        var ranges: [NSRange] = []
-
-        for regex in regularExpressions {
-            ranges.append(contentsOf: regex.matches(in: text, options: [], range: fullRange).map(\.range))
-        }
-
-        ranges.sort { $0.location < $1.location }
-        return ranges
-    }
-}
 
 @available(iOS 15.0, *)
 extension MarkdownViewTextKit {
@@ -725,10 +695,4 @@ extension MarkdownViewTextKit {
         return true
     }
     
-    //MARK: - streaming method
-    /// 计算需要原子化输出的区间（公式、图片、链接）
-        func calculateAtomicRanges(in text: String) -> [NSRange] {
-            AtomicRangeMatcher.ranges(in: text)
-        }
-
 }
