@@ -89,7 +89,6 @@ final class AIChatConversationStore {
         self.fileURL = fileURL ?? applicationSupport
             .appendingPathComponent("AIChat", isDirectory: true)
             .appendingPathComponent("conversations.json", isDirectory: false)
-
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601
