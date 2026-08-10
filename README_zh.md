@@ -1,33 +1,21 @@
+*[English](README.md) | 中文*
+
 # MarkdownDisplayView
 
-一个功能强大的 iOS Markdown 渲染组件，基于 TextKit 2 构建，提供流畅的渲染性能和丰富的自定义选项。同时也支持AI问答流式渲染md格式。
+一个基于 TextKit 2 的 iOS UIKit Markdown 渲染组件，支持样式配置、后台解析、增量 UI 更新和实时 AI/SSE 流式输出。
 
-> 🚀 **MarkdownDisplayView 实现的流式渲染效果媲美 ChatGPT、Claude、豆包、DeepSeek、Grok 等主流 AI 终端的 iOS 客户端，并提供更丰富的自定义功能和配置选项。**
+> 🚀 **面向 AI 对话与文档页面：既可渲染完整 Markdown，也可持续追加 AI/SSE 增量，并支持样式、打字机效果与震动反馈配置。**
 
 ## 目录
 
-- [效果展示](#效果展示)
-- [Demo 效果](#demo-效果)
-- [特性](#特性)
-- [系统要求](#系统要求)
-- [安装](#安装)
-- [快速开始](#快速开始)
-- [自定义配置](#自定义配置)
-- [目录功能](#目录功能)
-- [支持的 Markdown 语法](#支持的-markdown-语法)
-- [完整示例](#完整示例)
-- [性能优化](#性能优化)
-- [高级用法](#高级用法)
-- [自定义扩展](#自定义扩展)
-- [故障排除](#故障排除)
-- [更新日志](#更新日志)
-- [贡献](#贡献)
-- [许可证](#许可证)
-- [作者](#作者)
-- [致谢](#致谢)
-- [联系方式](#联系方式)
-
-## 效果展示
+| 概览 | 使用 | 项目 |
+|------|------|------|
+| [Demo 效果](#demo-效果) | [快速开始](#快速开始) | [完整示例](#完整示例) |
+| [特性](#特性) | [自定义配置](#自定义配置) | [性能优化](#性能优化) |
+| [系统要求](#系统要求) | [目录功能](#目录功能) | [故障排除](#故障排除) |
+| [安装](#安装) | [支持的 Markdown 语法](#支持的-markdown-语法) | [更新日志](#更新日志) |
+| | [高级用法](#高级用法) | [贡献](#贡献) · [许可证](#许可证) |
+| | [自定义扩展](#自定义扩展) | [作者](#作者) · [致谢](#致谢) · [联系方式](#联系方式) |
 
 ## Demo 效果
 
@@ -43,44 +31,58 @@
 
 - 与AI大模型对话
 
-Config.local.json 结构如下：
+需要运行真实 AI 对话 Demo 时，请在示例 target 中创建不纳入版本控制的 `Config.local.json`。
 
-```jsonc
-// {
-//   "host": "https://api.deepseek.com",
-//   "path": "/chat/completions",
-//   "apiKey": "",
-//   "model": "deepseek-chat",
-//   "systemPrompt": "You are a helpful assistant.",
-//   "temperature": 0.7,
-//   "stream": true,
-//   "timeoutSeconds": 30
-// }
+<details>
+<summary>展开查看 Config.local.json 结构</summary>
+
+```json
+{
+  "host": "https://api.deepseek.com",
+  "path": "/chat/completions",
+  "apiKey": "replace-with-your-api-key",
+  "model": "deepseek-chat",
+  "systemPrompt": "You are a helpful assistant.",
+  "temperature": 0.7,
+  "stream": true,
+  "timeoutSeconds": 30
+}
 ```
+
+</details>
 
 ![AIChat](./Effects/ChatWithAIModel.gif)
 
 ## 特性
 
-- 🚀 **高性能渲染** - 基于 TextKit 2，支持异步渲染和增量更新，流式渲染等，**秒开加载**，首屏渲染极速完成
-- ⚡ **低 CPU 占用** - 流式模式下支持嵌套样式展示，iPhone 17 Pro 模拟器上 CPU 峰值 < 56%，平均仅 30%
-- 🎨 **完整 Markdown 支持** - LaTeX协议公式、标题、列表、表格、代码块（支持横向滚动）、引用、图片等
-- 🌈 **语法高亮** - 支持 20+ 种编程语言的代码高亮（Swift、Python、JavaScript 等）
-- 📑 **自动目录** - 自动提取标题生成可交互目录
-- 🎯 **高度可定制** - 字体、颜色、间距等全方位配置
-- 🔌 **自定义扩展** - 支持自定义行内语法解析和代码块渲染器（如 Mermaid 图表）
-- 🔗 **事件回调** - 链接点击、图片点击、目录导航
-- 📱 **iOS 原生** - 使用 UIKit 和 TextKit 2 构建，性能优异
-- 🌓 **深色模式** - 内置浅色和深色主题配置
-- 📳 **震动反馈** - 流式输出时支持同步震动反馈，提升交互体验
+| 能力 | 说明 |
+|------|------|
+| 渲染 | TextKit 2、后台解析、首屏优先与增量 UI 更新 |
+| AI/SSE 流式 | 安全模块缓冲、顺序增量、打字机输出、高度缓存和可选震动 |
+| Markdown | 标题、列表、表格、引用、图片、LaTeX、脚注、折叠块和可横向滚动代码块 |
+| 代码高亮 | 内置 20+ 种常用语言高亮 |
+| 导航 | 自动目录、标题跳转与文档内锚点 |
+| 样式 | 字体、颜色、间距、明暗预设与块级外观 |
+| 扩展 | 自定义解析器、视图提供者、事件处理器和代码块渲染器 |
+| 回调 | 链接、图片、目录、高度和流式步骤事件 |
 
 ## 系统要求
 
-- iOS 15.0+(TextKit2 要求)
-- Swift 5.9+
-- Xcode 16.0+
+| 项目 | 要求 |
+|------|------|
+| 最低系统 | iOS 15.0+ |
+| Swift 工具链 | Swift 5.9+ |
+| Xcode | 库使用 Xcode 15.0+；仓库内示例工程采用 Xcode 26 项目格式 |
 
 ## 安装
+
+| 包管理器 | 依赖名称 | 导入模块 |
+|----------|----------|----------|
+| Swift Package Manager | `MarkdownDisplayView` | `import MarkdownDisplayView` |
+| CocoaPods | `MarkdownDisplayKit` | `import MarkdownDisplayKit` |
+
+<details>
+<summary>展开查看安装步骤与命令</summary>
 
 ### Swift Package Manager
 
@@ -97,18 +99,20 @@ Config.local.json 结构如下：
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.9")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.9.9")
 ]
 ```
 
-`Package.swift` 会自动解析 `Kingfisher` `8.9.0` 起始版本，用于图片异步加载和缓存。
+Swift Package Manager 会自动解析 `swift-markdown` 和 `Kingfisher`。
 
 然后在 target 中添加:
 
 ```swift
 .target(
     name: "YourTarget",
-    dependencies: ["MarkdownDisplayView"]
+    dependencies: [
+        .product(name: "MarkdownDisplayView", package: "MarkdownDisplayView")
+    ]
 )
 ```
 
@@ -118,7 +122,7 @@ dependencies: [
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 1.8.9'
+pod 'MarkdownDisplayKit', '~> 1.9.9'
 ```
 
 然后运行:
@@ -129,55 +133,27 @@ pod install
 
 **说明**：`MarkdownDisplayKit.podspec` 已声明 `AppleSwiftMDWrapper` 作为 Markdown 解析依赖，并声明 `Kingfisher (~> 8.9.0)` 作为图片加载依赖，执行 `pod install` 时会自动解析。
 
+</details>
+
 ## 快速开始
 
 ### 基础用法
+
+Swift Package Manager 使用 `import MarkdownDisplayView`；CocoaPods 的相同 API 通过 `import MarkdownDisplayKit` 暴露。
 
 ```swift
 import UIKit
 import MarkdownDisplayView
 
-class ViewController: UIViewController {
-
-    private let markdownView = ScrollableMarkdownViewTextKit()
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-
-        // 添加到视图层级
-        view.addSubview(markdownView)
-        markdownView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            markdownView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            markdownView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            markdownView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            markdownView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-
-        // 设置 Markdown 内容
-        markdownView.markdown = """
-        # 欢迎使用 MarkdownDisplayView
-
-        这是一个**功能强大**的 Markdown 渲染组件。
-
-        ## 主要特性
-        - 支持完整的 Markdown 语法
-        - 代码语法高亮
-        - 自动生成目录
-        - 图片异步加载
-
-        ### 代码示例
-
-        ```swift
-        let message = "Hello, World!"
-        print(message)
-        ```
-
-        [访问 GitHub](https://github.com)
-        """
-    }
-}
+let markdownView = ScrollableMarkdownViewTextKit()
+markdownView.configuration = .default
+markdownView.markdown = "# 你好\n\n使用 TextKit 2 渲染 **Markdown**。"
 ```
+
+将 `markdownView` 加入视图层级并像普通 `UIScrollView` 一样设置约束即可。完整可运行布局请参考 [`MarkdownExampleViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift)。
+
+<details>
+<summary>展开查看链接与图片回调示例</summary>
 
 ### 设置链接点击回调
 
@@ -198,9 +174,14 @@ markdownView.onImageTap = { imageURL in
 }
 ```
 
+</details>
+
 ## 自定义配置
 
 ### 使用预设主题
+
+<details>
+<summary>展开查看预设主题代码</summary>
 
 ```swift
 // 使用默认浅色主题
@@ -210,7 +191,12 @@ markdownView.configuration = .default
 markdownView.configuration = .dark
 ```
 
+</details>
+
 ### 自定义配置
+
+<details>
+<summary>展开查看完整配置示例</summary>
 
 ```swift
 var config = MarkdownConfiguration.default
@@ -229,7 +215,8 @@ config.blockquoteTextColor = .secondaryLabel
 
 // 自定义间距
 config.paragraphSpacing = 16
-config.headingSpacing = 20
+config.headingTopSpacing = 20
+config.headingBottomSpacing = 12
 config.imageMaxHeight = 500
 config.lineSpacing = MarkdownLineSpacingConfiguration(
     body: 6,
@@ -242,7 +229,14 @@ config.lineSpacing = MarkdownLineSpacingConfiguration(
 markdownView.configuration = config
 ```
 
-### 完整配置选项
+</details>
+
+### 配置参考
+
+以下列出常用公开配置；当前版本的完整定义请以 [`MarkdownConfiguration`](MarkdownDisplayView/Sources/MarkdownDisplayView/MarkdownRenderElement.swift) 源码为准。
+
+<details>
+<summary>展开查看配置属性</summary>
 
 #### 字体配置
 
@@ -284,9 +278,11 @@ public var detailsSummaryTextColor: UIColor            // 折叠块标题文字�
 
 ```swift
 public var paragraphSpacing: CGFloat       // 段落间距
-public var headingSpacing: CGFloat         // 标题间距
+public var headingTopSpacing: CGFloat      // 标题前间距
+public var headingBottomSpacing: CGFloat   // 标题后间距
+public var paragraphTopSpacing: CGFloat    // 段落前间距
+public var paragraphBottomSpacing: CGFloat // 段落后间距
 public var listIndent: CGFloat             // 列表缩进
-public var codeBlockPadding: CGFloat       // 代码块内边距
 public var blockquoteIndent: CGFloat       // 引用缩进
 public var imageMaxHeight: CGFloat         // 图片最大高度
 public var imagePlaceholderHeight: CGFloat // 图片占位符高度
@@ -310,6 +306,7 @@ public struct MarkdownLineSpacingConfiguration {
 ```swift
 public var latexFontSize: CGFloat          // LaTeX 公式字号（默认: 22）
 public var latexAlignment: NSTextAlignment // LaTeX 公式对齐方式（.left, .center, .right）
+public var latexTextColor: UIColor         // 公式字形与线条的默认颜色
 public var latexBackgroundColor: UIColor   // LaTeX 公式背景颜色
 public var latexPadding: CGFloat           // LaTeX 公式内边距（默认: 20）
 ```
@@ -357,8 +354,7 @@ public var detailsSpacing: CGFloat             // 折叠块内部间距（默认
 #### 代码高亮配置
 
 ```swift
-public var syntaxColors: SyntaxHighlightColors      // 代码高亮颜色（浅色主题）
-public var syntaxColorsDark: SyntaxHighlightColors  // 代码高亮颜色（深色主题）
+public var syntaxColors: SyntaxHighlightColors // 当前使用的高亮颜色；`.dark` 会设置为 `.xcodeDark`
 
 // SyntaxHighlightColors 结构体
 public struct SyntaxHighlightColors {
@@ -399,9 +395,16 @@ config.streamingHapticMinInterval = 0.05      // 50ms 最小间隔
 markdownView.configuration = config
 ```
 
+</details>
+
 ## 目录功能
 
+<details>
+<summary>展开查看目录 API 用法</summary>
+
 ### 获取自动生成的目录
+
+Markdown 解析是异步的。请在渲染产生高度回调后，或后续用户操作中读取/展示目录，不要在设置 `markdown` 后立即读取。
 
 ```swift
 // Markdown 内容会自动解析标题生成目录
@@ -417,170 +420,69 @@ for item in tocItems {
 ```swift
 // 自动生成可点击的目录视图
 let tocView = markdownView.generateTOCView()
-
-// 添加到界面
 view.addSubview(tocView)
+NSLayoutConstraint.activate([
+    tocView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+    tocView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+    tocView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
+])
 ```
 
-### 滚动到指定标题
+### 监听或主动触发目录导航
 
 ```swift
-// 点击目录项时滚动到对应位置
+// 内置目录项会在此回调返回后自动滚动。
 markdownView.onTOCItemTap = { item in
+    print("选中目录项：\(item.title)")
+}
+
+// 从自定义 UI 主动跳转。
+if let item = markdownView.tableOfContents.first {
     markdownView.scrollToTOCItem(item)
 }
 ```
 
+</details>
+
 ## 支持的 Markdown 语法
 
-### 标题
+| 分类 | 支持形式 |
+|------|----------|
+| 标题 | 使用 `#` 到 `######` 的 H1–H6 |
+| 文本 | 粗体、斜体、粗斜体、删除线和行内代码 |
+| 列表 | 有序、无序、嵌套和任务列表 |
+| 链接与图片 | 行内链接、远程图片、文档内锚点和点击回调 |
+| 引用 | 多行与嵌套引用，可包含富块级内容 |
+| 代码 | 行内与围栏代码块，20+ 种语言高亮及横向滚动 |
+| 表格 | GFM 管道表格、列对齐和流式异常表格修复 |
+| 数学公式 | 行内 `$…$`、块级 `$$…$$` 及 `math` / `latex` 围栏 |
+| 文档辅助 | 分隔线、脚注和 HTML 风格 `details` / `summary` 折叠区 |
 
-```markdown
-# H1 一级标题
-## H2 二级标题
-### H3 三级标题
-#### H4 四级标题
-##### H5 五级标题
-###### H6 六级标题
-```
-
-### 文本格式
-
-```markdown
-**粗体文本**
-*斜体文本*
-***粗斜体***
-~~删除线~~
-`行内代码`
-```
-
-### 列表
-
-#### 无序列表
-
-```markdown
-- 项目 1
-- 项目 2
-  - 嵌套项目 2.1
-  - 嵌套项目 2.2
-```
-
-#### 有序列表
-
-```markdown
-1. 第一项
-2. 第二项
-   1. 嵌套 2.1
-   2. 嵌套 2.2
-```
-
-#### 任务列表
-
-```markdown
-- [x] 已完成任务
-- [ ] 待完成任务
-```
-
-### 链接和图片
-
-```markdown
-[链接文本](https://example.com)
-![图片描述](https://example.com/image.png)
-```
-
-### 引用
-
-```markdown
-> 这是一段引用文本
-> 可以包含多行
->> 支持嵌套引用
-```
-
-### 代码块
-
-支持语法高亮的编程语言：
-
-- Swift、Objective-C
-- JavaScript、TypeScript、Python、Ruby
-- Java、Kotlin、Go、Rust
-- C、C++、Shell、SQL
-- HTML、CSS、JSON、YAML
-- 以及更多...
-
-````markdown
-```swift
-func greet(name: String) -> String {
-    return "Hello, \(name)!"
-}
-print(greet(name: "World"))
-```
-````
-
-### 表格
-
-```markdown
-| 列1 | 列2 | 列3 |
-|-----|-----|-----|
-| A1  | B1  | C1  |
-| A2  | B2  | C2  |
-```
-
-### 分隔线
-
-```markdown
----
-***
-___
-```
-
-### 折叠区域（Details）
-
-```html
-<details>
-<summary>点击展开</summary>
-
-这里是折叠的内容
-可以包含任何 Markdown 语法
-
-</details>
-```
-
-### 脚注
-
-```markdown
-这是一段文本[^1]
-
-[^1]: 这是脚注内容
-```
+完整渲染语法目录请查看 [`MarkdownExampleViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift)。
 
 ## 完整示例
 
-查看 `Example/ExampleForMarkdown` 目录下的完整示例项目，包含：
+| 工程 | 集成方式 | 覆盖内容 |
+|------|----------|----------|
+| [`ExampleForMarkdown`](Example/ExampleForMarkdown/) | Swift Package Manager | 语法目录、主题、回调、AI 对话/流式、历史缓存，以及 Video、Mermaid、ECharts |
+| [`CocoapodsMDExample`](CocoapodsMDExample/) | CocoaPods | 通过 `MarkdownDisplayKit` 展示等价 UIKit 用法与自定义扩展 |
 
-- 所有 Markdown 语法的渲染效果
-- 自定义配置示例
-- 视频、Mermaid 和 ECharts 自定义扩展示例
-- 事件回调处理
-- 性能测试
-
-使用 CocoaPods 集成时，可查看包含相同自定义扩展的 [`CocoapodsMDExample`](CocoapodsMDExample/) 示例工程。
-
-运行示例项目：
-
-```bash
-cd Example/ExampleForMarkdown
-open ExampleForMarkdown.xcodeproj
-```
+使用 `open Example/ExampleForMarkdown/ExampleForMarkdown.xcodeproj` 打开 SPM 示例工程。
 
 ## 性能优化
 
-- **异步渲染** - Markdown 解析和渲染在后台队列执行，不阻塞主线程
-- **增量更新** - 使用 Diff 算法，只更新变化的部分
-- **图片懒加载** - 图片通过 Kingfisher 异步加载，并复用缓存
-- **正则缓存** - 语法高亮正则表达式缓存复用
-- **视图复用** - 高效的视图更新策略
+| 策略 | 行为 |
+|------|------|
+| 后台解析 | 解析与准备工作进入专用渲染队列，UIKit 更新回到主线程 |
+| 增量更新 | Diff/追加路径只更新受影响内容，并优先处理首屏 |
+| 图片管线 | Kingfisher 异步加载并复用内存/磁盘缓存 |
+| 工作缓存 | 复用语法正则、预渲染内容和同宽度高度测量 |
+| 流式预算 | 顺序解析、UI 工作与打字机播放使用有界队列和背压 |
 
 ## 高级用法
+
+<details>
+<summary>展开查看核心视图、预渲染、Cell 与流式指南</summary>
 
 ### 直接使用核心视图（无滚动）
 
@@ -594,14 +496,20 @@ let markdownView = MarkdownViewTextKit()
 持久化时仍以原始 Markdown 作为数据源。对于已经结束流式输出的稳定消息，可以在后台队列生成渲染结果，并按照消息标识、Markdown 内容、容器宽度和样式版本缓存在内存中：
 
 ```swift
-let renderer = MarkdownRenderer(
-    configuration: configuration,
-    containerWidth: markdownWidth
-)
-let prepared = renderer.prepare(message.markdown)
+let source = message.markdown
+let width = markdownWidth
+let renderConfiguration = configuration
 
-DispatchQueue.main.async {
-    markdownView.setPreparedContent(prepared)
+DispatchQueue.global(qos: .userInitiated).async {
+    let renderer = MarkdownRenderer(
+        configuration: renderConfiguration,
+        containerWidth: width
+    )
+    let prepared = renderer.prepare(source)
+
+    DispatchQueue.main.async {
+        markdownView.setPreparedContent(prepared)
+    }
 }
 ```
 
@@ -611,7 +519,7 @@ DispatchQueue.main.async {
 
 示例控制器会让短 Markdown 继续走普通渲染；长文缓存未命中时显示轻量加载指示，并且只提交一次预渲染，避免同一份内容同时进行普通解析和缓存预解析。
 
-可见区域预取、有界渲染缓存和 Table 行高缓存可参考 `AIChatViewController.swift` 与 `HistoryMDViewController.swift`。
+可见区域预取、有界渲染缓存和 Table 行高缓存可参考 [`AIChatViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/AIChatViewController.swift) 与 [`HistoryMDViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/HistoryMDViewController.swift)。
 
 ### 监听高度变化
 
@@ -620,80 +528,31 @@ let markdownView = MarkdownViewTextKit()
 
 markdownView.onHeightChange = { newHeight in
     print("内容高度变化为: \(newHeight)")
-    // 可用于动态调整容器高度
-}
-// 设置链接点击回调
-markdownView.onLinkTap = { [weak self] url in
-    // 处理链接点击
-    if UIApplication.shared.canOpenURL(url) {
-        UIApplication.shared.open(url)
-    }
-}
-markdownView.onImageTap = { imageURL in
-    // 内置 ImageView 会通过 Kingfisher 加载并缓存远程图片。
-    // 如需图片预览，可使用 imageURL 打开自定义预览页。
-}
-markdownView.onTOCItemTap = { item in
-    print("title:\(item.title), level:\(item.level), id:\(item.id)")
 }
 ```
 
 ### 使用带滚动的视图（推荐）
 
-```swift
-let scrollableView = ScrollableMarkdownViewTextKit()
-view.addSubview(scrollableMarkdownView)
-
-scrollableMarkdownView.translatesAutoresizingMaskIntoConstraints = false
-
-NSLayoutConstraint.activate([
-    scrollableMarkdownView.topAnchor.constraint(
-                equalTo: view.topAnchor, constant: 88),
-    scrollableMarkdownView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-    scrollableMarkdownView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-    scrollableMarkdownView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-])
-// 内置 UIScrollView，自动处理滚动
-scrollableMarkdownView.onLinkTap = { [weak self] url in
-    // 处理链接点击
-    if UIApplication.shared.canOpenURL(url) {
-        UIApplication.shared.open(url)
-    }
-}
-scrollableMarkdownView.onImageTap = { imageURL in
-    // 内置 ImageView 会通过 Kingfisher 加载并缓存远程图片。
-    // 如需图片预览，可使用 imageURL 打开自定义预览页。
-}
-scrollableMarkdownView.onTOCItemTap = { item in
-    print("title:\(item.title), level:\(item.level), id:\(item.id)")
-}
-scrollableMarkdownView.markdown = sampleMarkdown
-//返回目录
-scrollableMarkdownView.backToTableOfContentsSection()
-```
+`ScrollableMarkdownViewTextKit` 就是快速开始与示例工程使用的封装。它内部持有 `MarkdownViewTextKit`，提供滚动能力，并转发 `markdown`、`configuration`、链接/图片/目录回调及目录导航 API。完整可运行设置请参考 [`MarkdownExampleViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift#L14)。
 
 ### 实时流式 Markdown（LLM/SSE）
 
-当 AI 模型或 SSE 连接持续返回字符串分片时，使用真实流式 API：响应开始前开启一次流式模式，按到达顺序追加每个解码后的 content delta，并在服务端发送完成事件或连接正常结束后收尾。请直接传递真实分片，不要先拼成完整 Markdown 再回放。
+当 AI 模型或 SSE 连接持续返回字符串分片时，请在主线程调用三个真实流式 API：响应开始前开启一次流式模式，按到达顺序追加每个解码后的 content delta，并在服务端发送完成事件或连接正常结束后收尾。请直接传递真实分片，不要先拼成完整 Markdown 再回放。
 
-```Swift
-class ChatViewController: UIViewController {
-    private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
+```swift
+@MainActor
+func streamDidStart(_ view: MarkdownViewTextKit) {
+    view.beginRealStreaming()
+}
 
-    // 打开或开始消费响应体之前调用
-    func startLLMStream() {
-        scrollableMarkdownView.markdownView.beginRealStreaming()
-    }
+@MainActor
+func streamDidReceive(_ delta: String, in view: MarkdownViewTextKit) {
+    view.appendStreamData(delta)
+}
 
-    // 每收到一个解码后的 AI/SSE content delta 时调用
-    func onChunkReceived(_ chunk: String) {
-        scrollableMarkdownView.markdownView.appendStreamData(chunk)
-    }
-
-    // 收到服务端完成事件或连接正常结束后调用
-    func onStreamComplete() {
-        scrollableMarkdownView.markdownView.endRealStreaming()
-    }
+@MainActor
+func streamDidFinish(_ view: MarkdownViewTextKit) {
+    view.endRealStreaming()
 }
 ```
 
@@ -701,25 +560,29 @@ class ChatViewController: UIViewController {
 
 用于 Table/Collection Cell 的 AI 对话流式推荐配置：
 
-```Swift
+```swift
 var config = MarkdownConfiguration.default
 config.typewriterTextMode = .append
 config.typewriterHeightUpdateInterval = 20
-config.streamMinModuleLength = 20
+config.streamMinModuleLength = 10
+config.streamingHapticFeedbackStyle = .medium
+config.latexAlignment = .left
 scrollableMarkdownView.markdownView.configuration = config
 ```
 
 **核心特性**：
 - **智能缓冲**：自动缓冲未完成的 Markdown 结构（未闭合的代码块、表格、LaTeX 公式）
-- **纯文本识别**：`MarkdownStreamBuffer` 新增 `isPlainText()` 检测，用于识别非 Markdown 内容
+- **纯文本识别**：内部流式缓冲器会识别不含 Markdown 标记的内容
 - **纯文本更快输出**：对于没有 Markdown 标记的纯文本，模块允许在 `\n` 边界提交，不再必须等待 `\n\n`
-- **Markdown 行为不变**：Markdown 内容仍按 `\n\n` 段落边界提交
+- **安全 Markdown 边界**：优先提交完整标题模块，标题不足时回退到段落边界；代码围栏等未闭合结构会继续留在缓冲区
 - **增量渲染**：完整模块立即渲染，未完成内容继续缓冲等待
 - **打字机效果**：渲染内容平滑的逐字显示动画
 
+</details>
+
 ## 自定义扩展
 
-MarkdownDisplayKit 支持自定义扩展，可以添加自己的 Markdown 语法和渲染。
+核心库支持自定义扩展，可接入业务自己的 Markdown 语法与渲染方式。
 
 ### 示例位置与能力
 
@@ -742,9 +605,16 @@ MarkdownDisplayKit 支持自定义扩展，可以添加自己的 Markdown 语法
 - [`MermaidRenderer.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MermaidRenderer.swift)
 - [`MarkdownEChartsExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownEChartsExtension.swift)
 
+<details>
+<summary>展开查看扩展注册与语法示例</summary>
+
 ### 视频自定义扩展示例
 
 在 `AppDelegate` 中注册视频扩展：
+
+> `registerVideoExtension()` 由 Demo 的 [`MarkdownVideoExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownVideoExtension.swift) 定义；业务工程调用前需要复制并加入该实现。
+
+下面使用 Swift Package Manager 的模块名；CocoaPods 工程应改为 `import MarkdownDisplayKit`。
 
 ```swift
 import MarkdownDisplayView
@@ -761,106 +631,17 @@ func application(_ application: UIApplication, didFinishLaunchingWithOptions lau
 ```markdown
 ## 视频演示
 
-[video:myVideo]
+[video:video]
 
 支持格式: .mov, .mp4, .m4v
 ```
+
+引用的视频文件必须存在于 App Bundle。仓库示例包含 `video.mov`，因此 `[video:video]` 可直接运行。
 
 **功能特性**:
 - 自动生成视频缩略图
 - 显示视频时长
 - 点击使用 QuickLook 播放
-
-### 创建自定义扩展
-
-实现三个协议来创建自定义扩展：
-
-#### 1. 自定义解析器
-
-```swift
-class MentionParser: MarkdownCustomParser {
-    let identifier = "mention"
-    let pattern = "@([a-zA-Z0-9_]+)"  // 正则模式
-
-    func parse(match: NSTextCheckingResult, in text: String) -> CustomElementData? {
-        guard let range = Range(match.range(at: 1), in: text) else { return nil }
-        let username = String(text[range])
-
-        return CustomElementData(
-            type: "mention",
-            rawText: "@\(username)",
-            payload: ["username": username]
-        )
-    }
-}
-```
-
-#### 2. 自定义视图提供者
-
-```swift
-class MentionViewProvider: MarkdownCustomViewProvider {
-    let supportedType = "mention"
-
-    func createView(
-        for data: CustomElementData,
-        configuration: MarkdownConfiguration,
-        containerWidth: CGFloat
-    ) -> UIView {
-        let label = UILabel()
-        label.text = data.rawText
-        label.textColor = .systemBlue
-        label.font = configuration.bodyFont
-        label.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.1)
-        label.layer.cornerRadius = 4
-        label.sizeToFit()
-        return label
-    }
-
-    func calculateSize(
-        for data: CustomElementData,
-        configuration: MarkdownConfiguration,
-        containerWidth: CGFloat
-    ) -> CGSize {
-        let text = data.rawText as NSString
-        let size = text.size(withAttributes: [.font: configuration.bodyFont])
-        return CGSize(width: size.width + 8, height: size.height + 4)
-    }
-}
-```
-
-#### 3. 自定义事件处理器
-
-```swift
-class MentionActionHandler: MarkdownCustomActionHandler {
-    let supportedType = "mention"
-
-    func handleTap(data: CustomElementData, sourceView: UIView, presentingViewController: UIViewController?) {
-        guard let username = data.payload["username"] else { return }
-        print("跳转到用户主页: \(username)")
-    }
-}
-```
-
-#### 4. 注册扩展
-
-```swift
-let manager = MarkdownCustomExtensionManager.shared
-manager.register(parser: MentionParser())
-manager.register(viewProvider: MentionViewProvider())
-manager.register(actionHandler: MentionActionHandler())
-```
-
-### 支持的自定义语法格式
-
-| 扩展 | 语法 | 说明 |
-|------|------|------|
-| 视频 | `[video:文件名]` | 嵌入视频，支持 QuickLook 播放 |
-| Mermaid | `` ```mermaid `` | 使用自定义代码块渲染器展示 Mermaid 图表 |
-| ECharts | `<echarts height="320">JSON</echarts>` | 使用 HTML 风格自定义标签展示 ECharts 图表 |
-| @提及* | `@username` | 用户提及（示例） |
-| 表情* | `::emoji_name::` | 自定义表情（示例） |
-
-视频、Mermaid 和 ECharts 实现在 Demo 中；`@提及` 和表情仅为协议用法示意，默认未包含实际实现。
 
 ### 代码块渲染器
 
@@ -868,30 +649,7 @@ manager.register(actionHandler: MentionActionHandler())
 
 #### Mermaid 图表渲染器示例
 
-```swift
-public final class MermaidRenderer: MarkdownCodeBlockRenderer {
-    public let supportedLanguage = "mermaid"
-
-    public func renderCodeBlock(
-        code: String,
-        configuration: MarkdownConfiguration,
-        containerWidth: CGFloat
-    ) -> UIView {
-        // 使用 WKWebView 渲染 Mermaid 图表
-        let view = MermaidWebView(code: code, frame: ...)
-        return view
-    }
-
-    public func calculateSize(
-        code: String,
-        configuration: MarkdownConfiguration,
-        containerWidth: CGFloat
-    ) -> CGSize {
-        // 根据图表类型估算高度
-        return CGSize(width: containerWidth - 32, height: estimatedHeight)
-    }
-}
-```
+完整可运行的 `WKWebView` 实现位于 [`MermaidRenderer.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MermaidRenderer.swift)。它实现 `MarkdownCodeBlockRenderer`，负责估算图表尺寸、加载 Mermaid.js，并把实际高度变化回传给 Markdown 视图。
 
 #### 注册代码块渲染器
 
@@ -899,6 +657,8 @@ public final class MermaidRenderer: MarkdownCodeBlockRenderer {
 let manager = MarkdownCustomExtensionManager.shared
 manager.register(codeBlockRenderer: MermaidRenderer())
 ```
+
+同一 Demo 源文件还提供了便捷方法 `registerMermaidRenderer()`；该方法不属于 SDK target。
 
 **支持的图表类型**（通过 Mermaid.js）：
 - 流程图 (flowchart/graph)
@@ -913,6 +673,8 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 ECharts 示例使用 HTML 风格标签，但底层仍由 `MarkdownCustomParser` 识别，并通过 `MarkdownCustomViewProvider` 返回 `WKWebView`，不会开启通用 HTML 或任意 `<script>` 渲染。
 
 在 `AppDelegate` 中注册：
+
+> `registerEChartsExtension()` 由 Demo 的 [`MarkdownEChartsExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownEChartsExtension.swift) 定义；业务工程调用前需要复制并加入该实现。
 
 ```swift
 MarkdownCustomExtensionManager.shared.registerEChartsExtension()
@@ -938,37 +700,27 @@ MarkdownCustomExtensionManager.shared.registerEChartsExtension()
 
 ECharts 和 Mermaid 示例通过 CDN 加载脚本，首次展示需要网络。如产品要求完全离线，可将固定版本的 JavaScript 文件加入 App Bundle，并在对应 Demo Renderer 中改为加载本地资源。
 
+</details>
+
 ## 故障排除
 
-### 1. 编译错误：找不到 UIKit
-
-**问题**：在 macOS 上使用 `swift build` 编译失败
-
-**解决方案**：此库仅支持 iOS 平台，必须在 Xcode 中针对 iOS 模拟器或设备进行构建
-
-### 2. 图片不显示
-
-**问题**：Markdown 中的图片无法显示
-
-**原因**：
-
-- 图片 URL 无效或无法访问
-- 网络权限未配置
-
-**解决方案**：
-
-- 检查 Info.plist 中的网络权限配置
-- 使用有效的图片 URL
-
-### 3. Swift 并发警告
-
-**问题**：出现 Sendable 相关警告
-
-**解决方案**：库已使用 Swift 5.9 构建，避免严格并发检查
+| 现象 | 处理方式 |
+|------|----------|
+| macOS `swift build` 提示找不到 UIKit | 该包仅支持 iOS，请在 Xcode 中选择 iOS 模拟器或设备目标构建 |
+| Markdown 图片无法显示 | 确认 URL 可访问并优先使用 HTTPS；必须使用 HTTP 时，仅添加所需域名的 ATS 例外 |
 
 ## Demo 主题与块级外观（1.9.9）
 
-`ExampleForMarkdown` Demo 新增了 **Theme Gallery**，内置暖纸张、鼠尾草、深海代码和暮紫夜色四套完整主题。选择主题后，Demo 会通过 `UserDefaults` 保存选择，并把同一份配置应用到 Markdown 预览、AI Chat 及其历史记录、长历史列表、TableView Streaming，以及两个智能流式示例中。
+`ExampleForMarkdown` 的 **Theme Gallery** 提供四套仅属于 Demo 的主题：
+
+| 主题 | 风格 | 界面模式 |
+|------|------|----------|
+| 暖纸张 | Editorial | 浅色 |
+| 鼠尾草 | Calm | 浅色 |
+| 深海代码 | Code | 深色 |
+| 暮紫夜色 | Art | 深色 |
+
+选择主题后，Demo 会通过 `UserDefaults` 保存选择，并把同一份配置应用到 Markdown 预览、AI Chat/历史、长历史列表、TableView Streaming 和智能流式示例中。
 
 在示例 App 首页进入 **Theme Gallery**，选择一张主题卡片，再进入上述任一页面即可查看效果。主题持久化由 Demo 内部的 `MarkdownDemoThemeStore` 实现，它不是 SDK 的全局主题单例。页面会在创建时读取当前主题，因此如果切换主题时目标页面已经打开，需要重新进入该页面刷新配置。
 
@@ -977,6 +729,9 @@ ECharts 和 Mermaid 示例通过 CDN 加载脚本，首次展示需要网络。�
 ### 创建主题配置
 
 颜色和块级容器外观可以分别配置。`MarkdownBlockAppearance` 仅通过 `CALayer` 绘制圆角和边框，不会修改约束、内边距、测量高度或滚动范围。
+
+<details>
+<summary>展开查看完整主题配置</summary>
 
 ```swift
 var configuration = MarkdownConfiguration.default
@@ -1032,9 +787,14 @@ configuration.detailsAppearance = MarkdownBlockAppearance(
 markdownView.configuration = configuration
 ```
 
+</details>
+
 `latexTextColor` 控制公式字形、分数线和根号等绘制线条的默认颜色；公式内显式声明的 LaTeX `\color{...}` 仍然优先。图片主题默认只保留圆角、不显示边框；只有业务确实需要图片描边时，再设置 `borderWidth` 与 `borderColor`。
 
 ### 保持预渲染配置一致
+
+<details>
+<summary>展开查看预渲染主题同步方式</summary>
 
 页面使用 `MarkdownRenderer.prepare(_:)` 时，需要给 Renderer 和最终展示视图传入同一份配置，避免缓存或预渲染内容残留另一套主题的颜色。
 
@@ -1048,6 +808,8 @@ let preparedContent = renderer.prepare(markdown)
 markdownView.configuration = configuration
 markdownView.setPreparedContent(preparedContent)
 ```
+
+</details>
 
 ## 更新日志
 
@@ -1069,6 +831,9 @@ markdownView.setPreparedContent(preparedContent)
 - 🔒 **模块与自定义扩展处理确定化** - 完整模块保持全局顺序和文档级标题 ID；fenced code 与 opaque 自定义块跨 chunk 时保持完整，自定义流式标签继续通过 `streamingBlockTagName` 显式启用。
 - 🧹 **智能流式 API 与示例收敛** - 智能流式统一使用 `beginRealStreaming()`、`appendStreamData(_:)` 和 `endRealStreaming(completion:)`；删除预切块 `appendBlock` 路径及未使用的流式示例控件。
 - 📊 **可选性能诊断与回归覆盖** - 新增通过 `MD_STREAM_PERF_LOG=1` / `MD_STREAM_PERF_ONLY=1` 开启的 `[MDPERF]` 聚合诊断，并覆盖 Unicode 标点、emoji 边界、FIFO 顺序、背压、重绘去重、高度缓存和最终 drain。合并基线已通过 68 项 iOS Simulator 测试以及 SwiftPM/CocoaPods 示例构建。
+
+<details>
+<summary>展开查看 1.8.9 及更早版本记录</summary>
 
 ### 1.8.9 (2026-07-31)
 
@@ -1246,6 +1011,8 @@ markdownView.setPreparedContent(preparedContent)
 - ✅ 自动目录生成
 - ✅ 深色模式支持
 - ✅ 高性能异步渲染
+
+</details>
 
 ## 贡献
 

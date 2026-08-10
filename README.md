@@ -2,34 +2,20 @@
 
 # MarkdownDisplayView
 
-A powerful iOS Markdown rendering component built on TextKit 2, providing smooth rendering performance and rich customization options. It also enables the streaming rendering of Markdown format in AI question-and-answer scenarios.
+A UIKit Markdown renderer for iOS built on TextKit 2, with configurable styles, background parsing, incremental UI updates, and real-time AI/SSE streaming.
 
-> 🚀 **MarkdownDisplayView delivers streaming rendering effects comparable to leading AI terminal iOS clients like ChatGPT, Claude, Doubao, DeepSeek, and Grok, while offering even richer customization features and configuration options.**
+> 🚀 **Designed for AI chat and document screens: render complete Markdown or append live AI/SSE deltas with configurable styling, typewriter output, and haptic feedback.**
 
 ## Contents
 
-- [Effects Showcase](#effects-showcase)
-- [Demo Effects](#demo-effects)
-- [Features](#features)
-- [Requirements](#requirements)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Custom Configuration](#custom-configuration)
-- [Table of Contents](#table-of-contents)
-- [Supported Markdown Syntax](#supported-markdown-syntax)
-- [Complete Example](#complete-example)
-- [Performance Optimization](#performance-optimization)
-- [Advanced Usage](#advanced-usage)
-- [Custom Extensions](#custom-extensions)
-- [Troubleshooting](#troubleshooting)
-- [Changelog](#changelog)
-- [Contributing](#contributing)
-- [License](#license)
-- [Author](#author)
-- [Acknowledgments](#acknowledgments)
-- [Contact](#contact)
-
-## Effects Showcase
+| Overview | Usage | Project |
+|----------|-------|---------|
+| [Demo Effects](#demo-effects) | [Quick Start](#quick-start) | [Complete Example](#complete-example) |
+| [Features](#features) | [Custom Configuration](#custom-configuration) | [Performance Optimization](#performance-optimization) |
+| [Requirements](#requirements) | [Table of Contents](#table-of-contents) | [Troubleshooting](#troubleshooting) |
+| [Installation](#installation) | [Supported Markdown Syntax](#supported-markdown-syntax) | [Changelog](#changelog) |
+| | [Advanced Usage](#advanced-usage) | [Contributing](#contributing) · [License](#license) |
+| | [Custom Extensions](#custom-extensions) | [Author](#author) · [Acknowledgments](#acknowledgments) · [Contact](#contact) |
 
 ## Demo Effects
 
@@ -43,42 +29,59 @@ A powerful iOS Markdown rendering component built on TextKit 2, providing smooth
 
 - Chat with AI model
 
-Config.local.json structure:
+Create an untracked `Config.local.json` in the example target when you want to run the real AI chat demo.
 
-```jsonc
-// {
-//   "host": "https://api.deepseek.com",
-//   "path": "/chat/completions",
-//   "apiKey": "",
-//   "model": "deepseek-chat",
-//   "systemPrompt": "You are a helpful assistant.",
-//   "temperature": 0.7,
-//   "stream": true,
-//   "timeoutSeconds": 30
-// }
+<details>
+<summary>Show Config.local.json structure</summary>
+
+```json
+{
+  "host": "https://api.deepseek.com",
+  "path": "/chat/completions",
+  "apiKey": "replace-with-your-api-key",
+  "model": "deepseek-chat",
+  "systemPrompt": "You are a helpful assistant.",
+  "temperature": 0.7,
+  "stream": true,
+  "timeoutSeconds": 30
+}
 ```
+
+</details>
 
 ![AIChat](./Effects/ChatWithAIModel.gif)
 
 ## Features
-- 🚀 **High-Performance Rendering** — Based on TextKit 2, supports asynchronous rendering, incremental updates, streaming rendering, etc. **Instant loading** with ultra-fast first screen rendering.
-- ⚡ **Low CPU Usage** — Streaming mode supports nested style rendering with CPU peak < 56% on iPhone 17 Pro simulator, averaging only 30%.
-- 🎨 **Full Markdown Support** — Formula of LaTeX protocol, Headings, lists, tables, code blocks (with horizontal scrolling), blockquotes, images, and more.
-- 🌈 **Syntax Highlighting** — Supports syntax highlighting for 20+ programming languages (Swift, Python, JavaScript, etc.).
-- 📑 **Automatic Table of Contents** — Automatically extracts headings to generate an interactive TOC.
-- 🎯 **Highly Customizable** — Comprehensive configuration for fonts, colors, spacing, etc.
-- 🔌 **Custom Extensions** — Support for custom inline syntax parsing and code block renderers (e.g., Mermaid diagrams).
-- 🔗 **Event Callbacks** — Link taps, image taps, TOC navigation.
-- 📱 **Native iOS** — Built with UIKit and TextKit 2 for excellent performance.
-- 🌓 **Dark Mode** — Built-in light and dark theme configurations.
-- 📳 **Haptic Feedback** — Supports synchronized haptic feedback during streaming output for enhanced interaction experience.
+
+| Capability | What it provides |
+|------------|------------------|
+| Rendering | TextKit 2, background parsing, first-screen-first and incremental UI updates |
+| AI/SSE streaming | Safe module buffering, ordered deltas, typewriter output, height caching, and optional haptics |
+| Markdown | Headings, lists, tables, blockquotes, images, LaTeX, footnotes, details, and horizontally scrollable code blocks |
+| Code highlighting | Built-in highlighting for 20+ common languages |
+| Navigation | Generated table of contents, heading navigation, and internal anchors |
+| Styling | Fonts, colors, spacing, light/dark presets, and block appearance |
+| Extensions | Custom parsers, view providers, action handlers, and fenced-code renderers |
+| Callbacks | Link, image, TOC, height, and streaming-step events |
 
 ## Requirements
-- iOS 15.0+ (due to TextKit 2 requirement)
-- Swift 5.9+
-- Xcode 16.0+
+
+| Item | Requirement |
+|------|-------------|
+| Deployment target | iOS 15.0+ |
+| Swift tools | Swift 5.9+ |
+| Xcode | Xcode 15.0+ for the package; the checked-in example project uses the Xcode 26 project format |
 
 ## Installation
+
+| Package manager | Dependency name | Import |
+|-----------------|-----------------|--------|
+| Swift Package Manager | `MarkdownDisplayView` | `import MarkdownDisplayView` |
+| CocoaPods | `MarkdownDisplayKit` | `import MarkdownDisplayKit` |
+
+<details>
+<summary>Show installation steps and commands</summary>
+
 ### Swift Package Manager
 #### Method 1: Add via Xcode
 1. Open your project in Xcode.
@@ -90,17 +93,28 @@ Config.local.json structure:
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.8.9")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.9.9")
 ]
 ```
 
-`Package.swift` resolves `Kingfisher` from `8.9.0` automatically for asynchronous image loading and caching.
+Then add the library product to your target:
+
+```swift
+.target(
+    name: "YourTarget",
+    dependencies: [
+        .product(name: "MarkdownDisplayView", package: "MarkdownDisplayView")
+    ]
+)
+```
+
+Swift Package Manager resolves `swift-markdown` and `Kingfisher` automatically.
 
 ### CocoaPods
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 1.8.9'
+pod 'MarkdownDisplayKit', '~> 1.9.9'
 ```
 
 Then run:
@@ -111,55 +125,27 @@ pod install
 
 **Note**: `MarkdownDisplayKit.podspec` declares `AppleSwiftMDWrapper` for Markdown parsing and `Kingfisher (~> 8.9.0)` for image loading, so CocoaPods resolves those dependencies during `pod install`.
 
+</details>
+
 ## Quick Start
 
 ### Basic Usage
+
+Use `import MarkdownDisplayView` with Swift Package Manager. CocoaPods exposes the same API through `import MarkdownDisplayKit`.
 
 ```swift
 import UIKit
 import MarkdownDisplayView
 
-class ViewController: UIViewController {
-
-    private let markdownView = ScrollableMarkdownViewTextKit()
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-
-        // Add to view hierarchy
-        view.addSubview(markdownView)
-        markdownView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            markdownView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            markdownView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            markdownView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            markdownView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
-
-        // Set Markdown content
-        markdownView.markdown = """
-        # Welcome to MarkdownDisplayView
-
-        This is a **powerful** Markdown rendering component.
-
-        ## Key Features
-        - Full Markdown syntax support
-        - Code syntax highlighting
-        - Automatic table of contents generation
-        - Asynchronous image loading
-
-        ### Code Example
-
-        ```swift
-        let message = "Hello, World!"
-        print(message)
-        ```
-
-        [Visit GitHub](https://github.com)
-        """
-    }
-}
+let markdownView = ScrollableMarkdownViewTextKit()
+markdownView.configuration = .default
+markdownView.markdown = "# Hello\n\nRender **Markdown** with TextKit 2."
 ```
+
+Add `markdownView` to your view hierarchy and constrain it like any other `UIScrollView`. See the working layout in [`MarkdownExampleViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift).
+
+<details>
+<summary>Show link and image callback examples</summary>
 
 ### Handle Link Taps
 
@@ -180,9 +166,14 @@ markdownView.onImageTap = { imageURL in
 }
 ```
 
+</details>
+
 ## Custom Configuration
 
 ### Using Preset Themes
+
+<details>
+<summary>Show preset theme code</summary>
 
 ```swift
 // Use default light theme
@@ -192,7 +183,12 @@ markdownView.configuration = .default
 markdownView.configuration = .dark
 ```
 
+</details>
+
 ### Custom Configuration
+
+<details>
+<summary>Show a complete configuration example</summary>
 
 ```swift
 var config = MarkdownConfiguration.default
@@ -211,7 +207,8 @@ config.blockquoteTextColor = .secondaryLabel
 
 // Custom spacing
 config.paragraphSpacing = 16
-config.headingSpacing = 20
+config.headingTopSpacing = 20
+config.headingBottomSpacing = 12
 config.imageMaxHeight = 500
 config.lineSpacing = MarkdownLineSpacingConfiguration(
     body: 6,
@@ -224,7 +221,14 @@ config.lineSpacing = MarkdownLineSpacingConfiguration(
 markdownView.configuration = config
 ```
 
-### Complete Configuration Options
+</details>
+
+### Configuration Reference
+
+The following list highlights commonly used public options. Treat [`MarkdownConfiguration`](MarkdownDisplayView/Sources/MarkdownDisplayView/MarkdownRenderElement.swift) as the complete source of truth for the current release.
+
+<details>
+<summary>Show configuration properties</summary>
 
 #### Font Configuration
 
@@ -266,9 +270,11 @@ public var detailsSummaryTextColor: UIColor            // Details summary text c
 
 ```swift
 public var paragraphSpacing: CGFloat       // Paragraph spacing
-public var headingSpacing: CGFloat         // Heading spacing
+public var headingTopSpacing: CGFloat      // Space before headings
+public var headingBottomSpacing: CGFloat   // Space after headings
+public var paragraphTopSpacing: CGFloat    // Space before paragraphs
+public var paragraphBottomSpacing: CGFloat // Space after paragraphs
 public var listIndent: CGFloat             // List indentation
-public var codeBlockPadding: CGFloat       // Code block padding
 public var blockquoteIndent: CGFloat       // Blockquote indentation
 public var imageMaxHeight: CGFloat         // Maximum image height
 public var imagePlaceholderHeight: CGFloat // Image placeholder height
@@ -292,6 +298,7 @@ public struct MarkdownLineSpacingConfiguration {
 ```swift
 public var latexFontSize: CGFloat          // LaTeX formula font size (default: 22)
 public var latexAlignment: NSTextAlignment // LaTeX formula alignment (.left, .center, .right)
+public var latexTextColor: UIColor         // Default formula glyph and rule color
 public var latexBackgroundColor: UIColor   // LaTeX formula background color
 public var latexPadding: CGFloat           // LaTeX formula padding (default: 20)
 ```
@@ -339,8 +346,7 @@ public var detailsSpacing: CGFloat             // Details internal spacing (defa
 #### Syntax Highlighting Configuration
 
 ```swift
-public var syntaxColors: SyntaxHighlightColors      // Syntax highlighting colors (light theme)
-public var syntaxColorsDark: SyntaxHighlightColors  // Syntax highlighting colors (dark theme)
+public var syntaxColors: SyntaxHighlightColors // Active syntax-highlighting colors; `.dark` assigns `.xcodeDark`
 
 // SyntaxHighlightColors structure
 public struct SyntaxHighlightColors {
@@ -381,9 +387,16 @@ config.streamingHapticMinInterval = 0.05      // 50ms minimum interval
 markdownView.configuration = config
 ```
 
+</details>
+
 ## Table of Contents
 
+<details>
+<summary>Show TOC API usage</summary>
+
 ### Get Auto-Generated TOC
+
+Markdown parsing is asynchronous. Read or present the TOC after rendering has produced a height callback, or from a later user action—not immediately after assigning `markdown`.
 
 ```swift
 // Markdown content automatically parses headings to generate TOC
@@ -399,170 +412,69 @@ for item in tocItems {
 ```swift
 // Automatically generate clickable TOC view
 let tocView = markdownView.generateTOCView()
-
-// Add to interface
 view.addSubview(tocView)
+NSLayoutConstraint.activate([
+    tocView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+    tocView.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+    tocView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16)
+])
 ```
 
-### Scroll to Heading
+### Observe or Trigger TOC Navigation
 
 ```swift
-// Scroll to corresponding position when TOC item is tapped
+// Generated TOC entries automatically scroll after this callback returns.
 markdownView.onTOCItemTap = { item in
+    print("Selected TOC item: \(item.title)")
+}
+
+// Navigate manually from your own UI.
+if let item = markdownView.tableOfContents.first {
     markdownView.scrollToTOCItem(item)
 }
 ```
 
+</details>
+
 ## Supported Markdown Syntax
 
-### Headings
+| Category | Supported forms |
+|----------|-----------------|
+| Headings | H1–H6 with `#` through `######` |
+| Text | Bold, italic, bold-italic, strikethrough, and inline code |
+| Lists | Ordered, unordered, nested, and task lists |
+| Links and images | Inline links, remote images, internal anchors, and tap callbacks |
+| Blockquotes | Multi-line and nested quotes, including rich child blocks |
+| Code | Inline and fenced blocks; 20+ highlighted languages and horizontal scrolling |
+| Tables | GFM pipe tables, column alignment, and malformed-stream repair |
+| Math | Inline `$…$`, display `$$…$$`, and fenced `math` / `latex` blocks |
+| Document helpers | Horizontal rules, footnotes, and HTML-style `details` / `summary` sections |
 
-```markdown
-# H1 Heading
-## H2 Heading
-### H3 Heading
-#### H4 Heading
-##### H5 Heading
-###### H6 Heading
-```
-
-### Text Formatting
-
-```markdown
-**Bold text**
-*Italic text*
-***Bold and italic***
-~~Strikethrough~~
-`Inline code`
-```
-
-### Lists
-
-#### Unordered Lists
-
-```markdown
-- Item 1
-- Item 2
-  - Nested item 2.1
-  - Nested item 2.2
-```
-
-#### Ordered Lists
-
-```markdown
-1. First item
-2. Second item
-   1. Nested 2.1
-   2. Nested 2.2
-```
-
-#### Task Lists
-
-```markdown
-- [x] Completed task
-- [ ] Pending task
-```
-
-### Links and Images
-
-```markdown
-[Link text](https://example.com)
-![Image description](https://example.com/image.png)
-```
-
-### Blockquotes
-
-```markdown
-> This is a blockquote
-> Can contain multiple lines
->> Nested blockquotes are supported
-```
-
-### Code Blocks
-
-Supported programming languages for syntax highlighting:
-
-- Swift, Objective-C
-- JavaScript, TypeScript, Python, Ruby
-- Java, Kotlin, Go, Rust
-- C, C++, Shell, SQL
-- HTML, CSS, JSON, YAML
-- And more...
-
-````markdown
-```swift
-func greet(name: String) -> String {
-    return "Hello, \(name)!"
-}
-print(greet(name: "World"))
-```
-````
-
-### Tables
-
-```markdown
-| Column1 | Column2 | Column3 |
-|---------|---------|---------|
-| A1      | B1      | C1      |
-| A2      | B2      | C2      |
-```
-
-### Horizontal Rules
-
-```markdown
----
-***
-___
-```
-
-### Details (Collapsible Sections)
-
-```html
-<details>
-<summary>Click to expand</summary>
-
-This is the collapsed content
-Can contain any Markdown syntax
-
-</details>
-```
-
-### Footnotes
-
-```markdown
-This is text with a footnote[^1]
-
-[^1]: This is the footnote content
-```
+The complete rendered syntax catalog lives in [`MarkdownExampleViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift).
 
 ## Complete Example
 
-Check out the complete example project in the `Example/ExampleForMarkdown` directory, which includes:
+| Project | Integration | Coverage |
+|---------|-------------|----------|
+| [`ExampleForMarkdown`](Example/ExampleForMarkdown/) | Swift Package Manager | Syntax catalog, themes, callbacks, AI chat/streaming, history/cache demos, Video, Mermaid, and ECharts |
+| [`CocoapodsMDExample`](CocoapodsMDExample/) | CocoaPods | Equivalent UIKit usage and custom-extension examples through `MarkdownDisplayKit` |
 
-- All Markdown syntax rendering effects
-- Custom configuration examples
-- Video, Mermaid, and ECharts custom extension examples
-- Event callback handling
-- Performance testing
-
-For CocoaPods integration, see the [`CocoapodsMDExample`](CocoapodsMDExample/) project, which contains the same custom extensions.
-
-Run the example project:
-
-```bash
-cd Example/ExampleForMarkdown
-open ExampleForMarkdown.xcodeproj
-```
+Open the SPM example with `open Example/ExampleForMarkdown/ExampleForMarkdown.xcodeproj`.
 
 ## Performance Optimization
 
-- **Asynchronous Rendering** - Markdown parsing and rendering execute in background queue, not blocking the main thread
-- **Incremental Updates** - Uses Diff algorithm, only updates changed parts
-- **Lazy Image Loading** - Images load asynchronously through Kingfisher with cache reuse
-- **Regex Caching** - Syntax highlighting regex expressions are cached and reused
-- **View Reuse** - Efficient view update strategy
+| Strategy | Behavior |
+|----------|----------|
+| Background parsing | Parsing and preparation use a dedicated render queue; UIKit updates return to the main thread |
+| Incremental updates | Diff/append paths update only affected content and prioritize the first screen |
+| Image pipeline | Kingfisher loads asynchronously and reuses memory/disk caches |
+| Cached work | Syntax regexes, prepared content, and same-width height measurements are reused |
+| Streaming budgets | Ordered parsing, UI work, and typewriter playback apply bounded queues/backpressure |
 
 ## Advanced Usage
+
+<details>
+<summary>Show core view, prepared-content, cell, and streaming guidance</summary>
 
 ### Using Core View Directly (Without Scrolling)
 
@@ -576,14 +488,20 @@ let markdownView = MarkdownViewTextKit()
 Persist the original Markdown as the source of truth. For stable, non-streaming messages, prepare the rendered content on a background queue and keep it in an in-memory cache keyed by message identity, Markdown content, container width, and style version:
 
 ```swift
-let renderer = MarkdownRenderer(
-    configuration: configuration,
-    containerWidth: markdownWidth
-)
-let prepared = renderer.prepare(message.markdown)
+let source = message.markdown
+let width = markdownWidth
+let renderConfiguration = configuration
 
-DispatchQueue.main.async {
-    markdownView.setPreparedContent(prepared)
+DispatchQueue.global(qos: .userInitiated).async {
+    let renderer = MarkdownRenderer(
+        configuration: renderConfiguration,
+        containerWidth: width
+    )
+    let prepared = renderer.prepare(source)
+
+    DispatchQueue.main.async {
+        markdownView.setPreparedContent(prepared)
+    }
 }
 ```
 
@@ -593,7 +511,7 @@ For tens or hundreds of long documents, do not prepare the complete history eage
 
 The example controllers use the normal render path for short Markdown and show a lightweight loading indicator while a cache-missed long document is prepared once, avoiding simultaneous normal parsing and cache preparation for the same content.
 
-See `AIChatViewController.swift` and `HistoryMDViewController.swift` for visible-range prefetching, bounded prepared-content caches, and cached table-row estimates.
+See [`AIChatViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/AIChatViewController.swift) and [`HistoryMDViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/HistoryMDViewController.swift) for visible-range prefetching, bounded prepared-content caches, and cached table-row estimates.
 
 ### Monitor Height Changes
 
@@ -602,80 +520,31 @@ let markdownView = MarkdownViewTextKit()
 
 markdownView.onHeightChange = { newHeight in
     print("Content height changed to: \(newHeight)")
-    // Can be used to dynamically adjust container height
-}
-// Set link tap callback
-markdownView.onLinkTap = { [weak self] url in
-    // Handle link tap
-    if UIApplication.shared.canOpenURL(url) {
-        UIApplication.shared.open(url)
-    }
-}
-markdownView.onImageTap = { imageURL in
-    // Built-in ImageView loads and caches remote images through Kingfisher.
-    // Use imageURL to present your own preview if needed.
-}
-markdownView.onTOCItemTap = { item in
-    print("title:\(item.title), level:\(item.level), id:\(item.id)")
 }
 ```
 
 ### Using Scrollable View (Recommended)
 
-```swift
-let scrollableView = ScrollableMarkdownViewTextKit()
-view.addSubview(scrollableMarkdownView)
-
-scrollableMarkdownView.translatesAutoresizingMaskIntoConstraints = false
-
-NSLayoutConstraint.activate([
-    scrollableMarkdownView.topAnchor.constraint(
-                equalTo: view.topAnchor, constant: 88),
-    scrollableMarkdownView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-    scrollableMarkdownView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-    scrollableMarkdownView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-])
-// Built-in UIScrollView, automatically handles scrolling
-scrollableMarkdownView.onLinkTap = { [weak self] url in
-    // Handle link tap
-    if UIApplication.shared.canOpenURL(url) {
-        UIApplication.shared.open(url)
-    }
-}
-scrollableMarkdownView.onImageTap = { imageURL in
-    // Built-in ImageView loads and caches remote images through Kingfisher.
-    // Use imageURL to present your own preview if needed.
-}
-scrollableMarkdownView.onTOCItemTap = { item in
-    print("title:\(item.title), level:\(item.level), id:\(item.id)")
-}
-scrollableMarkdownView.markdown = sampleMarkdown
-// Back to table of contents
-scrollableMarkdownView.backToTableOfContentsSection()
-```
+`ScrollableMarkdownViewTextKit` is the wrapper used by the quick start and the example app. It owns a `MarkdownViewTextKit`, supplies scrolling, and forwards `markdown`, `configuration`, link/image/TOC callbacks, and TOC navigation APIs. See the verified setup in [`MarkdownExampleViewController.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift#L14).
 
 ### Real-Time Streaming Markdown (LLM/SSE)
 
-Use the real streaming API when an AI model or SSE connection delivers text fragments over time. Start the stream once, append every decoded content delta in arrival order, and end it only after the server signals completion. Pass through the original chunk boundaries instead of assembling and replaying a complete Markdown document.
+Use the real streaming API when an AI model or SSE connection delivers text fragments over time. Call all three methods on the main thread: start the stream once, append every decoded content delta in arrival order, and end it only after the server signals completion. Pass through the original chunk boundaries instead of assembling and replaying a complete Markdown document.
 
-```Swift
-class ChatViewController: UIViewController {
-    private let scrollableMarkdownView = ScrollableMarkdownViewTextKit()
+```swift
+@MainActor
+func streamDidStart(_ view: MarkdownViewTextKit) {
+    view.beginRealStreaming()
+}
 
-    // Call before opening/consuming the response body.
-    func startLLMStream() {
-        scrollableMarkdownView.markdownView.beginRealStreaming()
-    }
+@MainActor
+func streamDidReceive(_ delta: String, in view: MarkdownViewTextKit) {
+    view.appendStreamData(delta)
+}
 
-    // Call for each decoded AI/SSE content delta.
-    func onChunkReceived(_ chunk: String) {
-        scrollableMarkdownView.markdownView.appendStreamData(chunk)
-    }
-
-    // Call after the server's completion event or a clean EOF.
-    func onStreamComplete() {
-        scrollableMarkdownView.markdownView.endRealStreaming()
-    }
+@MainActor
+func streamDidFinish(_ view: MarkdownViewTextKit) {
+    view.endRealStreaming()
 }
 ```
 
@@ -683,25 +552,29 @@ The two `StreamingMarkdownController` demos schedule local chunks only to stand 
 
 Recommended configuration for streaming AI chat in table/collection cells:
 
-```Swift
+```swift
 var config = MarkdownConfiguration.default
 config.typewriterTextMode = .append
 config.typewriterHeightUpdateInterval = 20
-config.streamMinModuleLength = 20
+config.streamMinModuleLength = 10
+config.streamingHapticFeedbackStyle = .medium
+config.latexAlignment = .left
 scrollableMarkdownView.markdownView.configuration = config
 ```
 
 **Key Features**:
 - **Smart Buffering**: Automatically buffers incomplete Markdown structures (unclosed code blocks, tables, LaTeX)
-- **`isPlainText()` Detection**: `MarkdownStreamBuffer` detects non-Markdown content
+- **Plain-Text Detection**: the internal stream buffer detects content without Markdown markers
 - **Faster Plain Text Streaming**: For plain text without Markdown markers, module submission can happen at `\n` boundaries instead of strictly waiting for `\n\n`
-- **Markdown Behavior Unchanged**: Markdown content still waits for `\n\n` paragraph boundaries
+- **Safe Markdown Boundaries**: complete headings are emitted first; paragraph boundaries are used as a fallback while fenced or otherwise incomplete structures remain buffered
 - **Incremental Rendering**: Renders complete modules immediately while buffering incomplete content
 - **Typewriter Effect**: Smooth character-by-character animation for rendered content
 
+</details>
+
 ## Custom Extensions
 
-MarkdownDisplayKit supports custom extensions to add your own Markdown syntax and rendering.
+The core library supports custom extensions for app-specific Markdown syntax and rendering.
 
 ### Example Locations and Capabilities
 
@@ -724,9 +597,16 @@ Source files:
 - [`MermaidRenderer.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MermaidRenderer.swift)
 - [`MarkdownEChartsExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownEChartsExtension.swift)
 
+<details>
+<summary>Show extension registration and syntax examples</summary>
+
 ### Video Custom Extension Example
 
 Register the video extension in `AppDelegate`:
+
+> `registerVideoExtension()` is defined by the demo's [`MarkdownVideoExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownVideoExtension.swift); copy that implementation into your app before calling it.
+
+The snippet below uses the Swift Package Manager module name; CocoaPods apps should use `import MarkdownDisplayKit`.
 
 ```swift
 import MarkdownDisplayView
@@ -743,106 +623,17 @@ func application(_ application: UIApplication, didFinishLaunchingWithOptions lau
 ```markdown
 ## Video Demo
 
-[video:myVideo]
+[video:video]
 
 Supported formats: .mov, .mp4, .m4v
 ```
+
+The referenced file must exist in the app bundle. The checked-in demo includes `video.mov`, so `[video:video]` works as written.
 
 **Features**:
 - Auto-generates video thumbnail
 - Displays video duration
 - Click to play with QuickLook
-
-### Creating Custom Extensions
-
-Implement three protocols to create your own extension:
-
-#### 1. Custom Parser
-
-```swift
-class MentionParser: MarkdownCustomParser {
-    let identifier = "mention"
-    let pattern = "@([a-zA-Z0-9_]+)"  // Regex pattern
-
-    func parse(match: NSTextCheckingResult, in text: String) -> CustomElementData? {
-        guard let range = Range(match.range(at: 1), in: text) else { return nil }
-        let username = String(text[range])
-
-        return CustomElementData(
-            type: "mention",
-            rawText: "@\(username)",
-            payload: ["username": username]
-        )
-    }
-}
-```
-
-#### 2. Custom View Provider
-
-```swift
-class MentionViewProvider: MarkdownCustomViewProvider {
-    let supportedType = "mention"
-
-    func createView(
-        for data: CustomElementData,
-        configuration: MarkdownConfiguration,
-        containerWidth: CGFloat
-    ) -> UIView {
-        let label = UILabel()
-        label.text = data.rawText
-        label.textColor = .systemBlue
-        label.font = configuration.bodyFont
-        label.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.1)
-        label.layer.cornerRadius = 4
-        label.sizeToFit()
-        return label
-    }
-
-    func calculateSize(
-        for data: CustomElementData,
-        configuration: MarkdownConfiguration,
-        containerWidth: CGFloat
-    ) -> CGSize {
-        let text = data.rawText as NSString
-        let size = text.size(withAttributes: [.font: configuration.bodyFont])
-        return CGSize(width: size.width + 8, height: size.height + 4)
-    }
-}
-```
-
-#### 3. Custom Action Handler
-
-```swift
-class MentionActionHandler: MarkdownCustomActionHandler {
-    let supportedType = "mention"
-
-    func handleTap(data: CustomElementData, sourceView: UIView, presentingViewController: UIViewController?) {
-        guard let username = data.payload["username"] else { return }
-        print("Navigate to user profile: \(username)")
-    }
-}
-```
-
-#### 4. Register Extensions
-
-```swift
-let manager = MarkdownCustomExtensionManager.shared
-manager.register(parser: MentionParser())
-manager.register(viewProvider: MentionViewProvider())
-manager.register(actionHandler: MentionActionHandler())
-```
-
-### Supported Custom Syntax Patterns
-
-| Extension | Syntax | Description |
-|-----------|--------|-------------|
-| Video | `[video:filename]` | Embed video with QuickLook playback |
-| Mermaid | `` ```mermaid `` | Render Mermaid diagrams with a custom code block renderer |
-| ECharts | `<echarts height="320">JSON</echarts>` | Render ECharts with an HTML-style custom tag |
-| Mention* | `@username` | User mention (example) |
-| Emoji* | `::emoji_name::` | Custom emoji (example) |
-
-Video, Mermaid, and ECharts are implemented in the demos. Mention and Emoji only illustrate the extension protocols and do not have bundled implementations.
 
 ### Code Block Renderers
 
@@ -850,30 +641,7 @@ In addition to inline syntax extensions, you can also create custom code block r
 
 #### Mermaid Diagram Renderer Example
 
-```swift
-public final class MermaidRenderer: MarkdownCodeBlockRenderer {
-    public let supportedLanguage = "mermaid"
-
-    public func renderCodeBlock(
-        code: String,
-        configuration: MarkdownConfiguration,
-        containerWidth: CGFloat
-    ) -> UIView {
-        // Use WKWebView to render Mermaid diagrams
-        let view = MermaidWebView(code: code, frame: ...)
-        return view
-    }
-
-    public func calculateSize(
-        code: String,
-        configuration: MarkdownConfiguration,
-        containerWidth: CGFloat
-    ) -> CGSize {
-        // Estimate height based on diagram type
-        return CGSize(width: containerWidth - 32, height: estimatedHeight)
-    }
-}
-```
+The complete, runnable `WKWebView` implementation is [`MermaidRenderer.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MermaidRenderer.swift). It implements `MarkdownCodeBlockRenderer`, calculates the diagram size, loads Mermaid.js, and reports rendered height changes back to the Markdown view.
 
 #### Register Code Block Renderer
 
@@ -881,6 +649,8 @@ public final class MermaidRenderer: MarkdownCodeBlockRenderer {
 let manager = MarkdownCustomExtensionManager.shared
 manager.register(codeBlockRenderer: MermaidRenderer())
 ```
+
+The demo also exposes `registerMermaidRenderer()` as a convenience method in that same source file; it is not part of the SDK target.
 
 **Supported Diagram Types** (via Mermaid.js):
 - Flowchart (flowchart/graph)
@@ -895,6 +665,8 @@ manager.register(codeBlockRenderer: MermaidRenderer())
 The ECharts example uses an HTML-style tag, but it is still recognized by `MarkdownCustomParser` and rendered by a `MarkdownCustomViewProvider` that returns a `WKWebView`. It does not enable general-purpose HTML or arbitrary `<script>` rendering.
 
 Register it in `AppDelegate`:
+
+> `registerEChartsExtension()` is defined by the demo's [`MarkdownEChartsExtension.swift`](Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownEChartsExtension.swift); copy that implementation into your app before calling it.
 
 ```swift
 MarkdownCustomExtensionManager.shared.registerEChartsExtension()
@@ -920,37 +692,27 @@ Pass an ECharts `option` as pure JSON:
 
 The ECharts and Mermaid examples load their scripts from a CDN, so the first render requires network access. For fully offline products, bundle a fixed JavaScript version with the app and update the corresponding demo renderer to load the local resource.
 
+</details>
+
 ## Troubleshooting
 
-### 1. Build Error: Cannot find UIKit
-
-**Problem**: Build fails when using `swift build` on macOS
-
-**Solution**: This library only supports iOS platform, must be built in Xcode targeting iOS simulator or device
-
-### 2. Images Not Displaying
-
-**Problem**: Images in Markdown don't display
-
-**Causes**:
-
-- Image URL is invalid or inaccessible
-- Network permissions not configured
-
-**Solutions**:
-
-- Check network permission configuration in Info.plist
-- Use valid image URLs
-
-### 3. Swift Concurrency Warnings
-
-**Problem**: Sendable-related warnings appear
-
-**Solution**: Library is built with Swift 5.9 to avoid strict concurrency checking
+| Symptom | Resolution |
+|---------|------------|
+| `Cannot find UIKit` from macOS `swift build` | The package is iOS-only; build with an iOS Simulator or device destination in Xcode |
+| A Markdown image does not load | Verify the URL is reachable and uses HTTPS; if HTTP is unavoidable, add only the required domain-specific ATS exception |
 
 ## Demo Themes and Block Appearance (1.9.9)
 
-The `ExampleForMarkdown` app now includes a **Theme Gallery** with four complete Markdown themes: Parchment, Sage, Midnight, and Plum. Selecting a theme stores the choice in `UserDefaults` and reuses the same configuration in the Markdown preview, AI Chat and its history, the long-history example, TableView Streaming, and both smart-streaming examples.
+The `ExampleForMarkdown` app includes four Demo-only themes:
+
+| Theme | Character | Interface style |
+|-------|-----------|-----------------|
+| Parchment | Editorial | Light |
+| Sage | Calm | Light |
+| Midnight | Code | Dark |
+| Plum | Art | Dark |
+
+Selecting a theme stores the choice in `UserDefaults` and reuses the same configuration in the Markdown preview, AI Chat/history, long-history, TableView Streaming, and smart-streaming examples.
 
 Open **Theme Gallery** from the example app, select a theme card, and then enter any of the pages above to inspect the result. Theme persistence is implemented only by the Demo's `MarkdownDemoThemeStore`; it is not a global SDK singleton. Pages read the selected theme when they are created, so reopen an already visible page after changing the theme.
 
@@ -959,6 +721,9 @@ The complete theme definitions are available in [`MarkdownThemeGalleryViewContro
 ### Build a Theme
 
 Colors and block surfaces can be configured independently. `MarkdownBlockAppearance` draws its corner radius and border with `CALayer`; it does not change constraints, padding, measured height, or the scroll range.
+
+<details>
+<summary>Show the complete theme configuration</summary>
 
 ```swift
 var configuration = MarkdownConfiguration.default
@@ -1014,9 +779,14 @@ configuration.detailsAppearance = MarkdownBlockAppearance(
 markdownView.configuration = configuration
 ```
 
+</details>
+
 `latexTextColor` is the default color for formula glyphs and fraction/radical rules. An explicit LaTeX `\color{...}` command still takes precedence. Image themes default to rounded corners without a border; set `borderWidth` and `borderColor` only when a product specifically needs an image outline.
 
 ### Keep Prepared Content in Sync
+
+<details>
+<summary>Show prepared-content theme synchronization</summary>
 
 When a screen uses `MarkdownRenderer.prepare(_:)`, give the renderer and the destination view the same configuration. This prevents cached/prepared content from retaining colors from another theme.
 
@@ -1030,6 +800,8 @@ let preparedContent = renderer.prepare(markdown)
 markdownView.configuration = configuration
 markdownView.setPreparedContent(preparedContent)
 ```
+
+</details>
 
 ## Changelog
 
@@ -1051,6 +823,9 @@ markdownView.setPreparedContent(preparedContent)
 - 🔒 **Deterministic Module and Extension Handling** - Complete modules preserve global ordering and document-wide heading IDs. Fenced code and opaque custom blocks remain intact across chunk boundaries, and custom streaming tags stay explicitly opt-in through `streamingBlockTagName`.
 - 🧹 **Smart-Streaming API and Demo Cleanup** - Smart-stream usage is consolidated around `beginRealStreaming()`, `appendStreamData(_:)`, and `endRealStreaming(completion:)`; the pre-split `appendBlock` path and unused streaming demo controls were removed.
 - 📊 **Opt-In Performance Diagnostics and Regression Coverage** - Added `[MDPERF]` aggregate diagnostics via `MD_STREAM_PERF_LOG=1` / `MD_STREAM_PERF_ONLY=1`, plus coverage for Unicode punctuation, emoji boundaries, FIFO ordering, backpressure, redraw deduplication, height caching, and final drain behavior. The merged baseline passed 68 iOS Simulator tests and SwiftPM/CocoaPods example builds.
+
+<details>
+<summary>Show release notes for 1.8.9 and earlier</summary>
 
 ### 1.8.9 (2026-07-31)
 
@@ -1228,6 +1003,8 @@ markdownView.setPreparedContent(preparedContent)
 - ✅ Automatic table of contents generation
 - ✅ Dark mode support
 - ✅ High-performance asynchronous rendering
+
+</details>
 
 ## Contributing
 
