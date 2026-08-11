@@ -1054,9 +1054,6 @@ If you have questions or suggestions, please contact via:
 - QQ Group
 ![QQ Group](./Communication/qq.jpeg)
 
-- WeChat Group
-![WeChat Group](./Communication/wechat.jpeg)
-
 - Telegram
 ![Telegram](./Communication/telegram.jpeg)
 

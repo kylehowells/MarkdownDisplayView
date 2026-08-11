@@ -1062,9 +1062,6 @@ MarkdownDisplayView 由 [@zjc19891106](https://github.com/zjc19891106) 创建和
 - QQ 群 
 ![QQ群](./Communication/qq.jpeg) 
 
-- 微信群
-![微信群](./Communication/wechat.jpeg)
-
 - Telegram
 ![Telegram](./Communication/telegram.jpeg)
 
