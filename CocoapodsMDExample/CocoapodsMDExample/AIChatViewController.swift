@@ -2148,6 +2148,7 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
             self.toggleSpeech(for: self.messages[row])
         }
         cell.setSpeaking(speakingMessageID == messageID)
+        print("[AIChat][Cell] row=\(indexPath.row) role=\(message.role.rawValue) len=\(message.renderedMarkdown.utf8.count) streaming=\(message.isStreaming)")
         cell.configure(with: message)
         if message.isStreaming {
             cell.startStreaming(withInitial: message.content)

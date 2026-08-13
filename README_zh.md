@@ -99,7 +99,7 @@
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.9.9")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "2.0.0")
 ]
 ```
 
@@ -122,7 +122,7 @@ Swift Package Manager 会自动解析 `swift-markdown` 和 `Kingfisher`。
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 1.9.9'
+pod 'MarkdownDisplayKit', '~> 2.0.0'
 ```
 
 然后运行:
@@ -812,6 +812,15 @@ markdownView.setPreparedContent(preparedContent)
 </details>
 
 ## 更新日志
+
+### 2.0.0 (2026-08-13)
+
+- 🤖 **AI 对话联网搜索与工具调用** - AI Chat 示例接入 DeepSeek 的 function calling，内置 `web_search` 工具：当模型需要训练数据之外的信息时会发起搜索，示例执行真实联网搜索（默认 Bing，另支持 Tavily、DuckDuckGo、Bocha），将结果回传并流式输出最终答案；搜索失败优雅降级，多轮工具调用上下文（`reasoning_content`）跨轮持久化。
+- 🗣 **AI 对话复制与朗读底部操作** - 每条消息 Cell 底部新增「复制全部内容」和「朗读/停止」按钮，朗读基于 SpeechKit（`AVSpeechSynthesizer`）。
+- 🧠 **Thinking 模式参数** - AI Chat 示例透传本地配置中的 `thinking` 与 `reasoning_effort`，并在使用工具时正确回传 `reasoning_content`。
+- 📊 **表格横向滚动更流畅** - 表格 Cell 复用时不再整段拷贝富文本，集合布局只返回可见行列而非全量过滤，并开启横向锁定减少手势冲突。
+- 🐛 **修复自适高约束冲突** - 列表包裹、分隔线、引用块的宽度约束改为较低优先级，消除聊天/历史 Cell 中的 unsatisfiable-constraints 警告。
+- 🐛 **修复重复渲染反馈环** - 赋值相同 Markdown 或预渲染内容不再触发整篇重渲染，Cell 复用也不再重置上次上报高度，消除「渲染 → 高度回调 → batch 更新 → cell 复用」的循环。
 
 ### 1.9.9 (2026-08-06)
 

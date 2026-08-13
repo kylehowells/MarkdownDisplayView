@@ -169,8 +169,10 @@ extension MarkdownViewTextKit {
             contentStack.addArrangedSubview(childView)
         }
 
+        let widthConstraint = outerContainer.widthAnchor.constraint(equalToConstant: width)
+        widthConstraint.priority = .defaultHigh
         NSLayoutConstraint.activate([
-            outerContainer.widthAnchor.constraint(equalToConstant: width),
+            widthConstraint,
             container.topAnchor.constraint(equalTo: outerContainer.topAnchor, constant: 4),
             container.leadingAnchor.constraint(equalTo: outerContainer.leadingAnchor, constant: leftIndent),
             container.trailingAnchor.constraint(equalTo: outerContainer.trailingAnchor),
@@ -201,9 +203,11 @@ extension MarkdownViewTextKit {
         lineView.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(lineView)
         
+        let widthConstraint = container.widthAnchor.constraint(equalToConstant: width)
+        widthConstraint.priority = .defaultHigh
         NSLayoutConstraint.activate([
             container.heightAnchor.constraint(equalToConstant: 24),
-            container.widthAnchor.constraint(equalToConstant: width),
+            widthConstraint,
             lineView.centerYAnchor.constraint(equalTo: container.centerYAnchor),
             lineView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             lineView.trailingAnchor.constraint(equalTo: container.trailingAnchor),

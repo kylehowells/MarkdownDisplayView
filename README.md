@@ -93,7 +93,7 @@ Create an untracked `Config.local.json` in the example target when you want to r
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "1.9.9")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "2.0.0")
 ]
 ```
 
@@ -114,7 +114,7 @@ Swift Package Manager resolves `swift-markdown` and `Kingfisher` automatically.
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 1.9.9'
+pod 'MarkdownDisplayKit', '~> 2.0.0'
 ```
 
 Then run:
@@ -804,6 +804,15 @@ markdownView.setPreparedContent(preparedContent)
 </details>
 
 ## Changelog
+
+### 2.0.0 (2026-08-13)
+
+- 🤖 **AI Chat Web Search & Tool Calls** - The AI Chat examples now call DeepSeek's function-calling API with a built-in `web_search` tool. When the model needs information beyond its training data it requests a search, the demo performs a real web search (Bing by default; Tavily, DuckDuckGo, and Bocha also supported), feeds the results back, and streams the final answer. Search failures degrade gracefully, and multi-turn tool-call context (`reasoning_content`) is persisted across turns.
+- 🗣 **AI Chat Copy & Read-Aloud Footer** - Each chat cell now offers footer actions to copy the full message and to read it aloud or stop playback via SpeechKit (`AVSpeechSynthesizer`).
+- 🧠 **Thinking Mode Parameters** - The AI Chat examples forward `thinking` and `reasoning_effort` from the local configuration and correctly pass `reasoning_content` back when tools are used.
+- 📊 **Faster Table Horizontal Scrolling** - Table cells no longer rebuild a full attributed-string copy on every reuse, the collection layout returns only the visible rows/columns instead of filtering every cell, and horizontal scrolling is direction-locked to avoid gesture conflicts.
+- 🐛 **Fixed Self-Sizing Constraint Conflicts** - List wrapper, thematic break, and blockquote width constraints now use a lower priority, eliminating unsatisfiable-constraint warnings in table-based chat/history cells.
+- 🐛 **Fixed Re-render Feedback Loop** - Assigning identical Markdown or prepared content no longer triggers a full re-render, and cell reuse no longer resets the last reported height, removing the render → height-callback → batch-update → cell-reuse loop in streaming and history screens.
 
 ### 1.9.9 (2026-08-06)
 

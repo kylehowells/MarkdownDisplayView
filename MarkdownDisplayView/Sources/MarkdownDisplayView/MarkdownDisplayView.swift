@@ -104,6 +104,9 @@ public final class MarkdownViewTextKit: UIView {
     
     public var markdown: String = "" {
         didSet {
+            // 相同内容重复赋值（例如 UITableView 复用 Cell 再次 configure）不应触发重渲染，
+            // 否则会形成“渲染 → 高度通知 → batchUpdate → cellForRowAt → 再次渲染”的反馈环。
+            guard oldValue != markdown else { return }
             invalidateIntrinsicHeightCache()
             // 🔍 性能监控：记录渲染开始时间
             if !isStreaming {
@@ -114,10 +117,19 @@ public final class MarkdownViewTextKit: UIView {
         }
     }
 
+    var lastPreparedContentSignature: String?
+
     /// 直接显示由 `MarkdownRenderer.prepare(_:)` 生成的预渲染内容，跳过 Markdown 字符串解析。
     @MainActor
     public func setPreparedContent(_ preparedContent: MarkdownPreparedContent) {
+        let signature = "\(preparedContent.preparedWidth)-\(preparedContent.elements.count)-\(preparedContent.estimatedTotalHeight)"
+        if signature == lastPreparedContentSignature {
+            print("[MarkdownTable] setPreparedContent SKIP \(signature)")
+            return
+        }
+        print("[MarkdownTable] setPreparedContent RENDER \(signature)")
         resetForReuse()
+        lastPreparedContentSignature = signature
 
         renderStartTime = CFAbsoluteTimeGetCurrent()
         let containerWidth = preparedContent.preparedWidth

@@ -111,6 +111,10 @@ class MarkdownTableLayout: UICollectionViewLayout {
     private var contentSize: CGSize = .zero
     private var preparedColumnWidths: [CGFloat] = []
     private var preparedRowHeights: [CGFloat] = []
+    /// 每列左边界累积 x 坐标（与 columnWidths 对齐）
+    private var columnXOffsets: [CGFloat] = []
+    /// 每行(section)顶部累积 y 坐标（与 rowHeights 对齐）
+    private var sectionYOffsets: [CGFloat] = []
     private(set) var layoutRebuildCount = 0
     
     override func prepare() {
@@ -126,6 +130,8 @@ class MarkdownTableLayout: UICollectionViewLayout {
         }
 
         layoutAttributes.removeAll()
+        columnXOffsets.removeAll()
+        sectionYOffsets.removeAll()
         preparedColumnWidths = columnWidths
         preparedRowHeights = rowHeights
         layoutRebuildCount += 1
@@ -134,27 +140,26 @@ class MarkdownTableLayout: UICollectionViewLayout {
             contentSize = .zero
             return
         }
+        print("[MarkdownTable] layout prepare cells=\(rowHeights.count * columnWidths.count) rebuild=\(layoutRebuildCount)")
         
-        var yOffset: CGFloat = 0
-        var xOffsets: [CGFloat] = []
         var currentX: CGFloat = 0
-        
         for width in columnWidths {
-            xOffsets.append(currentX)
+            columnXOffsets.append(currentX)
             currentX += width
         }
-        
         let totalWidth = currentX
         
+        var yOffset: CGFloat = 0
         for section in 0..<rowHeights.count {
             let height = rowHeights[section]
+            sectionYOffsets.append(yOffset)
             
             for item in 0..<columnWidths.count {
                 let indexPath = IndexPath(item: item, section: section)
                 let attributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
                 
                 attributes.frame = CGRect(
-                    x: xOffsets[item],
+                    x: columnXOffsets[item],
                     y: yOffset,
                     width: columnWidths[item],
                     height: height
@@ -174,7 +179,55 @@ class MarkdownTableLayout: UICollectionViewLayout {
     }
     
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
-        return layoutAttributes.values.filter { $0.frame.intersects(rect) }
+        guard !layoutAttributes.isEmpty, !columnWidths.isEmpty, !rowHeights.isEmpty else { return nil }
+        
+        // 只遍历与 rect 相交的行(section)与列(item)区间，避免横向滚动时每帧全量过滤。
+        var firstSection = -1
+        for section in 0..<rowHeights.count {
+            if sectionYOffsets[section] + rowHeights[section] > rect.minY {
+                firstSection = section
+                break
+            }
+        }
+        guard firstSection >= 0 else { return [] }
+        
+        var lastSection = firstSection
+        for section in firstSection..<rowHeights.count {
+            if sectionYOffsets[section] < rect.maxY {
+                lastSection = section
+            } else {
+                break
+            }
+        }
+        
+        var firstItem = -1
+        for item in 0..<columnWidths.count {
+            if columnXOffsets[item] + columnWidths[item] > rect.minX {
+                firstItem = item
+                break
+            }
+        }
+        guard firstItem >= 0 else { return [] }
+        
+        var lastItem = firstItem
+        for item in firstItem..<columnWidths.count {
+            if columnXOffsets[item] < rect.maxX {
+                lastItem = item
+            } else {
+                break
+            }
+        }
+        
+        var result: [UICollectionViewLayoutAttributes] = []
+        result.reserveCapacity((lastSection - firstSection + 1) * (lastItem - firstItem + 1))
+        for section in firstSection...lastSection {
+            for item in firstItem...lastItem {
+                if let attributes = layoutAttributes[IndexPath(item: item, section: section)] {
+                    result.append(attributes)
+                }
+            }
+        }
+        return result
     }
     
     override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
@@ -227,7 +280,14 @@ class MarkdownTableCell: UICollectionViewCell {
         textAlignment: NSTextAlignment
     ) {
         label.textAlignment = textAlignment
-        label.attributedText = text.withOverriddenParagraphAlignment(textAlignment)
+        // 表格单元格文本通常不带 .paragraphStyle（只有 .font/.link 等），
+        // 直接用 label.textAlignment 即可。只有确实存在段落样式时才做对齐覆盖，
+        // 避免每次横向滚动复用时都做一次全文拷贝 + 枚举（导致掉帧）。
+        if text.length > 0, text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) != nil {
+            label.attributedText = text.withOverriddenParagraphAlignment(textAlignment)
+        } else {
+            label.attributedText = text
+        }
         border.backgroundColor = borderColor
     }
 
@@ -308,12 +368,15 @@ class MarkdownTableCollectionView: UIView, UICollectionViewDataSource, UICollect
         collectionView.register(MarkdownTableCell.self, forCellWithReuseIdentifier: MarkdownTableCell.identifier)
         
         // 允许水平滚动
-        collectionView.isScrollEnabled = true 
+        collectionView.isScrollEnabled = true
+        // 横向锁定：嵌在纵向 UITableView 里时，避免与竖向滚动手势竞争导致卡顿
+        collectionView.isDirectionalLockEnabled = true
         // 禁用垂直滚动（由外层处理），但 contentSize.height = frame.height，所以本身也不会垂直滚
         collectionView.showsHorizontalScrollIndicator = true
         collectionView.showsVerticalScrollIndicator = false
         
         addSubview(collectionView)
+        print("[MarkdownTable] view cols=\(attachment.columnWidths.count) sections=\(attachment.tableData.rows.count + 1) totalW=\(Int(attachment.totalSize.width))")
     }
     
     // MARK: DataSource
@@ -405,6 +468,7 @@ class MarkdownTableAttachment: NSTextAttachment {
         self.columnWidths = result.columnWidths
         self.rowHeights = result.rowHeights
         self.totalSize = result.totalSize
+        print("[MarkdownTable] created rows=\(data.rows.count + 1) cols=\(result.columnWidths.count) totalW=\(Int(result.totalSize.width)) totalH=\(Int(result.totalSize.height)) containerW=\(Int(containerWidth))")
         
         super.init(data: nil, ofType: nil)
         

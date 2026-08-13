@@ -298,6 +298,7 @@ extension MarkdownViewTextKit {
         leadingConstraint.identifier = Self.listWrapperLeadingConstraintIdentifier
 
         let widthConstraint = indentWrapper.widthAnchor.constraint(equalToConstant: width)
+        widthConstraint.priority = .defaultHigh
         widthConstraint.identifier = Self.listWrapperWidthConstraintIdentifier
 
         // 使用标准约束替代 pinToEdges

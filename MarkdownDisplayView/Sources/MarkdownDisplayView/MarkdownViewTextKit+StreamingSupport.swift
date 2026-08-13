@@ -60,6 +60,7 @@ extension MarkdownViewTextKit {
     public func resetForReuse() {
         renderWorkItem?.cancel()
         offscreenRenderWorkItem?.cancel()
+        lastPreparedContentSignature = nil
         autoScrollWorkItem?.cancel()
         autoScrollWorkItem = nil
         userScrolledAway = false
@@ -91,7 +92,9 @@ extension MarkdownViewTextKit {
         pendingRequiresFullHeightMeasurement = false
         heightNotificationGeneration += 1
         realStreamHeightAccumulator.reset(verticalMargins: 0)
-        lastReportedHeight = 0
+        // ⚠️ 不复位 lastReportedHeight：Cell 复用后重渲染相同内容时，
+        // 高度应与上一次一致，若归零会把“0→实际高度”误判为大变化，
+        // 从而触发 onHeightChange → performBatchUpdates → cell 复用 → 重渲染的循环。
         invalidateIntrinsicHeightCache()
         invalidateIntrinsicContentSize()
         lastHeightNotificationTimestamp = 0

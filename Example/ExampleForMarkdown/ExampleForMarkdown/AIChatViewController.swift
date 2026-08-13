@@ -1657,6 +1657,7 @@ final class AIChatViewController: UIViewController {
                       cell.representedMessageID == message.id else {
                     return
                 }
+                print("[AIChat][Prepare] completion row=\(row)")
                 cell.configure(
                     with: self.messages[row],
                     preparedContent: prepared,
@@ -2514,6 +2515,7 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate, UITa
             width: markdownContentWidth()
         )
         let needsPreparation = preparedContent == nil && shouldPrepareMarkdown(for: message)
+        print("[AIChat][Cell] row=\(indexPath.row) role=\(message.role.rawValue) len=\(message.renderedMarkdown.utf8.count) prepared=\(preparedContent != nil) streaming=\(message.isStreaming)")
         cell.configure(
             with: message,
             preparedContent: preparedContent,
@@ -2817,6 +2819,7 @@ final class AIChatMessageCell: UITableViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        print("[AIChat][Cell] prepareForReuse")
         hasStartedStreaming = false
         representedMessageID = nil
         preparationIndicator.stopAnimating()
