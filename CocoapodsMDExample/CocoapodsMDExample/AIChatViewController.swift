@@ -8,44 +8,122 @@
 import UIKit
 import MarkdownDisplayKit
 import PhotosUI
+import AVFoundation
 
 enum ChatRole: String, Codable {
     case user
     case assistant
 }
 
+struct AIChatToolContextMessage: Codable {
+    let role: String
+    var content: String?
+    var reasoningContent: String?
+    var toolCallID: String?
+    var toolCalls: [AIChatToolCall]?
+
+    struct AIChatToolCall: Codable {
+        let id: String
+        let type: String
+        let name: String
+        let arguments: String
+    }
+
+    fileprivate func toRequestMessage() -> OpenAIChatRequest.Message {
+        OpenAIChatRequest.Message(
+            role: role,
+            content: content,
+            reasoningContent: reasoningContent,
+            toolCalls: toolCalls?.map {
+                OpenAIChatRequest.Message.ToolCall(
+                    id: $0.id,
+                    type: $0.type,
+                    function: OpenAIChatRequest.Message.ToolCall.FunctionCall(name: $0.name, arguments: $0.arguments)
+                )
+            },
+            toolCallID: toolCallID
+        )
+    }
+}
+
 struct AIChatMessage: Codable {
+    let id: UUID
     let role: ChatRole
     var content: String
     var isPlaceholder: Bool = false
     var isStreaming: Bool = false
     var attachments: [AIChatImageAttachment] = []
+    var toolContext: [AIChatToolContextMessage]?
 
     init(
+        id: UUID = UUID(),
         role: ChatRole,
         content: String,
         isPlaceholder: Bool = false,
         isStreaming: Bool = false,
-        attachments: [AIChatImageAttachment] = []
+        attachments: [AIChatImageAttachment] = [],
+        toolContext: [AIChatToolContextMessage]? = nil
     ) {
+        self.id = id
         self.role = role
         self.content = content
         self.isPlaceholder = isPlaceholder
         self.isStreaming = isStreaming
         self.attachments = attachments
+        self.toolContext = toolContext
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
         role = try container.decode(ChatRole.self, forKey: .role)
         content = try container.decode(String.self, forKey: .content)
         isPlaceholder = try container.decodeIfPresent(Bool.self, forKey: .isPlaceholder) ?? false
         isStreaming = try container.decodeIfPresent(Bool.self, forKey: .isStreaming) ?? false
         attachments = try container.decodeIfPresent([AIChatImageAttachment].self, forKey: .attachments) ?? []
+        toolContext = try container.decodeIfPresent([AIChatToolContextMessage].self, forKey: .toolContext)
+    }
+
+    var renderedMarkdown: String {
+        let attachmentSummary = attachments.isEmpty
+            ? ""
+            : "\n\n*已识别 \(attachments.count) 张图片中的文字*"
+        return content + attachmentSummary
+    }
+}
+
+/// 将 Markdown 粗略转为可朗读/可复制的纯文本。
+private enum AIChatSpeechTextExtractor {
+    static func plainText(from markdown: String) -> String {
+        var text = markdown
+
+        text = text.replacingOccurrences(of: "```[^\\n]*", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "```", with: "")
+        text = text.replacingOccurrences(of: "!\\[[^\\]]*\\]\\([^)]*\\)", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\\[([^\\]]+)\\]\\([^)]*\\)", with: "$1", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\\${1,2}", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "(?m)^#{1,6}\\s*", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "(?m)^\\s*>+\\s?", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "(?m)^\\s*[-*+]\\s+", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "(?m)^\\s*\\|?\\s*:?-+:?\\s*\\|.*$", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "\\|", with: " ")
+        text = text.replacingOccurrences(of: "[*_~]{1,3}", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "`+", with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: "(?m)^\\s*[*_-]{3,}\\s*$", with: "", options: .regularExpression)
+
+        let lines = text
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return lines.joined(separator: "\n")
     }
 }
 
 private struct AIChatConfig: Decodable {
+    struct Thinking: Decodable {
+        let type: String
+    }
+
     let host: String
     let path: String
     let apiKey: String
@@ -54,6 +132,16 @@ private struct AIChatConfig: Decodable {
     let temperature: Double?
     let stream: Bool?
     let timeoutSeconds: TimeInterval?
+    let thinking: Thinking?
+    let reasoningEffort: String?
+    let searchProvider: String?
+    let searchAPIKey: String?
+
+    enum CodingKeys: String, CodingKey {
+        case host, path, apiKey, model, systemPrompt, temperature, stream, timeoutSeconds, thinking
+        case reasoningEffort = "reasoning_effort"
+        case searchProvider, searchAPIKey
+    }
 
     var endpointURL: URL? {
         let trimmedHost = host.hasSuffix("/") ? String(host.dropLast()) : host
@@ -134,14 +222,106 @@ private enum AIChatConfigLoader {
 
 private struct OpenAIChatRequest: Encodable {
     struct Message: Encodable {
+        struct ToolCall: Encodable {
+            let id: String
+            let type: String
+            let function: FunctionCall
+
+            struct FunctionCall: Encodable {
+                let name: String
+                let arguments: String
+            }
+        }
+
         let role: String
-        let content: String
+        let content: String?
+        var reasoningContent: String?
+        var toolCalls: [ToolCall]?
+        var toolCallID: String?
+
+        init(role: String, content: String?, reasoningContent: String? = nil, toolCalls: [ToolCall]? = nil, toolCallID: String? = nil) {
+            self.role = role
+            self.content = content
+            self.reasoningContent = reasoningContent
+            self.toolCalls = toolCalls
+            self.toolCallID = toolCallID
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(role, forKey: .role)
+            if let content {
+                try container.encode(content, forKey: .content)
+            }
+            try container.encodeIfPresent(reasoningContent, forKey: .reasoningContent)
+            try container.encodeIfPresent(toolCalls, forKey: .toolCalls)
+            try container.encodeIfPresent(toolCallID, forKey: .toolCallID)
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case role
+            case content
+            case reasoningContent = "reasoning_content"
+            case toolCalls = "tool_calls"
+            case toolCallID = "tool_call_id"
+        }
+    }
+
+    struct Tool: Encodable {
+        let type: String
+        let function: Function
+
+        struct Function: Encodable {
+            let name: String
+            let description: String
+            let parameters: Parameters
+        }
+
+        struct Parameters: Encodable {
+            let type: String
+            let properties: [String: Property]
+            let required: [String]
+            let additionalProperties: Bool
+        }
+
+        struct Property: Encodable {
+            let type: String
+            let description: String
+        }
+    }
+
+    struct Thinking: Encodable {
+        let type: String
     }
 
     let model: String
     let messages: [Message]
     let temperature: Double?
     let stream: Bool?
+    let tools: [Tool]?
+    let toolChoice: String?
+    let thinking: Thinking?
+    let reasoningEffort: String?
+
+    init(
+        model: String,
+        messages: [Message],
+        temperature: Double?,
+        stream: Bool?,
+        tools: [Tool]? = nil,
+        toolChoice: String? = nil,
+        thinking: Thinking? = nil,
+        reasoningEffort: String? = nil
+    ) {
+        self.model = model
+        self.messages = messages
+        self.temperature = temperature
+        self.stream = stream
+        self.tools = tools
+        self.toolChoice = toolChoice
+        self.thinking = thinking
+        self.reasoningEffort = reasoningEffort
+    }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -149,6 +329,10 @@ private struct OpenAIChatRequest: Encodable {
         try container.encode(messages, forKey: .messages)
         try container.encodeIfPresent(temperature, forKey: .temperature)
         try container.encodeIfPresent(stream, forKey: .stream)
+        try container.encodeIfPresent(tools, forKey: .tools)
+        try container.encodeIfPresent(toolChoice, forKey: .toolChoice)
+        try container.encodeIfPresent(thinking, forKey: .thinking)
+        try container.encodeIfPresent(reasoningEffort, forKey: .reasoningEffort)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -156,14 +340,38 @@ private struct OpenAIChatRequest: Encodable {
         case messages
         case temperature
         case stream
+        case tools
+        case toolChoice = "tool_choice"
+        case thinking
+        case reasoningEffort = "reasoning_effort"
     }
 }
 
 private struct OpenAIChatResponse: Decodable {
     struct Choice: Decodable {
         struct Message: Decodable {
+            struct ToolCall: Decodable {
+                let id: String?
+                let type: String?
+                let function: FunctionCall?
+
+                struct FunctionCall: Decodable {
+                    let name: String?
+                    let arguments: String?
+                }
+            }
+
             let role: String?
             let content: String?
+            let reasoningContent: String?
+            let toolCalls: [ToolCall]?
+
+            enum CodingKeys: String, CodingKey {
+                case role
+                case content
+                case reasoningContent = "reasoning_content"
+                case toolCalls = "tool_calls"
+            }
         }
         let message: Message?
     }
@@ -180,12 +388,396 @@ private struct OpenAIStreamResponse: Decodable {
     struct Choice: Decodable {
         struct Delta: Decodable {
             let content: String?
+            let reasoningContent: String?
+            let toolCalls: [ToolCallDelta]?
+
+            enum CodingKeys: String, CodingKey {
+                case content
+                case reasoningContent = "reasoning_content"
+                case toolCalls = "tool_calls"
+            }
         }
+
+        struct ToolCallDelta: Decodable {
+            let index: Int?
+            let id: String?
+            let type: String?
+            let function: FunctionDelta?
+
+            struct FunctionDelta: Decodable {
+                let name: String?
+                let arguments: String?
+            }
+        }
+
         let delta: Delta?
         let finish_reason: String?
     }
 
     let choices: [Choice]?
+}
+
+private struct WebSearchToolCall {
+    let id: String
+    let name: String
+    let arguments: String
+}
+
+private enum WebSearchService {
+    enum SearchError: LocalizedError {
+        case invalidQuery
+        case emptyResponse
+        case missingAPIKey
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidQuery: return "搜索关键词无效"
+            case .emptyResponse: return "搜索响应为空"
+            case .missingAPIKey: return "缺少搜索 API Key"
+            }
+        }
+    }
+
+    /// 搜索不可用时的兑底提示：让模型停止重试、直接基于已有知识回答。
+    static let unavailableMessage = "联网搜索服务暂时不可用。请不要再调用搜索工具，直接基于你已有的知识回答，并说明无法获取最新信息。"
+
+    static func search(
+        query: String,
+        provider: String?,
+        apiKey: String?,
+        completion: @escaping (Result<String, Error>) -> Void
+    ) {
+        let resolved = (provider ?? "bing").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        print("[AIChat][WebSearch] provider=\(resolved) query=\"\(query)\"")
+        switch resolved {
+        case "tavily":
+            searchTavily(query: query, apiKey: apiKey, completion: completion)
+        case "bocha", "bochaai":
+            searchBocha(query: query, apiKey: apiKey, completion: completion)
+        case "duckduckgo", "ddg":
+            searchDuckDuckGo(query: query, completion: completion)
+        default:
+            searchBing(query: query, completion: completion)
+        }
+    }
+
+    // MARK: - DuckDuckGo（无需 key）
+
+    private static func searchDuckDuckGo(query: String, completion: @escaping (Result<String, Error>) -> Void) {
+        var components = URLComponents(string: "https://api.duckduckgo.com/")
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "format", value: "json"),
+            URLQueryItem(name: "no_html", value: "1"),
+            URLQueryItem(name: "no_redirect", value: "1"),
+            URLQueryItem(name: "skip_disambig", value: "1")
+        ]
+        guard let url = components?.url else {
+            completion(.failure(SearchError.invalidQuery))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+            guard let data else {
+                completion(.failure(SearchError.emptyResponse))
+                return
+            }
+            do {
+                let decoded = try JSONDecoder().decode(DuckDuckGoResponse.self, from: data)
+                completion(.success(decoded.formattedText))
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+
+    // MARK: - Tavily（需要 API Key）
+
+    private static func searchTavily(query: String, apiKey: String?, completion: @escaping (Result<String, Error>) -> Void) {
+        guard let apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
+            completion(.failure(SearchError.missingAPIKey))
+            return
+        }
+
+        var request = URLRequest(url: URL(string: "https://api.tavily.com/search")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = [
+            "api_key": apiKey,
+            "query": query,
+            "max_results": 5,
+            "search_depth": "basic"
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+            guard let data else {
+                completion(.failure(SearchError.emptyResponse))
+                return
+            }
+            do {
+                let decoded = try JSONDecoder().decode(TavilyResponse.self, from: data)
+                completion(.success(decoded.formattedText))
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+
+    // MARK: - Bocha（博查，需要 API Key，国内可访问）
+
+    private static func searchBocha(query: String, apiKey: String?, completion: @escaping (Result<String, Error>) -> Void) {
+        guard let apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines), !apiKey.isEmpty else {
+            completion(.failure(SearchError.missingAPIKey))
+            return
+        }
+
+        var request = URLRequest(url: URL(string: "https://api.bochaai.com/v1/web-search")!)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        let body: [String: Any] = [
+            "query": query,
+            "freshness": "noLimit",
+            "summary": true,
+            "count": 8
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+            guard let data else {
+                completion(.failure(SearchError.emptyResponse))
+                return
+            }
+            do {
+                let decoded = try JSONDecoder().decode(BochaResponse.self, from: data)
+                completion(.success(decoded.formattedText))
+            } catch {
+                completion(.failure(error))
+            }
+        }.resume()
+    }
+
+    // MARK: - Bing（无需 key，HTML 解析）
+
+    private static func searchBing(query: String, completion: @escaping (Result<String, Error>) -> Void) {
+        var components = URLComponents(string: "https://www.bing.com/search")
+        components?.queryItems = [
+            URLQueryItem(name: "q", value: query),
+            URLQueryItem(name: "setlang", value: "zh-hans")
+        ]
+        guard let url = components?.url else {
+            completion(.failure(SearchError.invalidQuery))
+            return
+        }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        request.addValue("Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+        request.addValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
+
+        URLSession.shared.dataTask(with: request) { data, _, error in
+            if let error {
+                completion(.failure(error))
+                return
+            }
+            guard let data, let html = String(data: data, encoding: .utf8) else {
+                completion(.failure(SearchError.emptyResponse))
+                return
+            }
+            let results = Self.parseBingHTML(html)
+            completion(.success(results.isEmpty ? "未找到相关搜索结果。" : results.joined(separator: "\n")))
+        }.resume()
+    }
+
+    private static func parseBingHTML(_ html: String) -> [String] {
+        var results: [String] = []
+        let blocks = html.components(separatedBy: "b_algo")
+        for block in blocks.dropFirst() {
+            guard let title = extractFirst(in: block, tag: "h2"),
+                  let snippet = extractFirst(in: block, tag: "p") else { continue }
+            let titleText = stripHTML(title).trimmingCharacters(in: .whitespacesAndNewlines)
+            let snippetText = stripHTML(snippet).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !titleText.isEmpty else { continue }
+            var line = titleText
+            if !snippetText.isEmpty {
+                line += "\n" + snippetText
+            }
+            if results.count < 6 {
+                results.append(line)
+            }
+        }
+        return results
+    }
+
+    private static func extractFirst(in text: String, tag: String) -> String? {
+        guard let regex = try? NSRegularExpression(
+            pattern: "<\(tag)[^>]*>(.*?)</\(tag)>",
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else { return nil }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, options: [], range: range),
+              let captureRange = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[captureRange])
+    }
+
+    private static func stripHTML(_ text: String) -> String {
+        var result = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        let entities: [(String, String)] = [
+            ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"),
+            ("&quot;", "\""), ("&#39;", "'"), ("&apos;", "'"), ("&nbsp;", " ")
+        ]
+        for (entity, replacement) in entities {
+            result = result.replacingOccurrences(of: entity, with: replacement)
+        }
+        return result
+    }
+}
+
+private struct TavilyResponse: Decodable {
+    let answer: String?
+    let results: [Result]?
+
+    struct Result: Decodable {
+        let title: String?
+        let url: String?
+        let content: String?
+    }
+
+    var formattedText: String {
+        var lines: [String] = []
+        if let answer, !answer.isEmpty {
+            lines.append(answer)
+        }
+        for result in results ?? [] {
+            var parts: [String] = []
+            if let title = result.title, !title.isEmpty { parts.append(title) }
+            if let content = result.content, !content.isEmpty { parts.append(content) }
+            if let url = result.url, !url.isEmpty { parts.append("来源：\(url)") }
+            let line = parts.joined(separator: "\n")
+            if !line.isEmpty { lines.append(line) }
+        }
+        if lines.isEmpty { return "未找到相关搜索结果。" }
+        return lines.joined(separator: "\n\n")
+    }
+}
+
+private struct BochaResponse: Decodable {
+    let code: Int?
+    let message: String?
+    let data: Data?
+
+    struct Data: Decodable {
+        let webPages: WebPages?
+
+        struct WebPages: Decodable {
+            let value: [Item]?
+
+            struct Item: Decodable {
+                let name: String?
+                let url: String?
+                let snippet: String?
+                let summary: String?
+                let siteName: String?
+            }
+        }
+    }
+
+    var formattedText: String {
+        let items = data?.webPages?.value ?? []
+        var lines: [String] = []
+        for item in items {
+            var parts: [String] = []
+            if let name = item.name, !name.isEmpty { parts.append(name) }
+            let text = item.summary ?? item.snippet ?? ""
+            if !text.isEmpty { parts.append(text) }
+            if let siteName = item.siteName, !siteName.isEmpty { parts.append("来源：\(siteName)") }
+            let line = parts.joined(separator: "\n")
+            if !line.isEmpty { lines.append(line) }
+        }
+        if lines.isEmpty {
+            if let message, !message.isEmpty { return message }
+            return "未找到相关搜索结果。"
+        }
+        return lines.joined(separator: "\n\n")
+    }
+}
+
+private struct DuckDuckGoResponse: Decodable {
+    let heading: String?
+    let abstractText: String?
+    let abstractURL: String?
+    let relatedTopics: [Topic]?
+
+    struct Topic: Decodable {
+        let text: String?
+        let firstURL: String?
+        let topics: [Topic]?
+
+        enum CodingKeys: String, CodingKey {
+            case text = "Text"
+            case firstURL = "FirstURL"
+            case topics = "Topics"
+        }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case heading = "Heading"
+        case abstractText = "AbstractText"
+        case abstractURL = "AbstractURL"
+        case relatedTopics = "RelatedTopics"
+    }
+
+    var formattedText: String {
+        var lines: [String] = []
+        if let heading, !heading.isEmpty {
+            lines.append("主题：\(heading)")
+        }
+        if let abstractText, !abstractText.isEmpty {
+            lines.append(abstractText)
+            if let abstractURL, !abstractURL.isEmpty {
+                lines.append("来源：\(abstractURL)")
+            }
+        }
+        for topic in relatedTopics ?? [] {
+            append(topic, into: &lines)
+        }
+        if lines.isEmpty {
+            return "未找到相关搜索结果。"
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func append(_ topic: Topic, into lines: inout [String]) {
+        if let children = topic.topics, !children.isEmpty {
+            for child in children {
+                append(child, into: &lines)
+            }
+        } else if let text = topic.text, !text.isEmpty {
+            let cleaned = text.replacingOccurrences(of: "\n", with: " ")
+            if let url = topic.firstURL, !url.isEmpty {
+                lines.append("\(cleaned)\n来源：\(url)")
+            } else {
+                lines.append(cleaned)
+            }
+        }
+    }
 }
 
 private final class StreamMarkdownNormalizer {
@@ -373,14 +965,29 @@ private final class StreamMarkdownNormalizer {
     }
 }
 
+private struct StreamedToolCall {
+    let id: String
+    let name: String
+    let arguments: String
+}
+
 private final class AIChatStreamSession: NSObject, URLSessionDataDelegate {
+    private struct ToolCallBuilder {
+        var id = ""
+        var name = ""
+        var arguments = ""
+    }
+
     private let request: URLRequest
     private let onDelta: (String) -> Void
+    private let onToolCalls: ([StreamedToolCall], String) -> Void
     private let onComplete: () -> Void
     private let onError: (String) -> Void
     private var buffer = ""
     private var isFinished = false
     private var dataTask: URLSessionDataTask?
+    private var toolCallBuilders: [Int: ToolCallBuilder] = [:]
+    private var reasoningContent = ""
 
     private lazy var session: URLSession = {
         let configuration = URLSessionConfiguration.default
@@ -388,9 +995,16 @@ private final class AIChatStreamSession: NSObject, URLSessionDataDelegate {
         return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
     }()
 
-    init(request: URLRequest, onDelta: @escaping (String) -> Void, onComplete: @escaping () -> Void, onError: @escaping (String) -> Void) {
+    init(
+        request: URLRequest,
+        onDelta: @escaping (String) -> Void,
+        onToolCalls: @escaping ([StreamedToolCall], String) -> Void,
+        onComplete: @escaping () -> Void,
+        onError: @escaping (String) -> Void
+    ) {
         self.request = request
         self.onDelta = onDelta
+        self.onToolCalls = onToolCalls
         self.onComplete = onComplete
         self.onError = onError
         super.init()
@@ -452,16 +1066,38 @@ private final class AIChatStreamSession: NSObject, URLSessionDataDelegate {
         }
 
         guard let data = payload.data(using: .utf8) else { return }
-        if let decoded = try? JSONDecoder().decode(OpenAIStreamResponse.self, from: data),
-           let content = decoded.choices?.first?.delta?.content,
-           !content.isEmpty {
+        guard let decoded = try? JSONDecoder().decode(OpenAIStreamResponse.self, from: data) else { return }
+        if let content = decoded.choices?.first?.delta?.content, !content.isEmpty {
             onDelta(content)
         }
+        if let reasoning = decoded.choices?.first?.delta?.reasoningContent, !reasoning.isEmpty {
+            reasoningContent += reasoning
+        }
+        for toolCall in decoded.choices?.first?.delta?.toolCalls ?? [] {
+            accumulate(toolCall)
+        }
+    }
+
+    private func accumulate(_ delta: OpenAIStreamResponse.Choice.ToolCallDelta) {
+        let index = delta.index ?? 0
+        var builder = toolCallBuilders[index] ?? ToolCallBuilder()
+        if let id = delta.id { builder.id = id }
+        if let name = delta.function?.name { builder.name += name }
+        if let arguments = delta.function?.arguments { builder.arguments += arguments }
+        toolCallBuilders[index] = builder
     }
 
     private func finishSuccessfully() {
         guard !isFinished else { return }
         isFinished = true
+        let calls = toolCallBuilders.keys.sorted().compactMap { index -> StreamedToolCall? in
+            let builder = toolCallBuilders[index]!
+            guard !builder.name.isEmpty else { return nil }
+            return StreamedToolCall(id: builder.id, name: builder.name, arguments: builder.arguments)
+        }
+        if !calls.isEmpty {
+            onToolCalls(calls, reasoningContent)
+        }
         onComplete()
     }
 
@@ -485,6 +1121,33 @@ final class AIChatViewController: UIViewController {
     private let responseLogLimit = 400
     private let streamNormalizer = StreamMarkdownNormalizer()
     private var receivedText = ""
+    private let speechSynthesizer = AVSpeechSynthesizer()
+    private var speakingMessageID: UUID?
+    private var activeRequestMessages: [OpenAIChatRequest.Message] = []
+    private var activeToolExchange: [AIChatToolContextMessage] = []
+    private var toolCallRounds = 0
+    private let maxToolCallRounds = 36
+    private var isHandlingToolCalls = false
+    private var chatTurnGeneration = 0
+
+    private static let webSearchTool = OpenAIChatRequest.Tool(
+        type: "function",
+        function: OpenAIChatRequest.Tool.Function(
+            name: "web_search",
+            description: "搜索互联网以获取最新信息或模型训练数据之外的内容。当用户询问近期事件、实时数据、商品价格/参数/评测/对比、新闻等内容时使用。",
+            parameters: OpenAIChatRequest.Tool.Parameters(
+                type: "object",
+                properties: [
+                    "query": OpenAIChatRequest.Tool.Property(
+                        type: "string",
+                        description: "要搜索的关键词或问题"
+                    )
+                ],
+                required: ["query"],
+                additionalProperties: false
+            )
+        )
+    )
 
     private let conversationStore = AIChatConversationStore.shared
     private var currentConversation = AIChatConversation(title: "新对话")
@@ -562,6 +1225,7 @@ final class AIChatViewController: UIViewController {
         loadConfig()
         loadConversationHistory()
         registerKeyboardNotifications()
+        speechSynthesizer.delegate = self
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -573,6 +1237,7 @@ final class AIChatViewController: UIViewController {
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopSpeech()
         persistCurrentConversation()
         streamSession?.cancel()
         streamSession = nil
@@ -724,6 +1389,7 @@ final class AIChatViewController: UIViewController {
     }
 
     private func openConversation(_ conversation: AIChatConversation) {
+        stopSpeech()
         currentConversation = conversation
         messages = conversation.messages.map { var value = $0; value.isPlaceholder = false; value.isStreaming = false; return value }
         pendingAssistantIndex = nil; streamingAssistantIndex = nil; clearSelectedImages(); tableView.reloadData(); tableView.layoutIfNeeded()
@@ -731,6 +1397,7 @@ final class AIChatViewController: UIViewController {
     }
 
     private func startNewConversation() {
+        stopSpeech()
         currentConversation = AIChatConversation(title: "新对话"); messages = []; pendingAssistantIndex = nil; streamingAssistantIndex = nil
         selectedHistoryConversationIDs.removeAll(); clearSelectedImages(); tableView.reloadData(); titleLabel.text = "AI 对话"; updateHistoryButtonState()
     }
@@ -803,6 +1470,63 @@ final class AIChatViewController: UIViewController {
     private func showTransientAlert(title: String, message: String) {
         guard presentedViewController == nil else { return }; let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "知道了", style: .default)); present(alert, animated: true)
+    }
+
+    // MARK: - 复制 / 朗读
+
+    private func copyText(for message: AIChatMessage) -> String {
+        message.renderedMarkdown
+    }
+
+    private func copyMessage(_ message: AIChatMessage) {
+        let text = copyText(for: message)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        UIPasteboard.general.string = text
+        guard let row = messages.firstIndex(where: { $0.id == message.id }) else { return }
+        let cell = tableView.cellForRow(at: IndexPath(row: row, section: 0)) as? AIChatMessageCell
+        cell?.showCopyConfirmation()
+    }
+
+    private func toggleSpeech(for message: AIChatMessage) {
+        if speakingMessageID == message.id {
+            stopSpeech()
+        } else {
+            startSpeech(for: message)
+        }
+    }
+
+    private func startSpeech(for message: AIChatMessage) {
+        stopSpeech()
+        let text = AIChatSpeechTextExtractor.plainText(from: copyText(for: message))
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showTransientAlert(title: "无法朗读", message: "没有可朗读的文字内容。")
+            return
+        }
+
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        try? session.setActive(true)
+
+        let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = AVSpeechSynthesisVoice(language: "zh-CN")
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        speakingMessageID = message.id
+        refreshSpeechButtons()
+        speechSynthesizer.speak(utterance)
+    }
+
+    private func stopSpeech() {
+        if speechSynthesizer.isSpeaking {
+            speechSynthesizer.stopSpeaking(at: .immediate)
+        }
+        speakingMessageID = nil
+        refreshSpeechButtons()
+    }
+
+    private func refreshSpeechButtons() {
+        for cell in tableView.visibleCells.compactMap({ $0 as? AIChatMessageCell }) {
+            cell.setSpeaking(cell.representedMessageID == speakingMessageID)
+        }
     }
 
     private func loadConfig() {
@@ -893,19 +1617,35 @@ final class AIChatViewController: UIViewController {
             return
         }
 
-        guard let url = config.endpointURL else {
+        guard config.endpointURL != nil else {
             updatePendingMessage(with: "配置中的 host/path 无效。")
             return
         }
 
-        var requestMessages = messages
-            .filter { !$0.isPlaceholder }
-            .map { message in
-                let content = message.role == .user
-                    ? AIChatRequestContextBuilder.combinedQuestion(userText: message.content, attachments: message.attachments)
-                    : message.content
-                return OpenAIChatRequest.Message(role: message.role.rawValue, content: content)
+        activeRequestMessages = buildRequestMessages(config: config)
+        activeToolExchange = []
+        toolCallRounds = 0
+        isHandlingToolCalls = false
+        chatTurnGeneration += 1
+        performChatTurn()
+    }
+
+    private func buildRequestMessages(config: AIChatConfig) -> [OpenAIChatRequest.Message] {
+        var requestMessages: [OpenAIChatRequest.Message] = []
+        for message in messages where !message.isPlaceholder && !message.isStreaming {
+            if message.role == .user {
+                let content = AIChatRequestContextBuilder.combinedQuestion(
+                    userText: message.content,
+                    attachments: message.attachments
+                )
+                requestMessages.append(OpenAIChatRequest.Message(role: "user", content: content))
+            } else {
+                if let toolContext = message.toolContext, !toolContext.isEmpty {
+                    requestMessages.append(contentsOf: toolContext.map { $0.toRequestMessage() })
+                }
+                requestMessages.append(OpenAIChatRequest.Message(role: "assistant", content: message.content))
             }
+        }
 
         if let latestUser = messages.last(where: { $0.role == .user }) {
             let query = AIChatRequestContextBuilder.combinedQuestion(userText: latestUser.content, attachments: latestUser.attachments)
@@ -923,12 +1663,29 @@ final class AIChatViewController: UIViewController {
             requestMessages.insert(OpenAIChatRequest.Message(role: "system", content: systemPrompt), at: 0)
         }
 
+        return requestMessages
+    }
+
+    private func performChatTurn(forceNoTools: Bool = false) {
+        guard let config else {
+            updatePendingMessage(with: "未找到本地配置，请先创建 Config.local.json。")
+            return
+        }
+        guard let url = config.endpointURL else {
+            updatePendingMessage(with: "配置中的 host/path 无效。")
+            return
+        }
+
+        isHandlingToolCalls = false
         let shouldStream = config.stream ?? false
         let payload = OpenAIChatRequest(
             model: config.model,
-            messages: requestMessages,
+            messages: activeRequestMessages,
             temperature: config.temperature,
-            stream: shouldStream
+            stream: shouldStream,
+            tools: forceNoTools ? nil : [Self.webSearchTool],
+            thinking: config.thinking.map { OpenAIChatRequest.Thinking(type: $0.type) },
+            reasoningEffort: config.reasoningEffort
         )
 
         var request = URLRequest(url: url)
@@ -953,55 +1710,190 @@ final class AIChatViewController: UIViewController {
         if shouldStream {
             startStreamRequest(request)
         } else {
-            var taskIdentifier = 0
-            let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    guard self.activeTask?.taskIdentifier == taskIdentifier else { return }
-                    self.activeTask = nil
-                    self.handleResponse(data: data, response: response, error: error)
-                }
-            }
-            taskIdentifier = task.taskIdentifier
-            activeTask = task
-            task.resume()
+            startNonStreamRequest(request)
         }
     }
 
+    private func startNonStreamRequest(_ request: URLRequest) {
+        var taskIdentifier = 0
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard self.activeTask?.taskIdentifier == taskIdentifier else { return }
+                self.activeTask = nil
+                self.handleResponse(data: data, response: response, error: error)
+            }
+        }
+        taskIdentifier = task.taskIdentifier
+        activeTask = task
+        task.resume()
+    }
+
     private func handleResponse(data: Data?, response: URLResponse?, error: Error?) {
-        defer {
+        if let error = error {
             isRequesting = false
             updateComposerState(animated: false)
-        }
-
-        if let error = error {
             updatePendingMessage(with: "请求失败：\(error.localizedDescription)")
             return
         }
 
         guard let data = data else {
+            isRequesting = false
+            updateComposerState(animated: false)
             updatePendingMessage(with: "请求失败：响应为空。")
             return
         }
 
         do {
             let decoded = try JSONDecoder().decode(OpenAIChatResponse.self, from: data)
+
+            if let toolCalls = decoded.choices?.first?.message?.toolCalls, !toolCalls.isEmpty {
+                isRequesting = true
+                updateComposerState(animated: false)
+                let reasoningContent = decoded.choices?.first?.message?.reasoningContent ?? ""
+                handleToolCalls(
+                    toolCalls.map {
+                        WebSearchToolCall(
+                            id: $0.id ?? "",
+                            name: $0.function?.name ?? "",
+                            arguments: $0.function?.arguments ?? "{}"
+                        )
+                    },
+                    reasoningContent: reasoningContent
+                )
+                return
+            }
+
             if let message = decoded.choices?.first?.message?.content, !message.isEmpty {
                 logServerText(message, category: "response", limit: responseLogLimit)
                 let normalized = StreamMarkdownNormalizer().normalizeFullText(message)
-                updatePendingMessage(with: normalized)
+                isRequesting = false
+                updateComposerState(animated: false)
+                updatePendingMessage(with: normalized, toolContext: activeToolExchange)
                 return
             }
 
             if let errorMessage = decoded.error?.message {
+                isRequesting = false
+                updateComposerState(animated: false)
                 updatePendingMessage(with: "服务错误：\(errorMessage)")
                 return
             }
 
+            isRequesting = false
+            updateComposerState(animated: false)
             updatePendingMessage(with: "响应解析失败：内容为空。")
         } catch {
+            isRequesting = false
+            updateComposerState(animated: false)
             updatePendingMessage(with: "响应解析失败：\(error.localizedDescription)")
         }
+    }
+
+    private func handleToolCalls(_ calls: [WebSearchToolCall], reasoningContent: String = "") {
+        guard toolCallRounds < maxToolCallRounds else {
+            print("[AIChat][ToolCalls] max rounds reached, forcing final answer")
+            // 搜索预算用尽：追加指令，强制模型基于已收集的信息直接作答
+            activeRequestMessages.append(OpenAIChatRequest.Message(
+                role: "user",
+                content: "请基于上面的搜索结果和你的已有知识，直接给出最终、完整的回答，不要再调用搜索工具。"
+            ))
+            DispatchQueue.main.async { [weak self] in
+                self?.performChatTurn(forceNoTools: true)
+            }
+            return
+        }
+        toolCallRounds += 1
+        print("[AIChat][ToolCalls] round=\(toolCallRounds)/\(maxToolCallRounds) calls=\(calls.count)")
+        for call in calls {
+            print("[AIChat][ToolCalls]   name=\(call.name) args=\(call.arguments)")
+        }
+
+        activeRequestMessages.append(OpenAIChatRequest.Message(
+            role: "assistant",
+            content: nil,
+            reasoningContent: reasoningContent.isEmpty ? nil : reasoningContent,
+            toolCalls: calls.map {
+                OpenAIChatRequest.Message.ToolCall(
+                    id: $0.id,
+                    type: "function",
+                    function: OpenAIChatRequest.Message.ToolCall.FunctionCall(name: $0.name, arguments: $0.arguments)
+                )
+            }
+        ))
+        activeToolExchange.append(AIChatToolContextMessage(
+            role: "assistant",
+            content: nil,
+            reasoningContent: reasoningContent.isEmpty ? nil : reasoningContent,
+            toolCallID: nil,
+            toolCalls: calls.map {
+                AIChatToolContextMessage.AIChatToolCall(id: $0.id, type: "function", name: $0.name, arguments: $0.arguments)
+            }
+        ))
+
+        let generation = chatTurnGeneration
+        let provider = config?.searchProvider
+        let apiKey = config?.searchAPIKey
+        let searches = calls.map { call -> (call: WebSearchToolCall, query: String) in
+            (call, parseSearchQuery(from: call.arguments))
+        }
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var results: [String: String] = [:]
+        for item in searches {
+            group.enter()
+            WebSearchService.search(query: item.query, provider: provider, apiKey: apiKey) { result in
+                let text: String
+                switch result {
+                case .success(let value):
+                    print("[AIChat][WebSearch] success query=\"\(item.query)\" chars=\(value.count)")
+                    text = value.isEmpty ? WebSearchService.unavailableMessage : value
+                case .failure(let error):
+                    print("[AIChat][WebSearch] failed query=\"\(item.query)\" error=\(error.localizedDescription)")
+                    text = WebSearchService.unavailableMessage
+                }
+                lock.lock()
+                results[item.call.id] = text
+                lock.unlock()
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) { [weak self] in
+            guard let self, self.chatTurnGeneration == generation else { return }
+            print("[AIChat][ToolCalls] searches finished, continue turn")
+
+            for call in calls {
+                let content: String
+                if call.name == "web_search" {
+                    content = results[call.id] ?? WebSearchService.unavailableMessage
+                } else {
+                    content = "不支持的函数调用：\(call.name)"
+                }
+                self.activeRequestMessages.append(OpenAIChatRequest.Message(
+                    role: "tool",
+                    content: content,
+                    toolCallID: call.id
+                ))
+                self.activeToolExchange.append(AIChatToolContextMessage(
+                    role: "tool",
+                    content: content,
+                    reasoningContent: nil,
+                    toolCallID: call.id,
+                    toolCalls: nil
+                ))
+            }
+
+            self.performChatTurn()
+        }
+    }
+
+    private func parseSearchQuery(from argumentsJSON: String) -> String {
+        guard let data = argumentsJSON.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return argumentsJSON
+        }
+        return (object["query"] as? String) ?? argumentsJSON
     }
 
     private func startStreamRequest(_ request: URLRequest) {
@@ -1012,6 +1904,11 @@ final class AIChatViewController: UIViewController {
             onDelta: { [weak self] delta in
                 DispatchQueue.main.async {
                     self?.handleStreamDelta(delta)
+                }
+            },
+            onToolCalls: { [weak self] calls, reasoningContent in
+                DispatchQueue.main.async {
+                    self?.handleStreamToolCalls(calls, reasoningContent: reasoningContent)
                 }
             },
             onComplete: { [weak self] in
@@ -1046,7 +1943,18 @@ final class AIChatViewController: UIViewController {
         }
     }
 
+    private func handleStreamToolCalls(_ calls: [StreamedToolCall], reasoningContent: String) {
+        isHandlingToolCalls = true
+        handleToolCalls(
+            calls.map {
+                WebSearchToolCall(id: $0.id, name: $0.name, arguments: $0.arguments)
+            },
+            reasoningContent: reasoningContent
+        )
+    }
+
     private func finishStream() {
+        if isHandlingToolCalls { return }
         print("[AIChat][Stream][Complete] Total received chars: \(receivedText.count)")
         isRequesting = false
         updateComposerState(animated: false)
@@ -1068,6 +1976,9 @@ final class AIChatViewController: UIViewController {
                       self.messages.indices.contains(index),
                       self.streamingAssistantIndex == index else { return }
                 self.messages[index].isStreaming = false
+                if !self.activeToolExchange.isEmpty {
+                    self.messages[index].toolContext = self.activeToolExchange
+                }
                 cell?.setStreamingAppearanceEnabled(false)
                 self.streamingAssistantIndex = nil
                 self.autoScrollGeneration += 1
@@ -1077,6 +1988,9 @@ final class AIChatViewController: UIViewController {
             }
         } else {
             messages[index].isStreaming = false
+            if !activeToolExchange.isEmpty {
+                messages[index].toolContext = activeToolExchange
+            }
             tableView.reloadRows(at: [indexPath], with: .fade)
             streamingAssistantIndex = nil
             autoScrollGeneration += 1
@@ -1086,6 +2000,8 @@ final class AIChatViewController: UIViewController {
     }
 
     private func failStream(message: String) {
+        isHandlingToolCalls = false
+        activeToolExchange = []
         isRequesting = false
         updateComposerState(animated: false)
         streamNormalizer.reset()
@@ -1100,6 +2016,9 @@ final class AIChatViewController: UIViewController {
     }
 
     private func cancelActiveRequest(showMessage: Bool) {
+        isHandlingToolCalls = false
+        activeToolExchange = []
+        chatTurnGeneration += 1
         streamSession?.cancel()
         streamSession = nil
         streamNormalizer.reset()
@@ -1158,11 +2077,14 @@ final class AIChatViewController: UIViewController {
         return indexPath.row
     }
 
-    private func updatePendingMessage(with content: String) {
+    private func updatePendingMessage(with content: String, toolContext: [AIChatToolContextMessage]? = nil) {
         guard let index = pendingAssistantIndex, messages.indices.contains(index) else { return }
         messages[index].content = content
         messages[index].isPlaceholder = false
         messages[index].isStreaming = false
+        if let toolContext, !toolContext.isEmpty {
+            messages[index].toolContext = toolContext
+        }
         let indexPath = IndexPath(row: index, section: 0)
         tableView.reloadRows(at: [indexPath], with: .fade)
         scrollToBottom(animated: true)
@@ -1214,6 +2136,18 @@ extension AIChatViewController: UITableViewDataSource, UITableViewDelegate {
         cell.onHeightChange = { [weak self] in
             self?.scheduleRowHeightUpdate(followStreaming: message.isStreaming)
         }
+        let messageID = message.id
+        cell.onCopyTapped = { [weak self] in
+            guard let self,
+                  let row = self.messages.firstIndex(where: { $0.id == messageID }) else { return }
+            self.copyMessage(self.messages[row])
+        }
+        cell.onSpeakTapped = { [weak self] in
+            guard let self,
+                  let row = self.messages.firstIndex(where: { $0.id == messageID }) else { return }
+            self.toggleSpeech(for: self.messages[row])
+        }
+        cell.setSpeaking(speakingMessageID == messageID)
         cell.configure(with: message)
         if message.isStreaming {
             cell.startStreaming(withInitial: message.content)
@@ -1346,7 +2280,17 @@ final class AIChatMessageCell: UITableViewCell {
     private var hasStartedStreaming = false
     private let typewriterCharsPerStep = 1
 
+    private let footerView = UIView()
+    private let copyButton = UIButton(type: .system)
+    private let speakButton = UIButton(type: .system)
+    private let footerStackView = UIStackView()
+    private var footerTintColor: UIColor = .systemBlue
+    private var isSpeaking = false
+
     var onHeightChange: (() -> Void)?
+    var onCopyTapped: (() -> Void)?
+    var onSpeakTapped: (() -> Void)?
+    private(set) var representedMessageID: UUID?
 
     var isStreamingActive: Bool {
         hasStartedStreaming
@@ -1378,8 +2322,23 @@ final class AIChatMessageCell: UITableViewCell {
         }
         bubbleView.addSubview(markdownView)
 
-        let bottomConstraint = bubbleView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
-        bottomConstraint.priority = .defaultHigh
+        footerView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(footerView)
+
+        footerStackView.axis = .horizontal
+        footerStackView.alignment = .center
+        footerStackView.spacing = 12
+        footerStackView.translatesAutoresizingMaskIntoConstraints = false
+        footerView.addSubview(footerStackView)
+        footerStackView.addArrangedSubview(copyButton)
+        footerStackView.addArrangedSubview(speakButton)
+        configureCopyButton()
+        configureSpeakButton()
+
+        let bubbleBottomConstraint = bubbleView.bottomAnchor.constraint(equalTo: footerView.topAnchor, constant: -4)
+
+        let footerBottomConstraint = footerView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -8)
+        footerBottomConstraint.priority = .defaultHigh
 
         let aiLeading = bubbleView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16)
         let aiWidth = bubbleView.widthAnchor.constraint(equalTo: contentView.widthAnchor, multiplier: 0.78, constant: -16)
@@ -1393,12 +2352,21 @@ final class AIChatMessageCell: UITableViewCell {
 
         NSLayoutConstraint.activate([
             bubbleView.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 8),
-            bottomConstraint,
+            bubbleBottomConstraint,
 
             markdownView.topAnchor.constraint(equalTo: bubbleView.topAnchor, constant: 10),
             markdownView.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor, constant: 10),
             markdownView.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor, constant: -10),
-            markdownView.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -10)
+            markdownView.bottomAnchor.constraint(equalTo: bubbleView.bottomAnchor, constant: -10),
+
+            footerView.leadingAnchor.constraint(equalTo: bubbleView.leadingAnchor),
+            footerView.trailingAnchor.constraint(equalTo: bubbleView.trailingAnchor),
+            footerBottomConstraint,
+            footerView.heightAnchor.constraint(equalToConstant: 28),
+
+            footerStackView.trailingAnchor.constraint(equalTo: footerView.trailingAnchor),
+            footerStackView.centerYAnchor.constraint(equalTo: footerView.centerYAnchor),
+            footerStackView.leadingAnchor.constraint(greaterThanOrEqualTo: footerView.leadingAnchor)
         ])
     }
 
@@ -1409,11 +2377,19 @@ final class AIChatMessageCell: UITableViewCell {
     override func prepareForReuse() {
         super.prepareForReuse()
         hasStartedStreaming = false
+        representedMessageID = nil
         onHeightChange = nil
+        onCopyTapped = nil
+        onSpeakTapped = nil
+        isSpeaking = false
+        NSObject.cancelPreviousPerformRequests(withTarget: self)
+        applyCopyButtonStyle()
+        applySpeakButtonStyle()
         markdownView.resetForReuse()
     }
 
     func configure(with message: AIChatMessage) {
+        representedMessageID = message.id
         markdownView.enableTypewriterEffect = message.isStreaming
         if !message.isStreaming {
             let summary = message.attachments.isEmpty ? "" : "\n\n*已识别 \(message.attachments.count) 张图片中的文字*"
@@ -1435,6 +2411,71 @@ final class AIChatMessageCell: UITableViewCell {
         } else {
             bubbleView.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMaxXMaxYCorner]
         }
+    }
+
+    // MARK: - Footer 操作按钮
+
+    private func configureCopyButton() {
+        copyButton.addTarget(self, action: #selector(copyTapped), for: .touchUpInside)
+        applyCopyButtonStyle()
+    }
+
+    private func configureSpeakButton() {
+        speakButton.addTarget(self, action: #selector(speakTapped), for: .touchUpInside)
+        applySpeakButtonStyle()
+    }
+
+    private func applyCopyButtonStyle() {
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = "复制"
+        configuration.image = UIImage(systemName: "doc.on.doc")
+        configuration.imagePadding = 4
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
+        configuration.baseForegroundColor = footerTintColor
+        copyButton.configuration = configuration
+    }
+
+    private func applySpeakButtonStyle() {
+        var configuration = UIButton.Configuration.plain()
+        configuration.title = isSpeaking ? "停止" : "朗读"
+        configuration.image = UIImage(systemName: isSpeaking ? "stop.circle" : "speaker.wave.2")
+        configuration.imagePadding = 4
+        configuration.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
+        configuration.baseForegroundColor = footerTintColor
+        speakButton.configuration = configuration
+    }
+
+    func setFooterTintColor(_ color: UIColor) {
+        guard footerTintColor != color else { return }
+        footerTintColor = color
+        applyCopyButtonStyle()
+        applySpeakButtonStyle()
+    }
+
+    func setSpeaking(_ speaking: Bool) {
+        guard isSpeaking != speaking else { return }
+        isSpeaking = speaking
+        applySpeakButtonStyle()
+    }
+
+    func showCopyConfirmation() {
+        var configuration = copyButton.configuration ?? UIButton.Configuration.plain()
+        configuration.title = "已复制"
+        configuration.image = UIImage(systemName: "checkmark")
+        copyButton.configuration = configuration
+        perform(#selector(resetCopyButtonStyle), with: nil, afterDelay: 1.5)
+    }
+
+    @objc private func resetCopyButtonStyle() {
+        applyCopyButtonStyle()
+    }
+
+    @objc private func copyTapped() {
+        onCopyTapped?()
+    }
+
+    @objc private func speakTapped() {
+        onSpeakTapped?()
     }
 
     func startStreaming(withInitial text: String) {
@@ -1469,5 +2510,21 @@ final class AIChatMessageCell: UITableViewCell {
 
     func setStreamingAppearanceEnabled(_ enabled: Bool) {
         markdownView.enableTypewriterEffect = enabled
+    }
+}
+
+extension AIChatViewController: AVSpeechSynthesizerDelegate {
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { [weak self] in
+            self?.speakingMessageID = nil
+            self?.refreshSpeechButtons()
+        }
+    }
+
+    func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
+        DispatchQueue.main.async { [weak self] in
+            self?.speakingMessageID = nil
+            self?.refreshSpeechButtons()
+        }
     }
 }
