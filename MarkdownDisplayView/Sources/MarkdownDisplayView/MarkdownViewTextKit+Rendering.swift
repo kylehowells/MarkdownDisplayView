@@ -296,7 +296,9 @@ extension MarkdownViewTextKit {
             }
 
             // 1. 验证视图结构 (支持 Content Wrapper 结构)
-            guard let containerStack = view as? UIStackView,
+            let containerStack = (view as? UIStackView)
+                ?? view.subviews.first(where: { $0 is UIStackView }) as? UIStackView
+            guard let containerStack,
                   containerStack.arrangedSubviews.count >= 2,
                   let summaryButton = containerStack.arrangedSubviews[0] as? UIButton,
                   let contentWrapper = containerStack.arrangedSubviews[1] as? UIView,
@@ -312,8 +314,10 @@ extension MarkdownViewTextKit {
             }
             
             // 3. 更新 Children (Diff & Patch)
-            // 计算内容宽度 (Details padding: 12+12 = 24)
-            let contentWidth = max(0, containerWidth - 24)
+            let contentWidth = max(
+                0,
+                containerWidth - configuration.detailsContentPadding * 2
+            )
             
             var newSubviews: [UIView] = []
             var consumedOldIndices = Set<Int>()

@@ -683,3 +683,443 @@ import UIKit
         "cached=\(view.realStreamHeightAccumulator.totalHeight), final=\(finalFittingHeight)"
     )
 }
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func detailsExpansionSynchronouslyCommitsItsStructuralHeight() async throws {
+    func firstSubview<T: UIView>(of type: T.Type, in root: UIView, where predicate: (T) -> Bool) -> T? {
+        if let candidate = root as? T, predicate(candidate) { return candidate }
+        for subview in root.subviews {
+            if let match = firstSubview(of: type, in: subview, where: predicate) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    func layout(_ scrollView: ScrollableMarkdownViewTextKit) {
+        scrollView.setNeedsLayout()
+        scrollView.layoutIfNeeded()
+        scrollView.markdownView.setNeedsLayout()
+        scrollView.markdownView.layoutIfNeeded()
+        scrollView.markdownView.contentStackView.layoutIfNeeded()
+    }
+
+    func structuralHeight(of markdownView: MarkdownViewTextKit, width: CGFloat) -> CGFloat {
+        markdownView.contentStackView.systemLayoutSizeFitting(
+            CGSize(width: width, height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        ).height
+    }
+
+    let markdown = """
+    ## 目录
+
+    1. [第一项](#第一项)
+    2. [第二项](#第二项)
+    3. [第三项](#第三项)
+    4. [第四项](#第四项)
+    5. [第五项](#第五项)
+    6. [第六项](#第六项)
+    7. [第七项](#第七项)
+    8. [第八项](#第八项)
+    9. [第九项](#第九项)
+    10. [第十项](#第十项)
+    11. [第十一项](#第十一项)
+    12. [第十二项](#第十二项)
+    13. [第十三项](#第十三项)
+    14. [第十四项](#第十四项)
+    15. [CocoaPods（折叠）](#CocoaPods)
+
+    <details>
+    <summary>展开结构高度测试</summary>
+
+    ```ruby
+    source 'https://github.com/CocoaPods/Specs.git'
+    platform :ios, '15.0'
+
+    target 'YourTarget' do
+      use_frameworks!
+      pod 'MarkdownDisplayView'
+    end
+
+    post_install do |installer|
+      installer.pods_project.targets.each do |target|
+        target.build_configurations.each do |config|
+          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+        end
+      end
+    end
+    ```
+
+    </details>
+    """
+
+    let viewportWidth: CGFloat = 390
+    let contentWidth = viewportWidth - 32
+    let scrollView = ScrollableMarkdownViewTextKit(
+        frame: CGRect(x: 0, y: 0, width: viewportWidth, height: 700)
+    )
+    layout(scrollView)
+    let prepared = MarkdownRenderer(
+        configuration: scrollView.configuration,
+        containerWidth: contentWidth
+    ).prepare(markdown)
+    scrollView.markdownView.setPreparedContent(prepared)
+    layout(scrollView)
+
+    let listWrapper = try #require(scrollView.markdownView.contentStackView.arrangedSubviews.first {
+        $0.constraints.contains {
+            $0.identifier == MarkdownViewTextKit.listWrapperWidthConstraintIdentifier
+        }
+    })
+    let listStack = try #require(listWrapper.subviews.first as? UIStackView)
+    #expect(listStack.arrangedSubviews.count == 15)
+    let initialWrapperHeight = listWrapper.bounds.height
+    let initialFirstItemHeight = listStack.arrangedSubviews[0].bounds.height
+    let initialGap = listStack.arrangedSubviews[1].frame.minY
+        - listStack.arrangedSubviews[0].frame.maxY
+
+    // Read intrinsicContentSize first so this test covers the stale-cache path used by
+    // ScrollableMarkdownViewTextKit after the initial synchronous preview layout.
+    let initiallyCollapsedHeight = scrollView.markdownView.intrinsicContentSize.height
+    #expect(
+        abs(initiallyCollapsedHeight - structuralHeight(
+            of: scrollView.markdownView,
+            width: contentWidth
+        )) <= 2
+    )
+
+    let detailsButton = try #require(firstSubview(of: UIButton.self, in: scrollView.markdownView) {
+        $0.configuration?.title?.contains("结构高度测试") == true
+    })
+    detailsButton.sendActions(for: .touchUpInside)
+
+    // createDetailsView currently defers cacheHeight/onHeightChange by 0.05s. The structural
+    // tree is already expanded in this call stack, so intrinsicContentSize must not expose
+    // the previous collapsed cache for an intervening frame.
+    let expandedStructuralHeight = structuralHeight(
+        of: scrollView.markdownView,
+        width: contentWidth
+    )
+    let immediateExpandedIntrinsicHeight = scrollView.markdownView.intrinsicContentSize.height
+    #expect(expandedStructuralHeight > initiallyCollapsedHeight + 200)
+    #expect(
+        abs(immediateExpandedIntrinsicHeight - expandedStructuralHeight) <= 2,
+        "expanded structure and intrinsic cache diverged before the deferred callback: collapsed=\(initiallyCollapsedHeight), structural=\(expandedStructuralHeight), intrinsic=\(immediateExpandedIntrinsicHeight)"
+    )
+
+    try await Task.sleep(nanoseconds: 300_000_000)
+    detailsButton.sendActions(for: .touchUpInside)
+    try await Task.sleep(nanoseconds: 300_000_000)
+
+    let collapsedStructuralHeight = structuralHeight(
+        of: scrollView.markdownView,
+        width: contentWidth
+    )
+    let collapsedIntrinsicHeight = scrollView.markdownView.intrinsicContentSize.height
+    #expect(abs(collapsedIntrinsicHeight - initiallyCollapsedHeight) <= 2)
+    #expect(abs(collapsedIntrinsicHeight - collapsedStructuralHeight) <= 2)
+    #expect(abs(listWrapper.bounds.height - initialWrapperHeight) <= 1)
+    #expect(abs(listStack.arrangedSubviews[0].bounds.height - initialFirstItemHeight) <= 1)
+    let collapsedGap = listStack.arrangedSubviews[1].frame.minY
+        - listStack.arrangedSubviews[0].frame.maxY
+    #expect(abs(collapsedGap - initialGap) <= 1)
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func detailsIncrementalUpdateReusesOuterContainerAndPreservesExpandedState() throws {
+    func firstSubview<T: UIView>(of type: T.Type, in root: UIView) -> T? {
+        if let match = root as? T { return match }
+        for subview in root.subviews {
+            if let match = firstSubview(of: type, in: subview) { return match }
+        }
+        return nil
+    }
+
+    let width: CGFloat = 320
+    let oldBody = NSAttributedString(
+        string: "Original details body",
+        attributes: [.font: UIFont.systemFont(ofSize: 16)]
+    )
+    let newBody = NSAttributedString(
+        string: "Updated details body remains expanded",
+        attributes: [.font: UIFont.systemFont(ofSize: 16)]
+    )
+    let oldElement = MarkdownRenderElement.details(
+        summary: "Original summary",
+        children: [.attributedText(oldBody)]
+    )
+    let newElement = MarkdownRenderElement.details(
+        summary: "Updated summary",
+        children: [.attributedText(newBody)]
+    )
+
+    let markdownView = MarkdownViewTextKit(
+        frame: CGRect(x: 0, y: 0, width: width, height: 600)
+    )
+    markdownView.updateViews(
+        newElements: [oldElement],
+        footnotes: [],
+        containerWidth: width
+    )
+    markdownView.layoutIfNeeded()
+    markdownView.contentStackView.layoutIfNeeded()
+
+    let originalOuterContainer = try #require(
+        markdownView.contentStackView.arrangedSubviews.first
+    )
+    #expect(originalOuterContainer.accessibilityIdentifier?.hasPrefix("MarkdownAtomicDetails") == true)
+    let originalContainerStack = try #require(
+        originalOuterContainer.subviews.first(where: { $0 is UIStackView }) as? UIStackView
+    )
+    let summaryButton = try #require(originalContainerStack.arrangedSubviews.first as? UIButton)
+    let originalContentWrapper = try #require(originalContainerStack.arrangedSubviews[safe: 1])
+    #expect(originalContentWrapper.isHidden)
+
+    summaryButton.sendActions(for: .touchUpInside)
+    #expect(originalContentWrapper.isHidden == false)
+    // The production interaction lock intentionally suppresses concurrent stream patches.
+    // Clear it here so this test exercises the subsequent incremental reconciliation itself.
+    markdownView.isUserInteractingWithDetails = false
+
+    markdownView.updateViews(
+        newElements: [newElement],
+        footnotes: [],
+        containerWidth: width
+    )
+    markdownView.layoutIfNeeded()
+
+    let updatedOuterContainer = try #require(
+        markdownView.contentStackView.arrangedSubviews.first
+    )
+    #expect(updatedOuterContainer === originalOuterContainer)
+    let updatedContainerStack = try #require(
+        updatedOuterContainer.subviews.first(where: { $0 is UIStackView }) as? UIStackView
+    )
+    let updatedContentWrapper = try #require(updatedContainerStack.arrangedSubviews[safe: 1])
+    #expect(updatedContentWrapper === originalContentWrapper)
+    #expect(updatedContentWrapper.isHidden == false)
+
+    let updatedButton = try #require(updatedContainerStack.arrangedSubviews.first as? UIButton)
+    let updatedTitle = updatedButton.configuration?.title ?? updatedButton.currentTitle ?? ""
+    #expect(updatedTitle.contains("Updated summary"))
+    #expect(updatedTitle.hasPrefix("▼ "))
+
+    let updatedTextView = try #require(firstSubview(of: MarkdownTextViewTK2.self, in: updatedContentWrapper))
+    #expect(updatedTextView.displayedAttributedString.string.contains("Updated details body"))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func collapsingDetailsRestoresSyncPreviewHeightAndDirectoryListGeometry() async throws {
+    func firstSubview<T: UIView>(of type: T.Type, in root: UIView, where predicate: (T) -> Bool) -> T? {
+        if let candidate = root as? T, predicate(candidate) {
+            return candidate
+        }
+        for subview in root.subviews {
+            if let match = firstSubview(of: type, in: subview, where: predicate) {
+                return match
+            }
+        }
+        return nil
+    }
+
+    func settleLayout(_ scrollView: ScrollableMarkdownViewTextKit) {
+        scrollView.setNeedsLayout()
+        scrollView.layoutIfNeeded()
+        scrollView.markdownView.setNeedsLayout()
+        scrollView.markdownView.layoutIfNeeded()
+        scrollView.markdownView.contentStackView.setNeedsLayout()
+        scrollView.markdownView.contentStackView.layoutIfNeeded()
+    }
+
+    struct DirectoryGeometry {
+        let rootHeight: CGFloat
+        let structuralHeight: CGFloat
+        let scrollContentHeight: CGFloat
+        let wrapperHeight: CGFloat
+        let itemHeights: [CGFloat]
+        let interItemGap: CGFloat
+    }
+
+    func geometry(
+        in scrollView: ScrollableMarkdownViewTextKit,
+        listWrapper: UIView,
+        listStack: UIStackView,
+        settle: Bool = false
+    ) -> DirectoryGeometry {
+        if settle {
+            settleLayout(scrollView)
+        }
+        let items = listStack.arrangedSubviews
+        let gap = items.count >= 2 ? items[1].frame.minY - items[0].frame.maxY : .greatestFiniteMagnitude
+        return DirectoryGeometry(
+            rootHeight: scrollView.markdownView.intrinsicContentSize.height,
+            structuralHeight: scrollView.markdownView.contentStackView.systemLayoutSizeFitting(
+                CGSize(
+                    width: scrollView.markdownView.bounds.width,
+                    height: UIView.layoutFittingCompressedSize.height
+                ),
+                withHorizontalFittingPriority: .required,
+                verticalFittingPriority: .fittingSizeLevel
+            ).height,
+            scrollContentHeight: scrollView.contentSize.height,
+            wrapperHeight: listWrapper.bounds.height,
+            itemHeights: items.map(\.bounds.height),
+            interItemGap: gap
+        )
+    }
+
+    // 直接使用 Example 屏幕的完整 fixture，避免删减掉与分批渲染、复杂附件或
+    // 后续内容高度有关的触发条件。这里只解析测试仓库中的 Swift 多行字面量；
+    // 不依赖运行时 bundle 资源，也不修改 Example target。
+    let repositoryRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let exampleSource = try String(
+        contentsOf: repositoryRoot
+            .appendingPathComponent("Example/ExampleForMarkdown/ExampleForMarkdown/MarkdownExampleViewController.swift"),
+        encoding: .utf8
+    )
+    let literalStart = try #require(exampleSource.range(of: "let sampleMarkdown = \"\"\"\n"))
+    let literalTail = exampleSource[literalStart.upperBound...]
+    let literalEnd = try #require(literalTail.range(of: "\n    \"\"\"", options: .backwards))
+    let markdown = literalTail[..<literalEnd.lowerBound]
+        .split(separator: "\n", omittingEmptySubsequences: false)
+        .map { line in
+            line.hasPrefix("    ") ? String(line.dropFirst(4)) : String(line)
+        }
+        .joined(separator: "\n")
+        .replacingOccurrences(of: "\\\\", with: "\\")
+        .replacingOccurrences(of: "\\\"", with: "\"")
+        // Images are unrelated to Details geometry and would otherwise make this local
+        // layout regression depend on DNS/network timing from the Example's demo URLs.
+        .replacingOccurrences(
+            of: "!\\[[^\\]]*\\]\\([^)]*\\)",
+            with: "[image omitted by layout test]",
+            options: .regularExpression
+        )
+
+    let viewportWidth: CGFloat = 390
+    let scrollView = ScrollableMarkdownViewTextKit(
+        frame: CGRect(x: 0, y: 0, width: viewportWidth, height: 700)
+    )
+    let host = UIViewController()
+    host.view.frame = scrollView.bounds
+    host.view.addSubview(scrollView)
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+        scrollView.topAnchor.constraint(equalTo: host.view.topAnchor),
+        scrollView.leadingAnchor.constraint(equalTo: host.view.leadingAnchor),
+        scrollView.trailingAnchor.constraint(equalTo: host.view.trailingAnchor),
+        scrollView.bottomAnchor.constraint(equalTo: host.view.bottomAnchor),
+    ])
+    let window = UIWindow(frame: scrollView.bounds)
+    window.rootViewController = host
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    settleLayout(scrollView)
+
+    // 走 Sync Markdown Preview 使用的真实 markdown setter，并等待后台解析和主线程
+    // updateViews 都完成。不能换成直接 createDetailsView，否则测不到根高度缓存与
+    // ScrollableMarkdownViewTextKit contentSize 的联动。
+    scrollView.markdown = markdown
+    for _ in 0..<400 {
+        settleLayout(scrollView)
+        let hasDetails = firstSubview(of: UIButton.self, in: scrollView.markdownView) {
+            $0.configuration?.title?.contains("Podfile 配置代码") == true
+        } != nil
+        let hasFullDirectory = scrollView.markdownView.contentStackView.arrangedSubviews.contains { root in
+            guard root.constraints.contains(where: {
+                $0.identifier == MarkdownViewTextKit.listWrapperWidthConstraintIdentifier
+            }), let stack = root.subviews.first as? UIStackView else {
+                return false
+            }
+            return stack.arrangedSubviews.count == 15
+        }
+        let finishedAppendingOffscreenContent = scrollView.markdownView.headingViews.count
+            == scrollView.markdownView.tableOfContents.count
+            && scrollView.markdownView.tableOfContents.contains { $0.title == "总结" }
+            && scrollView.markdownView.placeholderView == nil
+        if hasDetails && hasFullDirectory && finishedAppendingOffscreenContent { break }
+        try await Task.sleep(nanoseconds: 20_000_000)
+    }
+
+    let listWrapper = try #require(scrollView.markdownView.contentStackView.arrangedSubviews.first {
+        $0.constraints.contains {
+            $0.identifier == MarkdownViewTextKit.listWrapperWidthConstraintIdentifier
+        }
+    })
+    let listStack = try #require(listWrapper.subviews.first as? UIStackView)
+    #expect(listStack.arrangedSubviews.count == 15)
+
+    let detailsButton = try #require(firstSubview(of: UIButton.self, in: scrollView.markdownView) {
+        $0.configuration?.title?.contains("Podfile 配置代码") == true
+    })
+
+    let initiallyCollapsed = geometry(
+        in: scrollView,
+        listWrapper: listWrapper,
+        listStack: listStack,
+        settle: true
+    )
+
+    let detailsFrame = detailsButton.convert(detailsButton.bounds, to: scrollView)
+    scrollView.setContentOffset(
+        CGPoint(x: 0, y: max(0, detailsFrame.minY - 80)),
+        animated: false
+    )
+    detailsButton.sendActions(for: .touchUpInside)
+    try await Task.sleep(nanoseconds: 400_000_000)
+    let expanded = geometry(
+        in: scrollView,
+        listWrapper: listWrapper,
+        listStack: listStack
+    )
+    #expect(expanded.rootHeight > initiallyCollapsed.rootHeight + 300)
+    #expect(expanded.scrollContentHeight > initiallyCollapsed.scrollContentHeight + 300)
+
+    detailsButton.sendActions(for: .touchUpInside)
+    // Collapse 动画为 0.2 秒；额外等待一轮布局/高度回调完成。
+    try await Task.sleep(nanoseconds: 400_000_000)
+    scrollView.backToTableOfContentsSection()
+    try await Task.sleep(nanoseconds: 400_000_000)
+    let collapsedAgain = geometry(
+        in: scrollView,
+        listWrapper: listWrapper,
+        listStack: listStack
+    )
+    // The complete Example fixture contains asynchronous image attachments, so its initial
+    // root height can legitimately change while the Details interaction is in progress.
+    // Compare the collapsed public height with the authoritative current structure instead
+    // of treating the earlier image-loading snapshot as immutable.
+    #expect(collapsedAgain.rootHeight < expanded.rootHeight - 300)
+    #expect(
+        abs(collapsedAgain.rootHeight - collapsedAgain.structuralHeight) <= 2,
+        "collapsed intrinsic height retained non-structural space: structural=\(collapsedAgain.structuralHeight), intrinsic=\(collapsedAgain.rootHeight)"
+    )
+    #expect(
+        abs(collapsedAgain.scrollContentHeight - (collapsedAgain.rootHeight + 32)) <= 2,
+        "scroll contentSize did not follow collapsed intrinsic height: root=\(collapsedAgain.rootHeight), content=\(collapsedAgain.scrollContentHeight)"
+    )
+    #expect(
+        abs(collapsedAgain.wrapperHeight - initiallyCollapsed.wrapperHeight) <= 1,
+        "directory wrapper retained expanded space: initial=\(initiallyCollapsed.wrapperHeight), collapsed=\(collapsedAgain.wrapperHeight)"
+    )
+    #expect(collapsedAgain.itemHeights.count == initiallyCollapsed.itemHeights.count)
+    for (initial, collapsed) in zip(initiallyCollapsed.itemHeights, collapsedAgain.itemHeights) {
+        #expect(
+            abs(collapsed - initial) <= 1,
+            "directory item was vertically stretched: initial=\(initial), collapsed=\(collapsed)"
+        )
+    }
+    #expect(
+        abs(collapsedAgain.interItemGap - initiallyCollapsed.interItemGap) <= 1,
+        "directory item gap was stretched: initial=\(initiallyCollapsed.interItemGap), collapsed=\(collapsedAgain.interItemGap)"
+    )
+}

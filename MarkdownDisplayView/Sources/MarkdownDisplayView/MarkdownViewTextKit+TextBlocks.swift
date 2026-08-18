@@ -342,12 +342,11 @@ extension MarkdownViewTextKit {
         }
         
         summaryButton.addAction(
-            UIAction { [weak self, weak contentWrapper, weak contentContainer, weak summaryButton, weak container] _ in
+            UIAction { [weak self, weak contentWrapper, weak contentContainer, weak summaryButton] _ in
                 guard let self = self,
                       let wrapper = contentWrapper,
                       let content = contentContainer,
-                      let btn = summaryButton,
-                      let containerWrapper = container
+                      let btn = summaryButton
                 else { return }
                 
                 // 🔒 锁定流式更新，防止状态覆盖
@@ -385,89 +384,28 @@ extension MarkdownViewTextKit {
                         self.recursivelyUpdateLayout(for: subview, width: contentWidth)
                     }
 
-                    // 动画显示
+                    // Details 会改变整棵 Markdown 视图的结构高度。必须先清除旧缓存并
+                    // 同步提交新的 compressed fitting height，避免 ScrollView 在下一帧
+                    // 仍使用收起态高度，把新增空间错误分配给目录等其他 arrangedSubview。
+                    self.notifyHeightChange(force: true)
+
+                    // 高度已经同步，只对内容本身做淡入。
                     UIView.animate(withDuration: 0.25) {
                         wrapper.alpha = 1
-                        self.layoutIfNeeded()
                     }
 
                 } else {
-                    // [Collapse Flow] - 动画隐藏，完成后清理
+                    // [Collapse Flow] - 淡出完成后从 StackView 布局中移除整块内容。
                     UIView.animate(withDuration: 0.2, animations: {
                         wrapper.alpha = 0
                     }) { _ in
                         wrapper.isHidden = true
 
-                        // 隐藏子视图 & 降低优先级
-                        content.arrangedSubviews.forEach {
-                            $0.isHidden = true
-                            $0.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-                        }
-
-                        // ⭐️ 收起动画完成后再更新布局和高度
-                        self.setNeedsLayout()
-                        self.layoutIfNeeded()
-                        self.invalidateIntrinsicContentSize()
-                        self.contentStackView.layoutIfNeeded()
-
-                        // 通知高度变化
-                        var totalHeight: CGFloat = 0
-                        for subview in self.contentStackView.arrangedSubviews {
-                            if !subview.isHidden {
-                                totalHeight += subview.frame.height
-                            }
-                        }
-                        let visibleCount = self.contentStackView.arrangedSubviews.filter { !$0.isHidden }.count
-                        if visibleCount > 1 {
-                            totalHeight += CGFloat(visibleCount - 1) * self.contentStackView.spacing
-                        }
-                        totalHeight += self.contentStackView.layoutMargins.top + self.contentStackView.layoutMargins.bottom
-
-                        if self.isRealStreamingMode {
-                            self.realStreamHeightAccumulator.synchronize(totalHeight: totalHeight)
-                            self.invalidateIntrinsicContentSize()
-                        }
-                        self.cacheIntrinsicHeight(totalHeight)
-                        self.lastReportedHeight = totalHeight
-                        self.onHeightChange?(totalHeight)
+                        // 不能从旧根高度下已经被 .fill 拉伸的 frame 反算总高度；统一走
+                        // force/full-fitting 路径，收缩根高度并同步外层 ScrollView。
+                        self.notifyHeightChange(force: true)
                     }
-                    return  // ⭐️ 收起时直接返回，高度更新在动画完成后处理
-                }
-
-                // 3. 通知外部 (TableView) 更新（仅展开时执行）
-                self.setNeedsLayout()
-                self.layoutIfNeeded()
-                self.invalidateIntrinsicContentSize()
-                
-                // 🔥 终极修复：不再依赖 systemLayoutSizeFitting，而是直接计算 StackView 的实际高度
-                // 延迟一小段时间等待布局引擎稳定
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    // 强制再次刷新布局
-                    self.contentStackView.layoutIfNeeded()
-                    
-                    // 手动计算高度：遍历所有子视图的 frame
-                    var totalHeight: CGFloat = 0
-                    for subview in self.contentStackView.arrangedSubviews {
-                        if !subview.isHidden {
-                            totalHeight += subview.frame.height
-                        }
-                    }
-                    // 加上 spacing
-                    let visibleCount = self.contentStackView.arrangedSubviews.filter { !$0.isHidden }.count
-                    if visibleCount > 1 {
-                        totalHeight += CGFloat(visibleCount - 1) * self.contentStackView.spacing
-                    }
-                    // 加上 insets (如果有)
-                    totalHeight += self.contentStackView.layoutMargins.top + self.contentStackView.layoutMargins.bottom
-                    
-                    if self.isRealStreamingMode {
-                        self.realStreamHeightAccumulator.synchronize(totalHeight: totalHeight)
-                        self.invalidateIntrinsicContentSize()
-                    }
-                    self.cacheIntrinsicHeight(totalHeight)
-                    // 强制通知
-                    self.lastReportedHeight = totalHeight
-                    self.onHeightChange?(totalHeight)
+                    return
                 }
 
             }, for: .touchUpInside)

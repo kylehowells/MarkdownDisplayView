@@ -553,9 +553,15 @@ extension MarkdownViewTextKit {
             return
         }
 
-        // ⭐️ 强制 StackView 立即更新布局
+        // 结构性变化（Details 展开/收起、宽度变化等）不能沿用旧的根高度缓存。
+        // 先失效根 intrinsic size，再解算 compressed fitting height；否则旧高度会让
+        // UIStackView `.fill` 把差额塞进目录/列表，随后 frame fallback 又会固化错误值。
         if force {
+            invalidateIntrinsicHeightCache()
+            invalidateIntrinsicContentSize()
             self.contentStackView.invalidateIntrinsicContentSize()
+            self.contentStackView.setNeedsLayout()
+            self.setNeedsLayout()
         }
         self.layoutIfNeeded()
         self.contentStackView.layoutIfNeeded()
