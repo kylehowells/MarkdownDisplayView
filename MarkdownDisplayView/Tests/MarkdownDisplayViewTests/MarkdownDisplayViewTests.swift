@@ -71,6 +71,63 @@ import UIKit
 }
 
 @available(iOS 15.0, *)
+@MainActor
+@Test func estimatedBlockWidthsYieldToTheHostLayout() throws {
+    let markdownView = MarkdownViewTextKit()
+    let estimatedWidth: CGFloat = 277.667
+
+    let list = markdownView.createListView(
+        items: [
+            ListNodeItem(
+                marker: "•",
+                children: [.attributedText(NSAttributedString(string: "item"))]
+            )
+        ],
+        width: estimatedWidth,
+        level: 1
+    )
+    let quote = markdownView.createQuoteView(children: [], width: estimatedWidth)
+    let thematicBreak = markdownView.createThematicBreakView(width: estimatedWidth)
+
+    let listWidth = try #require(list.constraints.first {
+        $0.identifier == MarkdownViewTextKit.listWrapperWidthConstraintIdentifier
+    })
+    let quoteWidth = try #require(quote.constraints.first {
+        $0.firstItem === quote && $0.firstAttribute == .width && $0.relation == .equal
+    })
+    let thematicBreakWidth = try #require(thematicBreak.constraints.first {
+        $0.firstItem === thematicBreak && $0.firstAttribute == .width && $0.relation == .equal
+    })
+
+    for constraint in [listWidth, quoteWidth, thematicBreakWidth] {
+        #expect(constraint.constant == estimatedWidth)
+        #expect(constraint.priority == UILayoutPriority(999))
+    }
+
+    // 模拟 Cell 最终宽度与预排版快照有亚像素差异。宿主的 required 宽度应当胜出，
+    // 而不是让 UIKit 打断一条 required 快照约束后再做第二次布局。
+    // 差值需大于 1 个三倍屏像素，避免测试值本身被 UIKit 像素对齐回估算宽度。
+    let hostWidth: CGFloat = 277.25
+    for block in [list, quote, thematicBreak] {
+        let host = UIView(frame: CGRect(x: 0, y: 0, width: hostWidth, height: 300))
+        block.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(block)
+        NSLayoutConstraint.activate([
+            block.topAnchor.constraint(equalTo: host.topAnchor),
+            block.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            block.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+        ])
+        host.layoutIfNeeded()
+
+        let hostDelta = abs(block.bounds.width - host.bounds.width)
+        let snapshotDelta = abs(block.bounds.width - estimatedWidth)
+        #expect(hostDelta <= (1 / UIScreen.main.scale) + 0.001)
+        #expect(hostDelta < snapshotDelta)
+        #expect(block.hasAmbiguousLayout == false)
+    }
+}
+
+@available(iOS 15.0, *)
 @Test func imageViewNormalizesImageURLsBeforeLoading() async throws {
     let httpURL = try #require(ImageView.normalizedImageURL(from: "http://example.com/photo.png"))
     let bareURL = try #require(ImageView.normalizedImageURL(from: "example.com/photo"))
@@ -186,6 +243,125 @@ import UIKit
 
 @available(iOS 15.0, *)
 @MainActor
+@Test func appendTypewriterPreparesAtomicQuoteTextAtItsFinalHeight() async throws {
+    func firstTextView(in view: UIView) -> MarkdownTextViewTK2? {
+        if let textView = view as? MarkdownTextViewTK2 {
+            return textView
+        }
+        for subview in view.subviews {
+            if let textView = firstTextView(in: subview) {
+                return textView
+            }
+        }
+        return nil
+    }
+
+    func makeQuote(using markdownView: MarkdownViewTextKit) -> UIView {
+        let text = NSAttributedString(
+            string: "Quoted guidance must remain visible when the whole block fades in.",
+            attributes: [
+                .font: UIFont.systemFont(ofSize: 16),
+                .foregroundColor: UIColor.label,
+            ]
+        )
+        return markdownView.createQuoteView(
+            children: [.attributedText(text)],
+            width: 220
+        )
+    }
+
+    var configuration = MarkdownConfiguration.default
+    configuration.typewriterTextMode = .append
+
+    let markdownView = MarkdownViewTextKit()
+    markdownView.configuration = configuration
+    markdownView.enableTypewriterEffect = true
+
+    let rootQuote = makeQuote(using: markdownView)
+    let rootTextView = try #require(firstTextView(in: rootQuote))
+    let rootEngine = TypewriterEngine()
+    rootEngine.enqueue(view: rootQuote)
+
+    #expect(rootEngine.outstandingTaskCount == 1)
+    #expect(rootTextView.intrinsicContentSize.height > 1)
+    #expect(rootTextView.displayedAttributedString.string.contains("Quoted guidance"))
+
+    // A quote nested inside a list/container reaches TypewriterEngine with
+    // isRoot=false, so cover the atomic .block path as well as the root .show path.
+    let nestedQuote = makeQuote(using: markdownView)
+    let nestedTextView = try #require(firstTextView(in: nestedQuote))
+    let parent = UIView()
+    parent.addSubview(nestedQuote)
+    let nestedEngine = TypewriterEngine()
+    nestedEngine.enqueue(view: parent)
+
+    #expect(nestedEngine.outstandingTaskCount == 2)
+    #expect(nestedTextView.intrinsicContentSize.height > 1)
+    #expect(nestedTextView.displayedAttributedString.string.contains("Quoted guidance"))
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func realStreamingAppendTypewriterKeepsAtomicQuoteTextVisible() async throws {
+    func firstTextView(in view: UIView) -> MarkdownTextViewTK2? {
+        if let textView = view as? MarkdownTextViewTK2 {
+            return textView
+        }
+        for subview in view.subviews {
+            if let textView = firstTextView(in: subview) {
+                return textView
+            }
+        }
+        return nil
+    }
+
+    var configuration = MarkdownConfiguration.default
+    configuration.typewriterTextMode = .append
+
+    let markdownView = MarkdownViewTextKit(
+        frame: CGRect(x: 0, y: 0, width: 320, height: 640)
+    )
+    markdownView.configuration = configuration
+    markdownView.enableTypewriterEffect = true
+    markdownView.updateTypewriterSpeed(
+        charsPerStep: 1_000,
+        baseDuration: 0.001,
+        elementGapDuration: 0
+    )
+    markdownView.layoutIfNeeded()
+    markdownView.beginRealStreaming()
+
+    let quoteText = "Quoted guidance remains visible after atomic playback."
+    for fragment in [
+        "> Quoted guidance",
+        " remains visible",
+        " after atomic playback.",
+        "\n\n",
+    ] {
+        markdownView.appendStreamData(fragment)
+    }
+
+    await withCheckedContinuation { continuation in
+        markdownView.endRealStreaming {
+            continuation.resume()
+        }
+    }
+
+    let quote = try #require(markdownView.contentStackView.arrangedSubviews.first {
+        $0.accessibilityIdentifier == "MarkdownAtomicQuote"
+    })
+    let textView = try #require(firstTextView(in: quote))
+
+    #expect(markdownView.typewriterEngine.isIdle)
+    #expect(textView.displayedAttributedString.string.contains(quoteText))
+    #expect(
+        textView.intrinsicContentSize.height > 1,
+        "atomic quote text must use its final height, actual=\(textView.intrinsicContentSize.height)"
+    )
+}
+
+@available(iOS 15.0, *)
+@MainActor
 @Test func tableLayoutReusesAttributesWhileGeometryIsUnchanged() async throws {
     let layout = MarkdownTableLayout()
     layout.columnWidths = [100, 120]
@@ -285,32 +461,62 @@ import UIKit
 @available(iOS 15.0, *)
 @MainActor
 @Test func appendTypewriterSeparatesCharacterRevealFromHeightChanges() async throws {
-    let textView = MarkdownTextViewTK2()
-    textView.typewriterTextMode = .append
-    textView.typewriterHeightUpdateInterval = 20
-    textView.attributedText = NSAttributedString(
+    // 软折行（word wrap）不产生 "\n"，也不会正好落在第 N 个字符上。若按字符数节流测高，
+    // 折行后的新行会有若干帧拿不到高度，被外层 Cell 的 UIView-Encapsulated-Layout-Height
+    // （required）裁掉——这就是流式输出在折行处的闪烁。
+    //
+    // 因此这里不断言"第几个字符才上报高度"（那是节流实现的细节，换实现就会失效），
+    // 而是断言两条不变式：
+    //   1. 任何时刻报出的高度，都不得小于当前可见前缀真正需要的高度；
+    //   2. 上报仍然是被节流的——必须存在"揭示了字符但高度没变"的帧，
+    //      否则说明退化成每帧都通知宿主，会把 performBatchUpdates 打爆。
+    let width: CGFloat = 120  // 窄容器，保证这段文本会多次软折行
+    let full = NSAttributedString(
         string: String(repeating: "a", count: 40),
         attributes: [.font: UIFont.systemFont(ofSize: 16)]
     )
-    textView.textContainer.size = CGSize(width: 320, height: CGFloat.greatestFiniteMagnitude)
+
+    // 用独立的参考视图算出各前缀真正需要的高度，作为不依赖被测对象的 ground truth
+    let requiredHeights: [CGFloat] = (1...full.length).map { length in
+        let probe = MarkdownTextViewTK2()
+        probe.attributedText = full.attributedSubstring(from: NSRange(location: 0, length: length))
+        probe.applyLayout(width: width, force: true)
+        return probe.intrinsicContentSize.height
+    }
+    // 前提校验：这段文本在该宽度下确实折了行，否则本用例什么也没测到
+    #expect(requiredHeights.last! > requiredHeights.first!)
+
+    let textView = MarkdownTextViewTK2()
+    textView.typewriterTextMode = .append
+    textView.attributedText = full
+    textView.textContainer.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
     textView.setFixedHeight(1)
     textView.prepareForTypewriter()
 
-    let firstCharacter = textView.revealCharacter(upto: 1)
-    #expect(firstCharacter.didReveal)
-    #expect(firstCharacter.didChangeHeight == false)
+    var laggingSteps = 0
+    var growthSteps = 0
+    var stableSteps = 0
 
-    let firstMeasurement = textView.revealCharacter(upto: 20)
-    #expect(firstMeasurement.didReveal)
-    #expect(firstMeasurement.didChangeHeight)
-    #expect(firstMeasurement.heightDelta > 0)
+    for length in 1...full.length {
+        let result = textView.revealCharacter(upto: length)
+        #expect(result.didReveal)
 
-    let sameLineCharacter = textView.revealCharacter(upto: 21)
-    #expect(sameLineCharacter.didReveal)
-    #expect(sameLineCharacter.didChangeHeight == false)
+        if textView.intrinsicContentSize.height < requiredHeights[length - 1] {
+            laggingSteps += 1
+        }
 
-    let completion = textView.revealCharacter(upto: 40)
-    #expect(completion.didReveal)
+        if result.didChangeHeight {
+            #expect(result.heightDelta > 0)
+            growthSteps += 1
+        } else {
+            stableSteps += 1
+        }
+    }
+
+    #expect(laggingSteps == 0)
+    #expect(growthSteps > 0)
+    #expect(stableSteps > 0)
+
     let completedHeight = textView.intrinsicContentSize.height
     textView.applyLayout(width: 1_000, force: true)
     #expect(textView.intrinsicContentSize.height == completedHeight)

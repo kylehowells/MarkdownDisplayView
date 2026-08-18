@@ -18,6 +18,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         MarkdownCustomExtensionManager.shared.registerVideoExtension()   // 视频扩展（行内语法）
         MarkdownCustomExtensionManager.shared.registerMermaidRenderer()  // Mermaid 渲染器（代码块）
         MarkdownCustomExtensionManager.shared.registerEChartsExtension() // ECharts（HTML 风格自定义标签）
+        MarkdownCustomExtensionManager.shared.registerHTMLJSPreviewRenderer() // HTML/JS 代码块预览
         return true
     }
 

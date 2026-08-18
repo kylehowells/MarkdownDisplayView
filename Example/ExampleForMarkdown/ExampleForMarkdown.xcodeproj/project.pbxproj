@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		05B326BD2F342A7D006A64C4 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 05B326BC2F342A7D006A64C4 /* Kingfisher */; };
 		05B326BB2F342A7D006A64C4 /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05B326BA2F342A7D006A64C4 /* MarkdownDisplayView */; };
+		05B326BD2F342A7D006A64C4 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 05B326BC2F342A7D006A64C4 /* Kingfisher */; };
 		05FB02FB2EF94E24003DB405 /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */; };
 		05FFEF752F04F01D000049DC /* MarkdownDisplayView in Frameworks */ = {isa = PBXBuildFile; productRef = 05FFEF742F04F01D000049DC /* MarkdownDisplayView */; };
 /* End PBXBuildFile section */
@@ -163,6 +163,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = ExampleForMarkdown/ExampleForMarkdown.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3Y5B6D2XFS;
@@ -198,6 +199,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS = YES;
+				CODE_SIGN_ENTITLEMENTS = ExampleForMarkdown/ExampleForMarkdown.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3Y5B6D2XFS;
@@ -390,14 +392,14 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		05B326BA2F342A7D006A64C4 /* MarkdownDisplayView */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MarkdownDisplayView;
+		};
 		05B326BC2F342A7D006A64C4 /* Kingfisher */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 05B326BE2F342A7D006A64C4 /* XCRemoteSwiftPackageReference "Kingfisher" */;
 			productName = Kingfisher;
-		};
-		05B326BA2F342A7D006A64C4 /* MarkdownDisplayView */ = {
-			isa = XCSwiftPackageProductDependency;
-			productName = MarkdownDisplayView;
 		};
 		05FB02FA2EF94E24003DB405 /* MarkdownDisplayView */ = {
 			isa = XCSwiftPackageProductDependency;

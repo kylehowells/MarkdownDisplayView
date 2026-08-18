@@ -93,7 +93,7 @@ Create an untracked `Config.local.json` in the example target when you want to r
 Add the dependency in `Package.swift`:
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "2.0.0")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "2.1.1")
 ]
 ```
 
@@ -114,7 +114,7 @@ Swift Package Manager resolves `swift-markdown` and `Kingfisher` automatically.
 Add the following lines to your `Podfile`:
 
 ```ruby
-pod 'MarkdownDisplayKit', '~> 2.0.0'
+pod 'MarkdownDisplayKit', '~> 2.1.1'
 ```
 
 Then run:
@@ -804,6 +804,17 @@ markdownView.setPreparedContent(preparedContent)
 </details>
 
 ## Changelog
+
+### 2.1.1 (2026-08-18)
+
+- 📏 **First-Pass Cell Height Accuracy** - Added `preferredMeasurementWidth` so hosts can supply the final content width before the first layout pass. Cell height is now correct on the first measurement instead of being applied in two passes (grow, then re-layout).
+- ✨ **Flicker-Free Append Typewriter Wrapping** - The append typewriter now remeasures height every frame instead of every N characters. Soft-wrapped new lines get their height immediately, eliminating the flash at wrap boundaries. Host notifications remain throttled by actual height change; `typewriterHeightUpdateInterval` is deprecated and no longer affects rendering.
+- 📏 **Incremental Streaming Height Threshold** - The real-streaming incremental path now notifies the host on any growth above 0.5pt (down from 9pt), so the cell's required layout height follows the content instead of clipping text until it crosses a threshold.
+- 🧱 **Snapshot Width Yields to Host Layout** - List wrapper, blockquote, and thematic-break width constraints now use 999 priority, so pre-layout snapshot widths give way to the host's real width and avoid unsatisfiable-constraint recovery layouts.
+- 🐛 **Zero-Height Feedback Loop Fixed** - After `resetForReuse()`, transient zero heights are suppressed until real content is rendered, breaking the render → height-callback → batch-update → cell-reuse loop.
+- 🧱 **Atomic Quote/Details Text in Append Mode** - Quote and details descendants are now laid out at their final height before the whole block is revealed, keeping their text visible during append typewriter playback.
+- 🧪 **Regression Coverage** - Added tests for sub-9pt streaming growth reporting, block width yielding to host layout, and atomic quote text visibility during append streaming.
+- 🖥 **Example: HTML/JS Code Preview** - Added an HTML/JS code-block preview renderer and demo sample to the example app.
 
 ### 2.0.0 (2026-08-13)
 

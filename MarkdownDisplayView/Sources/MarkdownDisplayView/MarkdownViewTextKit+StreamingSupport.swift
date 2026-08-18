@@ -61,6 +61,10 @@ extension MarkdownViewTextKit {
         renderWorkItem?.cancel()
         offscreenRenderWorkItem?.cancel()
         lastPreparedContentSignature = nil
+        // 下面会清空 contentStackView，本轮及之后若干次测高都会得到 0。
+        // 屏蔽这段中间态的 0 高度上报，等重渲染出真实高度再通知宿主，
+        // 否则宿主按 0 重排行高会把可见 Cell 推倒重来，反过来又触发 reset。
+        suppressesZeroHeightNotification = true
         autoScrollWorkItem?.cancel()
         autoScrollWorkItem = nil
         userScrolledAway = false
@@ -112,6 +116,15 @@ extension MarkdownViewTextKit {
         typewriterEngine.stop()
         streamBuffer.reset()
         contentStackView.arrangedSubviews.forEach { $0.removeFromSuperview() }
+
+        // 必须放在 renderVersion 自增与 contentStackView 清空之后。
+        // markdown 的 didSet 里有 `guard oldValue != markdown`：若不清空，Cell 复用后
+        // 被赋予同一段 markdown 会直接早退不渲染，而内容已被上面清光，结果是空白 Cell。
+        // 同时这里会触发一次 scheduleRerender()，放在末尾可保证它排队时拿到的是新版本号；
+        // 紧接着取消该任务，避免为空串白跑一轮渲染。
+        markdown = ""
+        renderWorkItem?.cancel()
+        renderWorkItem = nil
 
         setNeedsLayout()
         layoutIfNeeded()

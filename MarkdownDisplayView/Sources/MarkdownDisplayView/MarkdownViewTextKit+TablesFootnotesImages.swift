@@ -520,7 +520,25 @@ extension MarkdownViewTextKit {
            knownStreamingHeight.isFinite {
             cacheIntrinsicHeight(knownStreamingHeight, width: heightMeasurementWidth)
             let heightDiff = knownStreamingHeight - lastReportedHeight
-            let shouldNotifyParent = abs(heightDiff) > 9.0
+            // ⚠️ 增量路径不能套用全量测高那条 9pt 防抖阈值。
+            //
+            // isRealStreamingMode 下 `intrinsicContentSize` 直接返回累加器的 totalHeight，
+            // 而 handleTypewriterLayoutChange 每次高度变化都会 invalidateIntrinsicContentSize()，
+            // 也就是说 **markdownView 自身是无阈值、每帧跟随内容的**。若这里再按 9pt 拦截，
+            // 宿主 Cell 的 UIView-Encapsulated-Layout-Height（required）就会一直停在旧值，
+            // 而 textView 的 heightConstraint 只有 999 —— 差额全部由"把正在打字的文字压掉"
+            // 来吸收，直到累积跨过 9pt 才一次性弹出。表现就是流式过程中周期性闪一下。
+            //
+            // 这也解释了"第一个标题不闪、后续标题闪"：beginRealStreaming 会把
+            // lastReportedHeight 归零，第一个元素的 diff 是从 0 起跳，必然远大于 9pt 而立即
+            // 上报；从第二个元素开始才是小增量，才会落进阈值窗口被截留。标题行高 30pt 以上
+            // 又叠加 headingTopSpacing/headingBottomSpacing，被截留时裁掉的是一整截大字，
+            // 所以只在标题前后肉眼可见。
+            //
+            // 增量值本身已经过两层过滤（revealCharacter 的 didChangeHeight、累加器的 0.5pt），
+            // 上报频率等于折行频率而不是帧率，因此这里直接跟随即可。
+            // 全量测高路径的 9pt 阈值保留：那条路径读的是 frame 求和，本身会抖。
+            let shouldNotifyParent = abs(heightDiff) > 0.5
             if shouldNotifyParent {
                 lastReportedHeight = knownStreamingHeight
                 onHeightChange?(knownStreamingHeight)
@@ -582,6 +600,25 @@ extension MarkdownViewTextKit {
                 arrangedSubviews: contentStackView.arrangedSubviews.count
             )
             return
+        }
+
+        // 刚被 resetForReuse() 清空：内容栈是空的，上面那条保护（要求 hasVisibleContent）
+        // 拦不住，但这个 0 同样只是重渲染前的中间态。放行会让宿主按 0 重排一次行高，
+        // 进而触发可见 Cell 重建 → 再 reset → 再报 0 的自激环。等真实高度出来再上报。
+        if newHeight <= 0, suppressesZeroHeightNotification {
+            mdLog("📏 [Height] ⏳ Suppressed zero notification (post-reset, empty content)")
+            streamPerformanceDiagnostics.recordHeightMeasurement(
+                durationMS: (CFAbsoluteTimeGetCurrent() - start) * 1000,
+                notified: false,
+                force: force,
+                source: "suppressedZero",
+                arrangedSubviews: contentStackView.arrangedSubviews.count
+            )
+            return
+        }
+
+        if newHeight > 0 {
+            suppressesZeroHeightNotification = false
         }
 
         if newHeight.isFinite, newHeight >= 0 {
@@ -664,6 +701,11 @@ extension MarkdownViewTextKit {
     var heightMeasurementWidth: CGFloat {
         if bounds.width > 0 { return bounds.width }
         if contentStackView.bounds.width > 0 { return contentStackView.bounds.width }
+        // 宿主给出的宽度优先于整屏兜底：兜底值会让未布局的 Cell 首轮测出偏矮的高度，
+        // 导致行高分两趟应用（先长高再重刷）。
+        if let preferredMeasurementWidth, preferredMeasurementWidth > 0 {
+            return preferredMeasurementWidth
+        }
         return max(1, UIScreen.main.bounds.width - 32)
     }
 

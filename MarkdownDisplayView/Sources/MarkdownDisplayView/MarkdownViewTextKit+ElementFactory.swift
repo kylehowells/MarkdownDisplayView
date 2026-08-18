@@ -298,7 +298,10 @@ extension MarkdownViewTextKit {
         leadingConstraint.identifier = Self.listWrapperLeadingConstraintIdentifier
 
         let widthConstraint = indentWrapper.widthAnchor.constraint(equalToConstant: width)
-        widthConstraint.priority = .defaultHigh
+        // `width` 是解析/预排版阶段的测量快照，Cell 最终宽度可能存在亚像素差异。
+        // 保持 999 可稳定内部排版，同时允许外层 StackView 的 required 真实宽度胜出，
+        // 避免每个列表模块都触发 unsatisfiable-constraints 恢复布局。
+        widthConstraint.priority = UILayoutPriority(999)
         widthConstraint.identifier = Self.listWrapperWidthConstraintIdentifier
 
         // 使用标准约束替代 pinToEdges

@@ -67,7 +67,8 @@ extension MarkdownViewTextKit {
             // 计算文本实际可用的宽度（减去内边距）
             let contentWidth = width - insets.left - insets.right
             if contentWidth > 0 {
-                let useAppendTypewriter = enableTypewriterEffect && configuration.typewriterTextMode == .append
+                let useAppendTypewriter = enableTypewriterEffect
+                    && configuration.typewriterTextMode == .append
                 if let fixedHeight = fixedHeight {
                     // 完整块已经解析完成，直接采用最终高度；只对普通文字使用 1pt 增长路径。
                     textView.textContainer.size = CGSize(width: contentWidth, height: .greatestFiniteMagnitude)
@@ -170,7 +171,9 @@ extension MarkdownViewTextKit {
         }
 
         let widthConstraint = outerContainer.widthAnchor.constraint(equalToConstant: width)
-        widthConstraint.priority = .defaultHigh
+        // 解析宽度只是快照；外层 StackView 的 required 实际宽度可能有亚像素差异。
+        // 999 保留排版稳定性，同时避免 required-vs-required 冲突造成二次布局。
+        widthConstraint.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             widthConstraint,
             container.topAnchor.constraint(equalTo: outerContainer.topAnchor, constant: 4),
@@ -204,7 +207,8 @@ extension MarkdownViewTextKit {
         container.addSubview(lineView)
         
         let widthConstraint = container.widthAnchor.constraint(equalToConstant: width)
-        widthConstraint.priority = .defaultHigh
+        // 与引用、列表一致：测量快照不得和宿主真实宽度形成 required 冲突。
+        widthConstraint.priority = UILayoutPriority(999)
         NSLayoutConstraint.activate([
             container.heightAnchor.constraint(equalToConstant: 24),
             widthConstraint,

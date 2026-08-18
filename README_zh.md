@@ -99,7 +99,7 @@
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "2.0.0")
+    .package(url: "https://github.com/zjc19891106/MarkdownDisplayView.git", from: "2.1.1")
 ]
 ```
 
@@ -122,7 +122,7 @@ Swift Package Manager 会自动解析 `swift-markdown` 和 `Kingfisher`。
 
 ```ruby
 
-pod 'MarkdownDisplayKit', '~> 2.0.0'
+pod 'MarkdownDisplayKit', '~> 2.1.1'
 ```
 
 然后运行:
@@ -812,6 +812,17 @@ markdownView.setPreparedContent(preparedContent)
 </details>
 
 ## 更新日志
+
+### 2.1.1 (2026-08-18)
+
+- 📏 **首次测高即准确** - 新增 `preferredMeasurementWidth`，宿主可在首次布局前告知最终内容宽度，Cell 首轮测高即正确，避免「先长高、再重刷」的两趟行高应用。
+- ✨ **Append 打字机折行不再闪烁** - Append 打字机改为每帧测高，不再按字符数节流。软折行产生的新行立即获得高度，消除折行边界闪烁；对宿主的通知仍按「高度是否真正变化」节流，`typewriterHeightUpdateInterval` 已废弃、不再影响渲染。
+- 📏 **流式增量高度阈值下调** - 真流式增量路径改为任意超过 0.5pt 的增长都上报宿主（原为 9pt），Cell 的 required 布局高度实时跟随内容，不再裁切正在打字的文字。
+- 🧱 **快照宽度让位于宿主布局** - 列表包裹、引用块、分隔线宽度约束改为 999 优先级，预排版快照宽度让位于宿主真实宽度，避免 unsatisfiable-constraints 恢复布局。
+- 🐛 **修复 0 高度反馈环** - `resetForReuse()` 后抑制空内容阶段的 0 高度上报，消除「渲染 → 高度回调 → batch 更新 → cell 复用」的自激环。
+- 🧱 **Append 模式下原子引用/详情文本** - 引用块、详情块的子文本在整块揭示前先按最终高度排版，避免 Append 打字机播放期间文字被裁掉。
+- 🧪 **回归测试覆盖** - 新增亚 9pt 流式增长上报、块宽度让位于宿主布局、Append 流式下原子引用文本可见性等用例。
+- 🖥 **示例：HTML/JS 代码预览** - 示例 App 新增 HTML/JS 代码块预览渲染器与演示样例。
 
 ### 2.0.0 (2026-08-13)
 

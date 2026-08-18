@@ -387,6 +387,21 @@ public final class MarkdownViewTextKit: UIView {
     var pendingForcedHeightNotification = false
     var lastHeightNotificationTimestamp: CFTimeInterval = 0
     var lastLayoutWidthForHeightMeasurement: CGFloat = 0
+
+    /// 宿主显式告知的内容宽度，用于在首次布局之前正确测高。
+    ///
+    /// 不设置时，`heightMeasurementWidth` 在 `bounds.width == 0`（刚出队、尚未布局的 Cell）
+    /// 会退回到整屏宽度做估算，算出的高度明显偏矮；等首次 layoutSubviews 拿到真实宽度后
+    /// 又要重新测一次并补发通知，于是 UITableView 会**分两趟**应用行高——
+    /// 表现为 Cell 先长高一截、紧接着被重刷一次。宿主若已知最终宽度（例如固定比例的气泡），
+    /// 在 configure 时设进来即可让首轮就算准，第二趟补刷不再发生。
+    public var preferredMeasurementWidth: CGFloat? {
+        didSet {
+            guard oldValue != preferredMeasurementWidth else { return }
+            invalidateIntrinsicHeightCache()
+            invalidateIntrinsicContentSize()
+        }
+    }
     var realStreamHeightAccumulator = StreamingHeightAccumulator()
     var pendingKnownStreamingHeight: CGFloat?
     var pendingRequiresFullHeightMeasurement = false
@@ -402,6 +417,15 @@ public final class MarkdownViewTextKit: UIView {
     // MARK: - Height reporting state
 
     var lastReportedHeight: CGFloat = 0
+
+    /// `resetForReuse()` 之后、首次测到正高度之前，屏蔽向宿主上报 0 高度。
+    ///
+    /// 重置会清空 `contentStackView`，此时测高必然是 0，而 `notifyHeightChange` 里
+    /// 那条「瞬时 0」保护要求 `hasVisibleContent == true` 才生效，空栈刚好绕过它，
+    /// 于是 `onHeightChange?(0)` 外泄。宿主（如 UITableView 的自适应行高）收到 0 会
+    /// 立刻发起一轮行高重算 → 可见 Cell 重建 → 再次 reset → 再报 0，形成自激环。
+    /// 这个 0 是纯粹的中间态：内容随后就会重渲染并报出真实高度，宿主不需要看到它。
+    var suppressesZeroHeightNotification = false
 
     // MARK: - Initialization
 

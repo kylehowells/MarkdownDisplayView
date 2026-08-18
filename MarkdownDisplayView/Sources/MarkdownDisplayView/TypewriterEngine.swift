@@ -285,9 +285,20 @@ class TypewriterEngine {
         defer {
             if isRoot { onOutstandingTaskCountChange?(outstandingTaskCount) }
         }
+        let atomicIdentifier = view.accessibilityIdentifier ?? ""
+        let isCompoundAtomicBlock = atomicIdentifier.hasPrefix("MarkdownAtomicQuote")
+            || atomicIdentifier.hasPrefix("MarkdownAtomicDetails")
+
+        // Quote/details descendants are not enqueued as individual text tasks. Resolve
+        // append mode's provisional 1pt text height before the whole block is revealed.
+        // This runs for both root `.show` and nested `.block` paths.
+        if isCompoundAtomicBlock {
+            prepareDeferredAppendText(in: view)
+        }
+
         // 完整块只执行根视图的 show：先不占 StackView 高度，轮到它时整块插入并淡入。
         // 普通文本继续递归到 MarkdownTextViewTK2，保持逐字显示。
-        let isAtomicRoot = isRoot && view.accessibilityIdentifier?.hasPrefix("MarkdownAtomic") == true
+        let isAtomicRoot = isRoot && atomicIdentifier.hasPrefix("MarkdownAtomic")
         if isRoot {
             // 🆕 根视图初始设为透明，通过 .show 任务渐显
             view.alpha = 0
@@ -362,6 +373,17 @@ class TypewriterEngine {
         mdLog("[TYPEWRITER] ⬛️ 原子块: \(type(of: view)), id: \(view.accessibilityIdentifier ?? "nil")")
         view.alpha = 0
         taskQueue.append(.block(view))
+    }
+
+    private func prepareDeferredAppendText(in view: UIView) {
+        if let textView = view as? MarkdownTextViewTK2 {
+            textView.prepareDeferredAppendTextForAtomicDisplay()
+            return
+        }
+
+        for subview in view.subviews {
+            prepareDeferredAppendText(in: subview)
+        }
     }
 
     func start() {

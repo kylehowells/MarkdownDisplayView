@@ -256,6 +256,10 @@ public struct MarkdownConfiguration: Sendable {
     public var imagePlaceholderHeight: CGFloat
     public var streamMinModuleLength: Int = 50
     public var typewriterTextMode: MarkdownTypewriterTextMode = .reveal
+    /// ⚠️ 已废弃：`.append` 打字机现在每帧测高，此值不再影响渲染行为。
+    ///
+    /// 调大它曾经能减少测高次数，但也会让软折行产生的新行在最多 N 个字符的时间里
+    /// 拿不到高度，直接表现为折行瞬间的闪烁。保留该属性只为不破坏既有调用方。
     public var typewriterHeightUpdateInterval: Int = 20
     
     

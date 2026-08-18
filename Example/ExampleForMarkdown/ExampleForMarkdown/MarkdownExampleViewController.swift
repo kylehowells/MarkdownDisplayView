@@ -666,7 +666,7 @@ let sampleMarkdown = """
         }
     };
 
-    fetchData('https://api.example.com/data')
+    fetchData('https://api.github.com')
         .then(data => console.log(data));
     ```
 
@@ -703,6 +703,63 @@ let sampleMarkdown = """
 
     ```swift
     let veryLongVariableName = "This is a very long string that should test horizontal scrolling or wrapping in code blocks when displayed on mobile devices"
+    ```
+
+    ## 8.8 代码块 - HTML（可预览）
+
+    ```html
+    <!DOCTYPE html>
+    <html lang="zh-CN">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>HTML 预览示例</title>
+        <style>
+            body {
+                font-family: -apple-system, sans-serif;
+                margin: 0;
+                padding: 24px;
+                background: #f5f5f7;
+            }
+            .card {
+                background: white;
+                border-radius: 16px;
+                padding: 24px;
+                box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+                max-width: 320px;
+                margin: 0 auto;
+                text-align: center;
+            }
+            h1 { font-size: 20px; margin: 0 0 8px; }
+            p { color: #666; font-size: 14px; margin: 0 0 20px; }
+            button {
+                background: #007aff;
+                color: white;
+                border: none;
+                border-radius: 10px;
+                padding: 12px 24px;
+                font-size: 16px;
+            }
+            button:active { opacity: 0.8; }
+            #count { font-size: 32px; font-weight: bold; margin: 16px 0; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h1>HTML 预览</h1>
+            <p>点击按钮试试：</p>
+            <div id="count">0</div>
+            <button onclick="increment()">点我 +1</button>
+        </div>
+        <script>
+            let n = 0;
+            function increment() {
+                n += 1;
+                document.getElementById('count').textContent = n;
+            }
+        </script>
+    </body>
+    </html>
     ```
     
     ---

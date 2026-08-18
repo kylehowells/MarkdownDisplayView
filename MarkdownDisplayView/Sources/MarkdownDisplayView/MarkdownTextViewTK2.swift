@@ -51,9 +51,14 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     private var attachmentProviders: [NSTextAttachment: NSTextAttachmentViewProvider] = [:]
 
     var typewriterTextMode: MarkdownTypewriterTextMode = .reveal
+    /// ⚠️ 已不再参与 append 打字机的测高决策，保留仅为兼容既有配置。
+    ///
+    /// 它原先的作用是"每 N 个字符才重新测一次高"。但软折行不产生 "\n"、也不一定
+    /// 正好凑够 N 个字符，被它拦下的那段时间里新行没有高度可用，就是流式输出在
+    /// 折行边界的闪烁来源。现在 `revealCharacter` 每帧都测（增量布局，成本很低），
+    /// 改由"高度是否真的变化"来节流向宿主的上报。
     var typewriterHeightUpdateInterval: Int = 20
 
-    private var lastHeightUpdateIndex: Int = 0
     private var cachedOriginalAttributedString: NSAttributedString?
     private var isAppendingTypewriterText = false
 
@@ -180,6 +185,20 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
             invalidateIntrinsicContentSize()
             setNeedsDisplay()
         }
+    }
+
+    /// Atomic rich blocks are revealed as one unit, so their descendants never receive
+    /// individual typewriter tasks. Expand only text that is still using append mode's
+    /// provisional 1pt height; attachment-backed views keep their precalculated heights.
+    func prepareDeferredAppendTextForAtomicDisplay() {
+        guard typewriterTextMode == .append,
+              textStorage.length > 0,
+              (heightConstraint?.constant ?? calculatedHeight) <= 1.5,
+              textContainer.size.width > 0 else {
+            return
+        }
+
+        applyLayout(width: textContainer.size.width, force: true)
     }
 
     /// 结束 append 打字机播放，恢复正常的响应式测高。
@@ -463,7 +482,6 @@ extension MarkdownTextViewTK2 {
 
         // ⭐️ 重置显示位置
         lastRevealedIndex = 0
-        lastHeightUpdateIndex = 0
         cachedOriginalAttributedString = attr
         isAppendingTypewriterText = false
 
@@ -530,29 +548,40 @@ extension MarkdownTextViewTK2 {
 
             lastRevealedIndex = endIndex
 
-            let interval = max(1, typewriterHeightUpdateInterval)
-            let shouldUpdateLayout = segment.string.contains("\n")
-                || (endIndex - lastHeightUpdateIndex) >= interval
-                || endIndex >= length
-
-            if shouldUpdateLayout {
-                lastHeightUpdateIndex = endIndex
-                let layoutWidth = textContainer.size.width > 0 ? textContainer.size.width : bounds.width
-                if layoutWidth > 0 {
-                    let previousHeight = heightConstraint?.constant ?? calculatedHeight
-                    applyLayout(width: layoutWidth, force: true)
-                    let currentHeight = heightConstraint?.constant ?? calculatedHeight
-                    let heightDelta = currentHeight - previousHeight
-                    return (true, abs(heightDelta) > 0.5, heightDelta)
-                } else {
-                    setNeedsLayout()
-                }
-            } else {
-                // ⭐️ 方案 A：即使不更新布局，也强制重绘以实现匀速显示
-                setNeedsDisplay()
+            // ⚠️ 这里必须每次都重新测高，不能按字符数节流。
+            //
+            // 软折行（word wrap）不产生 "\n"，也不一定正好攒够 N 个字符，但文本一旦
+            // 被 append 进 storage，TextKit 就已经把它排成了新的一行。此时若不同步
+            // heightConstraint，新行就没有位置：外层 Cell 的 UIView-Encapsulated-Layout-Height
+            // 是 required，会把它压掉，直到若干字符之后高度才被补上——表现为
+            // 流式输出时"只在折行那一刻"闪一下。reveal 模式没有这个问题，因为它
+            // 一开始就按全文布局好，揭示字符不改变高度。
+            //
+            // 实测（40 字符窄容器，逐帧与独立参考视图比对"当前前缀真正需要的高度"）：
+            // 按 20 字符节流时 74 帧中有 56 帧的内容高于报出的高度，最多欠 39pt（约两行）；
+            // 每帧测高后该数字为 0。
+            //
+            // 成本：`revealCharacter` 由 CADisplayLink 驱动，每帧批量揭示多个字符（非每字符
+            // 调用一次），因此测高次数只放大约 3 倍。但要注意 `applyLayout` 里的
+            // `ensureLayout(for: documentRange)` **并非纯增量**——实测全程播放耗时随文本长度
+            // 呈超线性（每翻倍约 3.8x），新旧实现都是 O(n²)，此改动只放大常数、未改变复杂度阶。
+            // 超长单条回答（8000 字符以上）的流式尾段仍有可感开销，若日后要优化，
+            // 方向是缩小 ensureLayout 的范围而不是恢复字符数节流（那会直接换回视觉闪烁）。
+            //
+            // 向宿主上报才是真正昂贵的（触发 performBatchUpdates），所以节流放在
+            // "高度是否真的变了"这一层——上报频率因此等于折行频率，而不是字符频率。
+            let layoutWidth = textContainer.size.width > 0 ? textContainer.size.width : bounds.width
+            guard layoutWidth > 0 else {
+                setNeedsLayout()
+                return (true, false, 0)
             }
 
-            return (true, false, 0)
+            let previousHeight = heightConstraint?.constant ?? calculatedHeight
+            applyLayout(width: layoutWidth, force: true)
+            let currentHeight = heightConstraint?.constant ?? calculatedHeight
+            let heightDelta = currentHeight - previousHeight
+
+            return (true, abs(heightDelta) > 0.5, heightDelta)
         }
 
         guard let originalAttr = attributedText,
