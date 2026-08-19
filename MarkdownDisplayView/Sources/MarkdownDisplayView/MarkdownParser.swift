@@ -521,8 +521,7 @@ final class MarkdownParser: MarkdownParserProtocol {
             } else if let inlineRange = Range(match.range(at: 2), in: paragraphText) {
                 let latex = String(paragraphText[inlineRange]).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !latex.isEmpty {
-                    flushTextBuffer()
-                    elements.append(.latex(latex))
+                    appendInlineLatex(latex)
                 }
             }
 
@@ -537,6 +536,30 @@ final class MarkdownParser: MarkdownParserProtocol {
         guard !text.isEmpty || appendNewline else { return }
         let content = appendNewline ? text + "\n" : text
         let attr = NSMutableAttributedString(string: content, attributes: defaultTextAttributes)
+        let range = NSRange(location: 0, length: attr.length)
+        attr.addAttribute(inlineSegmentAttributeKey, value: true, range: range)
+        currentTextBuffer.append(attr)
+    }
+
+    /// 将行内公式作为 Attachment 嵌入正文，保持阅读流（不拆成块级 View）
+    private func appendInlineLatex(_ latex: String) {
+        // 行内公式使用紧凑内边距，避免在正文中撑出大块背景。
+        // maxWidth 不在此处限制：行内公式的可用宽度由布局时的行片段宽度决定（见
+        // LaTeXAttachment.attachmentBounds），此处传无穷大让其保持自然尺寸。
+        let inlinePadding: CGFloat = 2
+        let attachment = LaTeXAttachment(
+            latex: latex,
+            fontSize: configuration.bodyFont.pointSize,
+            maxWidth: .greatestFiniteMagnitude,
+            padding: inlinePadding,
+            backgroundColor: configuration.latexBackgroundColor,
+            textColor: configuration.latexTextColor,
+            appearance: configuration.latexAppearance,
+            isInline: true,
+            inlineCapHeight: configuration.bodyFont.capHeight
+        )
+
+        let attr = NSMutableAttributedString(attachment: attachment)
         let range = NSRange(location: 0, length: attr.length)
         attr.addAttribute(inlineSegmentAttributeKey, value: true, range: range)
         currentTextBuffer.append(attr)

@@ -35,6 +35,12 @@ public final class LaTeXAttachment: NSTextAttachment {
     /// 测量和绘制全链路共享的唯一渲染结果。
     let renderResult: LatexRenderResult
 
+    /// 是否为行内公式（行内时按行片段宽度缩放、按 inlineCapHeight 垂直对齐，块级时整行显示）
+    let isInline: Bool
+
+    /// 行内公式垂直居中参照的正文 capHeight。块级公式忽略此值。
+    let inlineCapHeight: CGFloat
+
     /// 缓存的 ViewProvider 实例（避免重复创建）
     private var cachedViewProvider: LaTeXAttachmentViewProvider?
 
@@ -52,7 +58,9 @@ public final class LaTeXAttachment: NSTextAttachment {
         padding: CGFloat = 20,
         backgroundColor: UIColor = UIColor.systemGray6.withAlphaComponent(0.5),
         textColor: UIColor = .label,
-        appearance: MarkdownBlockAppearance = MarkdownBlockAppearance(cornerRadius: 8)
+        appearance: MarkdownBlockAppearance = MarkdownBlockAppearance(cornerRadius: 8),
+        isInline: Bool = false,
+        inlineCapHeight: CGFloat = 0
     ) {
         let calcStart = CFAbsoluteTimeGetCurrent()
         let renderResult = LatexRenderResult.parse(
@@ -70,7 +78,9 @@ public final class LaTeXAttachment: NSTextAttachment {
             backgroundColor: backgroundColor,
             textColor: textColor,
             appearance: appearance,
-            renderResult: renderResult
+            renderResult: renderResult,
+            isInline: isInline,
+            inlineCapHeight: inlineCapHeight
         )
     }
 
@@ -82,7 +92,9 @@ public final class LaTeXAttachment: NSTextAttachment {
         backgroundColor: UIColor,
         textColor: UIColor = .label,
         appearance: MarkdownBlockAppearance = MarkdownBlockAppearance(cornerRadius: 8),
-        renderResult: LatexRenderResult
+        renderResult: LatexRenderResult,
+        isInline: Bool = false,
+        inlineCapHeight: CGFloat = 0
     ) {
         let initStart = CFAbsoluteTimeGetCurrent()
         mdLog("[STREAM] 📐📐📐 LaTeXAttachment 初始化开始: \(latex.prefix(40))...")
@@ -95,6 +107,8 @@ public final class LaTeXAttachment: NSTextAttachment {
         self.textColor = textColor
         self.appearance = appearance
         self.renderResult = renderResult
+        self.isInline = isInline
+        self.inlineCapHeight = inlineCapHeight
 
         super.init(data: nil, ofType: nil)
 
@@ -140,8 +154,20 @@ public final class LaTeXAttachment: NSTextAttachment {
         glyphPosition position: CGPoint,
         characterIndex charIndex: Int
     ) -> CGRect {
-        // 返回独立一行的尺寸
-        CGRect(origin: .zero, size: renderResult.displaySize)
+        if isInline {
+            // 行内公式：宽度按实际行片段宽度（嵌套容器内是子容器宽度）裁剪，超出则等比缩放
+            var size = renderResult.contentSize
+            let availableWidth = max(1, lineFrag.width)
+            if size.width > availableWidth {
+                let scale = availableWidth / size.width
+                size = CGSize(width: availableWidth, height: size.height * scale)
+            }
+            // 垂直居中：以正文 capHeight 为参照，使公式视觉中心与文字对齐
+            let originY = (inlineCapHeight - size.height) / 2
+            return CGRect(x: 0, y: originY, width: size.width, height: size.height)
+        }
+        // 块级公式：整行显示（origin.y = 0，附件底边贴基线）
+        return CGRect(origin: .zero, size: renderResult.displaySize)
     }
 }
 

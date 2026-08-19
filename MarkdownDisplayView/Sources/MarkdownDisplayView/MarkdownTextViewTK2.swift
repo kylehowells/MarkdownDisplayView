@@ -50,6 +50,9 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     // ⭐️ 管理自定义附件视图（如表格）
     private var attachmentProviders: [NSTextAttachment: NSTextAttachmentViewProvider] = [:]
 
+    // 打字机期间行内公式附件的字符索引（attachment -> 字符位置）
+    private var inlineAttachmentCharacterIndexes: [NSTextAttachment: Int] = [:]
+
     var typewriterTextMode: MarkdownTypewriterTextMode = .reveal
     /// ⚠️ 已不再参与 append 打字机的测高决策，保留仅为兼容既有配置。
     ///
@@ -299,16 +302,14 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
                 attrString.enumerateAttribute(.attachment, in: NSRange(location: lineRange.location, length: lineRange.length)) { value, range, stop in
                     guard let attachment = value as? NSTextAttachment else { return }
 
-                    // 检查是否支持 viewProvider (例如 MarkdownTableAttachment)
-                    // 注意：标准 image attachment 不会返回 viewProvider，除非显式实现
+                    // 计算附件字符在文档中的位置（用于获取 glyph 矩形）
+                    guard let location = self.textLayoutManager.location(self.textLayoutManager.documentRange.location, offsetBy: range.location) else { return }
 
                     // 尝试获取或创建 Provider
                     var provider = self.attachmentProviders[attachment]
 
                     if provider == nil {
-                        // Safely unwrap the location
-                        if let location = self.textLayoutManager.location(self.textLayoutManager.documentRange.location, offsetBy: range.location),
-                           let newProvider = attachment.viewProvider(for: self, location: location, textContainer: self.textContainer) {
+                        if let newProvider = attachment.viewProvider(for: self, location: location, textContainer: self.textContainer) {
                             newProvider.loadView()
                             self.attachmentProviders[attachment] = newProvider
                             provider = newProvider
@@ -324,9 +325,25 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
                             if view.superview != self {
                                 self.addSubview(view)
                             }
-                            // 简单的布局策略：将视图填满 Fragment 区域
-                            // 对于表格这种独占一行的 Attachment，这是正确的
-                            view.frame = fragment.layoutFragmentFrame
+
+                            if let inlineLatex = attachment as? LaTeXAttachment, inlineLatex.isInline {
+                                // 行内附件：定位到其 glyph 矩形（而非整个段落 fragment），
+                                // 避免公式覆盖/居中到整个段落上。
+                                let glyphRect = fragment.frameForTextAttachment(at: location)
+                                if glyphRect != .zero {
+                                    view.frame = CGRect(
+                                        x: fragment.layoutFragmentFrame.origin.x + glyphRect.origin.x,
+                                        y: fragment.layoutFragmentFrame.origin.y + glyphRect.origin.y,
+                                        width: glyphRect.width,
+                                        height: glyphRect.height
+                                    )
+                                } else {
+                                    view.frame = fragment.layoutFragmentFrame
+                                }
+                            } else {
+                                // 块级附件（表格/代码块/图片/块级公式）：填满 Fragment 区域
+                                view.frame = fragment.layoutFragmentFrame
+                            }
                         }
                     }
                 }
@@ -485,9 +502,15 @@ extension MarkdownTextViewTK2 {
         cachedOriginalAttributedString = attr
         isAppendingTypewriterText = false
 
+        // 缓存行内公式附件的字符索引（用于打字机期间控制可见性）
+        cacheInlineAttachmentIndexes(in: attr)
+
         // ⚡️ 强制触发布局，确保高度和位置在开始打字前是正确的
         // 这能防止在 hidden = false 瞬间因为布局未完成而导致的闪烁或跳动
         layoutIfNeeded()
+
+        // 布局完成后（attachmentProviders 已填充），隐藏行内公式视图，等揭示到对应字符再显示
+        hideInlineAttachmentViews()
 
         if typewriterTextMode == .append {
             isAppendingTypewriterText = true
@@ -521,6 +544,36 @@ extension MarkdownTextViewTK2 {
         setNeedsDisplay()
 
         mdLog("[TYPEWRITER] 🎯 prepareForTypewriter 完成")
+    }
+
+    /// 缓存行内公式附件的字符索引（打字机期间按揭示进度控制其可见性）
+    private func cacheInlineAttachmentIndexes(in attr: NSAttributedString) {
+        var indexes: [NSTextAttachment: Int] = [:]
+        attr.enumerateAttribute(.attachment, in: NSRange(location: 0, length: attr.length), options: []) { value, range, _ in
+            if let attachment = value as? LaTeXAttachment, attachment.isInline {
+                indexes[attachment] = range.location
+            }
+        }
+        inlineAttachmentCharacterIndexes = indexes
+    }
+
+    /// 隐藏所有行内公式附件视图
+    private func hideInlineAttachmentViews() {
+        for (attachment, provider) in attachmentProviders {
+            if (attachment as? LaTeXAttachment)?.isInline == true {
+                provider.view?.isHidden = true
+            }
+        }
+    }
+
+    /// 根据打字机揭示进度，显示/隐藏行内公式附件视图
+    private func updateInlineAttachmentVisibility(revealedUpTo index: Int) {
+        for (attachment, provider) in attachmentProviders {
+            guard (attachment as? LaTeXAttachment)?.isInline == true,
+                  let view = provider.view else { continue }
+            let charIndex = inlineAttachmentCharacterIndexes[attachment] ?? Int.max
+            view.isHidden = charIndex >= index
+        }
     }
 
     /// 揭示前 N 个字符（支持批量显示）。
@@ -578,6 +631,7 @@ extension MarkdownTextViewTK2 {
 
             let previousHeight = heightConstraint?.constant ?? calculatedHeight
             applyLayout(width: layoutWidth, force: true)
+            updateInlineAttachmentVisibility(revealedUpTo: endIndex)
             let currentHeight = heightConstraint?.constant ?? calculatedHeight
             let heightDelta = currentHeight - previousHeight
 
@@ -613,6 +667,9 @@ extension MarkdownTextViewTK2 {
 
         // 更新上次显示位置
         lastRevealedIndex = endIndex
+
+        // 显示/隐藏行内公式附件视图
+        updateInlineAttachmentVisibility(revealedUpTo: endIndex)
 
         // 强制重绘。不做局部脏化：UIKit 会把同一帧内的多次 setNeedsDisplay(rect)
         // 合并成整个 bounds 的一次 draw，省不下来，反而要承担矩形算错就漏画的风险。
