@@ -102,6 +102,14 @@ public final class MarkdownViewTextKit: UIView {
         }
     }
     
+    /// 显示一份完整的 Markdown 文档快照。
+    ///
+    /// 每个渲染生命周期只应设置一次。复用视图显示另一份文档前，请先调用
+    /// `resetForReuse()`。实时网络增量不得通过反复设置本属性实现，应使用
+    /// `beginRealStreaming(autoScrollBottom:)`、`appendStreamData(_:)` 和
+    /// `endRealStreaming(completion:)`。
+    ///
+    /// 非预期的重复赋值仍会按完整文档重新解析，以保证内容正确，但不提供增量性能保证。
     public var markdown: String = "" {
         didSet {
             // 相同内容重复赋值（例如 UITableView 复用 Cell 再次 configure）不应触发重渲染，
@@ -137,11 +145,6 @@ public final class MarkdownViewTextKit: UIView {
         tableOfContents = preparedContent.tableOfContents
         tocSectionId = preparedContent.tocSectionId
         imageAttachments = preparedContent.imageAttachments
-        cachedContainerWidth = containerWidth
-        parseCache.cachedElements = preparedContent.elements
-        parseCache.cachedAttachments = preparedContent.imageAttachments
-        parseCache.cachedTOCItems = preparedContent.tableOfContents
-        parseCache.tocSectionId = preparedContent.tocSectionId
 
         updateViews(
             newElements: preparedContent.elements,
@@ -212,40 +215,6 @@ public final class MarkdownViewTextKit: UIView {
     var renderCosts: [String: Double] = [:]
     /// 记录渲染开始时间（从设置 markdown 属性开始）
     var renderStartTime: CFAbsoluteTime = 0
-
-    // MARK: - 增量解析缓存（流式渲染性能优化）
-
-    /// 解析缓存结构体
-    struct ParseCache {
-        var lastParsedLength: Int = 0                    // 上次解析到的字符位置
-        var parsedPrefix: String = ""                    // 上次解析到的完整文本（用于判断是否为追加）
-        var cachedElements: [MarkdownRenderElement] = [] // 已解析的元素
-        var cachedFootnotes: [MarkdownFootnote] = []     // 已解析的脚注
-        var cachedAttachments: [(attachment: MarkdownImageAttachment, urlString: String)] = []
-        var cachedTOCItems: [MarkdownTOCItem] = []
-        var tocSectionId: String? = nil
-        /// 未闭合结构状态（用于判断能否安全地只解析新增尾部）
-        var unclosedState = UnclosedStructureState()
-
-        /// 未闭合结构：围栏代码块 / $$ / <details> / 自定义块的开关状态
-        struct UnclosedStructureState {
-            var pendingFenceMarker: Character? = nil
-            var pendingLatexOpen: Bool = false
-            var pendingDetailsDepth: Int = 0
-            var pendingCustomTagDepths: [String: Int] = [:]
-
-            var hasUnclosedStructure: Bool {
-                pendingFenceMarker != nil || pendingLatexOpen
-                    || pendingDetailsDepth > 0 || !pendingCustomTagDepths.isEmpty
-            }
-        }
-    }
-
-    /// 解析缓存实例
-    var parseCache = ParseCache()
-
-    /// 缓存的容器宽度（用于检测宽度变化）
-    var cachedContainerWidth: CGFloat = 0
 
     /// 供后台解析使用的容器宽度。
     ///

@@ -25,33 +25,15 @@ extension MarkdownViewTextKit {
 
         let perfStartTime = renderStartTime // 捕获性能监控起始时间
 
-        // 判断是走增量解析还是全量解析。
-        // 增量条件：纯追加（前缀未变）+ 旧内容以空行结尾 + 无未闭合结构。
-        if shouldInvalidateCache(newMarkdown: markdownText, containerWidth: containerWidth)
-            || !canIncrementallyAppend(fullText: markdownText) {
-            // 🔄 全量解析模式（首次渲染、删除/编辑内容、宽度变化、脏边界、未闭合结构）
-            mdLog("🔄 [Full Parse] Cache invalidated, performing full parse")
-
-            // 清空缓存
-            parseCache = ParseCache()
-            cachedContainerWidth = containerWidth
-
-            performFullParse(
-                markdownText: markdownText,
-                config: config,
-                containerWidth: containerWidth,
-                perfStartTime: perfStartTime
-            )
-        } else {
-            // ⚡️ 增量解析模式（纯追加：只解析新增尾部）
-            mdLog("⚡️ [Incremental Parse] Parsing delta only")
-            performIncrementalParse(
-                fullText: markdownText,
-                config: config,
-                containerWidth: containerWidth,
-                perfStartTime: perfStartTime
-            )
-        }
+        // `markdown` 是完整文档快照 API。网络增量由 RealStreaming 管线独立处理；
+        // 普通渲染始终全量解析，避免在字符窗口和 Markdown 块之间做不可靠的重叠猜测。
+        mdLog("🔄 [Snapshot Parse] Parsing complete document")
+        performFullParse(
+            markdownText: markdownText,
+            config: config,
+            containerWidth: containerWidth,
+            perfStartTime: perfStartTime
+        )
     }
 
     /// 执行全量解析（原有逻辑保持不变）
@@ -79,9 +61,6 @@ extension MarkdownViewTextKit {
             let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
             let (newElements, attachments, tocItems, tocSectionId) = renderer.render(processedMarkdown)
 
-            // 计算未闭合结构状态（供后续增量解析判断）
-            let unclosedState = self.computeUnclosedStructureState(in: markdownText)
-
             let endTime = CFAbsoluteTimeGetCurrent()
             let parseDuration = endTime - startTime
 
@@ -107,16 +86,6 @@ extension MarkdownViewTextKit {
                 self.tableOfContents = tocItems
                 self.tocSectionId = tocSectionId
                 self.imageAttachments = attachments
-
-                // ⚡️ 更新缓存（为下次增量解析做准备）
-                self.parseCache.lastParsedLength = (markdownText as NSString).length
-                self.parseCache.parsedPrefix = markdownText
-                self.parseCache.unclosedState = unclosedState
-                self.parseCache.cachedElements = newElements
-                self.parseCache.cachedFootnotes = footnotes
-                self.parseCache.cachedAttachments = attachments
-                self.parseCache.cachedTOCItems = tocItems
-                self.parseCache.tocSectionId = tocSectionId
 
                 // 🔍 性能监控：开始UI渲染
                 if !self.isStreaming && perfStartTime > 0 {
