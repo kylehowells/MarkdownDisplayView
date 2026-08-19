@@ -32,6 +32,38 @@ import UIKit
     #expect(MarkdownConfiguration.dark.latexTextColor.isEqual(UIColor.white))
 }
 
+@available(iOS 15.0, *)
+@MainActor
+@Test func resetStartsANewMarkdownSnapshotLifecycle() async throws {
+    func waitUntil(_ condition: @escaping @MainActor () -> Bool) async throws {
+        for _ in 0..<200 {
+            if condition() { return }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("Timed out waiting for the Markdown snapshot to render")
+    }
+
+    let view = MarkdownViewTextKit(
+        frame: CGRect(x: 0, y: 0, width: 320, height: 640)
+    )
+    view.enableTypewriterEffect = false
+
+    view.markdown = "# First snapshot\n\nFirst body."
+    try await waitUntil {
+        view.tableOfContents.map(\.title) == ["First snapshot"]
+    }
+
+    view.resetForReuse()
+    view.markdown = "# Second snapshot\n\nSecond body."
+    try await waitUntil {
+        view.tableOfContents.map(\.title) == ["Second snapshot"]
+    }
+
+    #expect(view.markdown == "# Second snapshot\n\nSecond body.")
+    #expect(view.tableOfContents.map(\.title) == ["Second snapshot"])
+    #expect(view.contentStackView.arrangedSubviews.isEmpty == false)
+}
+
 @MainActor
 @Test func customBlockAppearanceAppliesWithoutChangingViewConstraints() async throws {
     var configuration = MarkdownConfiguration.default

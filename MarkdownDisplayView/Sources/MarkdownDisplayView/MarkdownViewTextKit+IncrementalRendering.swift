@@ -25,35 +25,15 @@ extension MarkdownViewTextKit {
 
         let perfStartTime = renderStartTime // 捕获性能监控起始时间
 
-        // ⚡️ 增量解析优化：判断是否可以使用增量解析
-        // 节流已在 scheduleRerender 层面完成（150ms），这里只关心是否需要缓存失效
-        if shouldInvalidateCache(newMarkdown: markdownText, containerWidth: containerWidth) {
-            // 🔄 全量解析模式（首次渲染、删除内容、宽度变化）
-            mdLog("🔄 [Full Parse] Cache invalidated, performing full parse")
-
-            // 清空缓存
-            parseCache = ParseCache()
-            cachedContainerWidth = containerWidth
-
-            // 执行全量解析
-            performFullParse(
-                markdownText: markdownText,
-                config: config,
-                containerWidth: containerWidth,
-                perfStartTime: perfStartTime
-            )
-        } else {
-            // ⚡️ 增量解析模式（流式追加 + 非流式但有缓存）
-            let mode = isStreaming ? "Streaming incremental" : "Incremental"
-            mdLog("⚡️ [\(mode) Parse] Parsing delta only (throttled by scheduleRerender)")
-
-            performIncrementalParse(
-                fullText: markdownText,
-                config: config,
-                containerWidth: containerWidth,
-                perfStartTime: perfStartTime
-            )
-        }
+        // `markdown` 是完整文档快照 API。网络增量由 RealStreaming 管线独立处理；
+        // 普通渲染始终全量解析，避免在字符窗口和 Markdown 块之间做不可靠的重叠猜测。
+        mdLog("🔄 [Snapshot Parse] Parsing complete document")
+        performFullParse(
+            markdownText: markdownText,
+            config: config,
+            containerWidth: containerWidth,
+            perfStartTime: perfStartTime
+        )
     }
 
     /// 执行全量解析（原有逻辑保持不变）
@@ -106,14 +86,6 @@ extension MarkdownViewTextKit {
                 self.tableOfContents = tocItems
                 self.tocSectionId = tocSectionId
                 self.imageAttachments = attachments
-
-                // ⚡️ 更新缓存（为下次增量解析做准备）
-                self.parseCache.lastParsedLength = (markdownText as NSString).length
-                self.parseCache.cachedElements = newElements
-                self.parseCache.cachedFootnotes = footnotes
-                self.parseCache.cachedAttachments = attachments
-                self.parseCache.cachedTOCItems = tocItems
-                self.parseCache.tocSectionId = tocSectionId
 
                 // 🔍 性能监控：开始UI渲染
                 if !self.isStreaming && perfStartTime > 0 {

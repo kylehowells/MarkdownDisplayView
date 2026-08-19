@@ -104,8 +104,6 @@ extension MarkdownViewTextKit {
         lastHeightNotificationTimestamp = 0
         lastLayoutWidthForHeightMeasurement = 0
 
-        parseCache = ParseCache()
-        cachedContainerWidth = 0
         oldElements = []
         headingViews.removeAll()
         tocSectionView = nil
