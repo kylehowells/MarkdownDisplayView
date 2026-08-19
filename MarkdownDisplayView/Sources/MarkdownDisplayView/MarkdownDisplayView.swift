@@ -218,11 +218,27 @@ public final class MarkdownViewTextKit: UIView {
     /// 解析缓存结构体
     struct ParseCache {
         var lastParsedLength: Int = 0                    // 上次解析到的字符位置
+        var parsedPrefix: String = ""                    // 上次解析到的完整文本（用于判断是否为追加）
         var cachedElements: [MarkdownRenderElement] = [] // 已解析的元素
         var cachedFootnotes: [MarkdownFootnote] = []     // 已解析的脚注
         var cachedAttachments: [(attachment: MarkdownImageAttachment, urlString: String)] = []
         var cachedTOCItems: [MarkdownTOCItem] = []
         var tocSectionId: String? = nil
+        /// 未闭合结构状态（用于判断能否安全地只解析新增尾部）
+        var unclosedState = UnclosedStructureState()
+
+        /// 未闭合结构：围栏代码块 / $$ / <details> / 自定义块的开关状态
+        struct UnclosedStructureState {
+            var pendingFenceMarker: Character? = nil
+            var pendingLatexOpen: Bool = false
+            var pendingDetailsDepth: Int = 0
+            var pendingCustomTagDepths: [String: Int] = [:]
+
+            var hasUnclosedStructure: Bool {
+                pendingFenceMarker != nil || pendingLatexOpen
+                    || pendingDetailsDepth > 0 || !pendingCustomTagDepths.isEmpty
+            }
+        }
     }
 
     /// 解析缓存实例

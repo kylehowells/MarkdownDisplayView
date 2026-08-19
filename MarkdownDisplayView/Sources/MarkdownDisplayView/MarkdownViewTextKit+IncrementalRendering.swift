@@ -25,17 +25,17 @@ extension MarkdownViewTextKit {
 
         let perfStartTime = renderStartTime // 捕获性能监控起始时间
 
-        // ⚡️ 增量解析优化：判断是否可以使用增量解析
-        // 节流已在 scheduleRerender 层面完成（150ms），这里只关心是否需要缓存失效
-        if shouldInvalidateCache(newMarkdown: markdownText, containerWidth: containerWidth) {
-            // 🔄 全量解析模式（首次渲染、删除内容、宽度变化）
+        // 判断是走增量解析还是全量解析。
+        // 增量条件：纯追加（前缀未变）+ 旧内容以空行结尾 + 无未闭合结构。
+        if shouldInvalidateCache(newMarkdown: markdownText, containerWidth: containerWidth)
+            || !canIncrementallyAppend(fullText: markdownText) {
+            // 🔄 全量解析模式（首次渲染、删除/编辑内容、宽度变化、脏边界、未闭合结构）
             mdLog("🔄 [Full Parse] Cache invalidated, performing full parse")
 
             // 清空缓存
             parseCache = ParseCache()
             cachedContainerWidth = containerWidth
 
-            // 执行全量解析
             performFullParse(
                 markdownText: markdownText,
                 config: config,
@@ -43,10 +43,8 @@ extension MarkdownViewTextKit {
                 perfStartTime: perfStartTime
             )
         } else {
-            // ⚡️ 增量解析模式（流式追加 + 非流式但有缓存）
-            let mode = isStreaming ? "Streaming incremental" : "Incremental"
-            mdLog("⚡️ [\(mode) Parse] Parsing delta only (throttled by scheduleRerender)")
-
+            // ⚡️ 增量解析模式（纯追加：只解析新增尾部）
+            mdLog("⚡️ [Incremental Parse] Parsing delta only")
             performIncrementalParse(
                 fullText: markdownText,
                 config: config,
@@ -81,6 +79,9 @@ extension MarkdownViewTextKit {
             let renderer = MarkdownRenderer(configuration: config, containerWidth: containerWidth)
             let (newElements, attachments, tocItems, tocSectionId) = renderer.render(processedMarkdown)
 
+            // 计算未闭合结构状态（供后续增量解析判断）
+            let unclosedState = self.computeUnclosedStructureState(in: markdownText)
+
             let endTime = CFAbsoluteTimeGetCurrent()
             let parseDuration = endTime - startTime
 
@@ -109,6 +110,8 @@ extension MarkdownViewTextKit {
 
                 // ⚡️ 更新缓存（为下次增量解析做准备）
                 self.parseCache.lastParsedLength = (markdownText as NSString).length
+                self.parseCache.parsedPrefix = markdownText
+                self.parseCache.unclosedState = unclosedState
                 self.parseCache.cachedElements = newElements
                 self.parseCache.cachedFootnotes = footnotes
                 self.parseCache.cachedAttachments = attachments
