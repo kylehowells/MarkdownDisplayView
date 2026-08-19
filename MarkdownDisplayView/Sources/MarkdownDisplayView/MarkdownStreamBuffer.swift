@@ -26,6 +26,7 @@ final class MarkdownStreamBuffer {
 
     private struct UnmatchedMarkdownDelimiters {
         var codeBlockOffset: Int?
+        var inlineCodeOffset: Int?
         var latexBlockOffset: Int?
         var customBlockOffset: Int?
         var customBlockName: String?
@@ -45,37 +46,72 @@ final class MarkdownStreamBuffer {
         let pendingType: PendingStructureType?
     }
 
-    // MARK: - 分隔符增量计数
+    // MARK: - 围栏状态（CommonMark 唯一真值源）
 
-    /// 贪婪不重叠地增量统计某个分隔符出现了多少次。
-    ///
-    /// 分隔符可能被 chunk 边界切断（上一片段结尾是 "``"、本片段开头是 "`"），
-    /// 因此保留一段"未被任何匹配消耗掉"的尾巴，与下一片段拼接后再扫。尾巴长度取
-    /// `pattern.count - 1`，短于分隔符本身，所以其中不可能藏着已经计过数的匹配。
-    ///
-    /// 计数语义必须与原先 `NSString.range(of:)` 逐次跳过匹配长度的写法一致：
-    /// 4 个连续反引号只算 1 个围栏，6 个算 2 个。
-    private struct DelimiterCounter {
-        private let pattern: String
-        private var count = 0
-        private var carry = ""
+    /// 围栏与行内代码状态
+    private struct FenceState {
+        var openingChar: Character? = nil  // nil = 不在代码块内
+        var openingLength: Int = 0
+        var inlineCodeDelimiterLength: Int? = nil  // nil = 不在行内代码内
 
-        init(pattern: String) {
-            self.pattern = pattern
+        var isInsideCodeBlock: Bool { openingChar != nil }
+        var isInsideInlineCode: Bool { inlineCodeDelimiterLength != nil }
+    }
+
+    /// 行首连续空格数（仅空格；制表符保守地视为不满足围栏缩进）
+    private func leadingSpaceCount(_ line: String) -> Int {
+        line.prefix(while: { $0 == " " }).count
+    }
+
+    /// 行首（去前导空格后）的连续反引号/波浪线 run，长度≥3
+    private func leadingFenceRun(_ line: String) -> (char: Character, length: Int, trailing: Substring)? {
+        let withoutIndent = line.dropFirst(leadingSpaceCount(line))
+        guard let char = withoutIndent.first, char == "`" || char == "~" else { return nil }
+        let run = withoutIndent.prefix(while: { $0 == char })
+        guard run.count >= 3 else { return nil }
+        return (char, run.count, withoutIndent.dropFirst(run.count))
+    }
+
+    /// 开围栏判定：≤3 空格 + ≥3 同字符；波浪线不允许 info string（反引号允许）
+    private func openingFence(_ line: String) -> (char: Character, length: Int)? {
+        guard leadingSpaceCount(line) <= 3,
+              let run = leadingFenceRun(line) else { return nil }
+        if run.char == "~", !run.trailing.allSatisfy({ $0 == " " || $0 == "\t" }) {
+            return nil
         }
+        return (run.char, run.length)
+    }
 
-        /// 奇数次出现意味着结构未闭合
-        var isBalanced: Bool { count % 2 == 0 }
+    /// 闭围栏判定：≤3 空格 + ≥minLength 同字符 + 仅空白尾
+    private func isClosingFence(_ line: String, char: Character, minimumLength: Int) -> Bool {
+        guard leadingSpaceCount(line) <= 3,
+              let run = leadingFenceRun(line),
+              run.char == char,
+              run.length >= minimumLength else { return false }
+        return run.trailing.allSatisfy({ $0 == " " || $0 == "\t" })
+    }
 
-        mutating func consume(_ chunk: String) {
-            let segment = carry + chunk
-            var searchStart = segment.startIndex
-            while let found = segment.range(of: pattern, range: searchStart..<segment.endIndex) {
-                count += 1
-                searchStart = found.upperBound
+    /// 查找下一个指定字符的连续 run
+    private func nextRun(
+        of char: Character,
+        in text: String,
+        from startIndex: String.Index,
+        minimumLength: Int = 1,
+        exactLength: Int? = nil
+    ) -> (range: Range<String.Index>, length: Int)? {
+        var searchStart = startIndex
+        while searchStart < text.endIndex, let first = text[searchStart...].firstIndex(of: char) {
+            var upperBound = text.index(after: first)
+            while upperBound < text.endIndex, text[upperBound] == char {
+                upperBound = text.index(after: upperBound)
             }
-            carry = String(segment[searchStart...].suffix(pattern.count - 1))
+            let length = text.distance(from: first, to: upperBound)
+            if length >= minimumLength && (exactLength == nil || exactLength == length) {
+                return (first..<upperBound, length)
+            }
+            searchStart = upperBound
         }
+        return nil
     }
 
     // MARK: - Properties
@@ -103,14 +139,8 @@ final class MarkdownStreamBuffer {
     private var uncommittedCharacterCount = 0
     private let performanceDiagnostics = MarkdownStreamBufferPerformanceDiagnostics()
 
-    /// 已提交前缀结束处是否正处于代码块内部
-    private var isInsideCodeBlockAtSafePosition = false
-
-    /// 全文中 ``` 的出现次数（增量维护，奇数表示代码块未闭合）
-    private var fenceCounter = DelimiterCounter(pattern: "```")
-
-    /// 全文中 $$ 的出现次数（增量维护，奇数表示公式块未闭合）
-    private var dollarCounter = DelimiterCounter(pattern: "$$")
+    /// 已提交前缀结束处的围栏状态（用于把已提交前缀对检测的贡献固化下来）
+    private var committedFenceState = FenceState()
 
     /// 尚未见到换行的尾部残段
     private var currentLine = ""
@@ -154,9 +184,7 @@ final class MarkdownStreamBuffer {
         uncommittedText = ""
         uncommittedCharacterCount = 0
         performanceDiagnostics.reset()
-        isInsideCodeBlockAtSafePosition = false
-        fenceCounter = DelimiterCounter(pattern: "```")
-        dollarCounter = DelimiterCounter(pattern: "$$")
+        committedFenceState = FenceState()
         currentLine = ""
         lastNonEmptyCompletedLine = ""
         refreshCustomBlockTagNames()
@@ -183,8 +211,6 @@ final class MarkdownStreamBuffer {
         accumulatedText += text
         uncommittedText += text
         if diagnosticsEnabled { uncommittedCharacterCount += inputCharacterCount }
-        fenceCounter.consume(text)
-        dollarCounter.consume(text)
         trackLines(text)
         // 不打印累计长度：String.count 是 O(n) 的 grapheme 遍历，
         // 仅为一行日志就在每个 token 上重走一遍全文
@@ -252,10 +278,45 @@ final class MarkdownStreamBuffer {
 
     /// 把一段即将离开扫描范围的文本折叠进"边界处是否位于代码块内"这一状态
     private func absorbIntoCommittedState(_ committedChunk: String) {
-        for line in committedChunk.components(separatedBy: "\n")
-        where line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
-            isInsideCodeBlockAtSafePosition.toggle()
+        for line in committedChunk.components(separatedBy: "\n") {
+            _ = processFenceLine(line, state: &committedFenceState)
         }
+    }
+
+    /// 只推进一行内的围栏/行内代码状态（不处理 $$/标签）。
+    /// - Returns: 该行是否应作为代码块内容（调用方应跳过 $$/标签等块级结构检测）。
+    private func processFenceLine(_ line: String, state: inout FenceState) -> Bool {
+        if let openingChar = state.openingChar {
+            if isClosingFence(line, char: openingChar, minimumLength: state.openingLength) {
+                state.openingChar = nil
+                state.openingLength = 0
+            }
+            return true
+        }
+        if let delimiterLength = state.inlineCodeDelimiterLength {
+            if let closing = nextRun(of: "`", in: line, from: line.startIndex, exactLength: delimiterLength) {
+                state.inlineCodeDelimiterLength = nil
+                let rest = String(line[closing.range.upperBound...])
+                return processFenceLine(rest, state: &state)
+            }
+            return false
+        }
+        if let opening = openingFence(line) {
+            state.openingChar = opening.char
+            state.openingLength = opening.length
+            return true
+        }
+        var searchStart = line.startIndex
+        while let run = nextRun(of: "`", in: line, from: searchStart) {
+            state.inlineCodeDelimiterLength = run.length
+            if let closing = nextRun(of: "`", in: line, from: run.range.upperBound, exactLength: run.length) {
+                state.inlineCodeDelimiterLength = nil
+                searchStart = closing.range.upperBound
+                continue
+            }
+            return false
+        }
+        return false
     }
 
     // MARK: - Module Detection
@@ -390,6 +451,14 @@ final class MarkdownStreamBuffer {
             ))
         }
 
+        if let inlineCodeOffset = unmatchedDelimiters.inlineCodeOffset {
+            candidates.append(PendingStructure(
+                type: .codeBlock,
+                debugName: PendingStructureType.codeBlock.rawValue,
+                unsafeTailOffset: inlineCodeOffset
+            ))
+        }
+
         // 2. 检测未闭合的 LaTeX 块 $$
         if let latexBlockOffset = unmatchedDelimiters.latexBlockOffset {
             candidates.append(PendingStructure(
@@ -438,14 +507,34 @@ final class MarkdownStreamBuffer {
         let opaqueTags = customBlockTagNames().filter { $0 != "details" }
         var detailsDepth = 0
         var detailsOuterOffset: Int?
+        var inlineCodeDelimiterLength: Int?
+        var inlineCodeOffset: Int?
+        var codeBlockFenceChar: Character?
+        var codeBlockFenceLength = 0
 
         while searchStart < text.endIndex {
-            if result.codeBlockOffset != nil {
-                guard let closing = text.range(of: "```", range: searchStart..<text.endIndex) else { break }
-                result.codeBlockOffset = nil
-                searchStart = closing.upperBound
+            // 1. 代码块内：只找行首的闭围栏（同字符、长度≥开围栏、尾部仅空白）
+            if let openingChar = codeBlockFenceChar {
+                guard let run = nextRun(of: openingChar, in: text, from: searchStart, minimumLength: 3) else { break }
+                let ctx = lineContext(of: run.range, in: text)
+                if ctx.indentCount <= 3, ctx.indentAllSpaces,
+                   run.length >= codeBlockFenceLength, ctx.trailingWhitespaceOnly {
+                    result.codeBlockOffset = nil
+                    codeBlockFenceChar = nil
+                    codeBlockFenceLength = 0
+                }
+                searchStart = run.range.upperBound
                 continue
             }
+            // 2. 行内代码延续：找等长闭合
+            if let delimiterLength = inlineCodeDelimiterLength {
+                guard let closing = nextRun(of: "`", in: text, from: searchStart, exactLength: delimiterLength) else { break }
+                inlineCodeDelimiterLength = nil
+                inlineCodeOffset = nil
+                searchStart = closing.range.upperBound
+                continue
+            }
+            // 3. $$ 块延续：找闭合
             if result.latexBlockOffset != nil {
                 guard let closing = text.range(of: "$$", range: searchStart..<text.endIndex) else { break }
                 result.latexBlockOffset = nil
@@ -453,38 +542,56 @@ final class MarkdownStreamBuffer {
                 continue
             }
 
-            var candidates: [(range: Range<String.Index>, kind: Int, tagName: String?)] = []
-            if let code = text.range(of: "```", range: searchStart..<text.endIndex) {
-                candidates.append((code, 0, nil))
+            // 4. 收集下一个分隔符候选
+            var candidates: [(range: Range<String.Index>, kind: Int, tagName: String?, runLength: Int)] = []
+            if let backticks = nextRun(of: "`", in: text, from: searchStart) {
+                candidates.append((backticks.range, 0, nil, backticks.length))
+            }
+            if let tildes = nextRun(of: "~", in: text, from: searchStart) {
+                candidates.append((tildes.range, 5, nil, tildes.length))
             }
             if let latex = text.range(of: "$$", range: searchStart..<text.endIndex) {
-                candidates.append((latex, 1, nil))
+                candidates.append((latex, 1, nil, 0))
             }
             for tagName in opaqueTags {
                 if let tag = nextValidTagPrefix("<\(tagName)", in: text, from: searchStart) {
-                    candidates.append((tag, 2, tagName))
+                    candidates.append((tag, 2, tagName, 0))
                 }
             }
             if let detailsOpen = nextValidTagPrefix("<details", in: text, from: searchStart) {
-                candidates.append((detailsOpen, 3, "details"))
+                candidates.append((detailsOpen, 3, "details", 0))
             }
             if detailsDepth > 0,
                let detailsClose = nextValidTagPrefix("</details", in: text, from: searchStart) {
-                candidates.append((detailsClose, 4, "details"))
+                candidates.append((detailsClose, 4, "details", 0))
             }
 
             guard let next = candidates.min(by: { $0.range.lowerBound < $1.range.lowerBound }) else { break }
+            let offset = text.distance(from: text.startIndex, to: next.range.lowerBound)
+
             switch next.kind {
-            case 0:
-                result.codeBlockOffset = text.distance(from: text.startIndex, to: next.range.lowerBound)
+            case 0, 5:  // 反引号/波浪线 run
+                let ctx = lineContext(of: next.range, in: text)
+                let char = next.kind == 0 ? Character("`") : Character("~")
+                if next.runLength >= 3, ctx.indentCount <= 3, ctx.indentAllSpaces {
+                    // 开围栏：反引号允许 info string；波浪线要求尾部仅空白
+                    if char == "`" || ctx.trailingWhitespaceOnly {
+                        result.codeBlockOffset = offset
+                        codeBlockFenceChar = char
+                        codeBlockFenceLength = next.runLength
+                    }
+                } else if char == "`" {
+                    inlineCodeDelimiterLength = next.runLength
+                    inlineCodeOffset = offset
+                }
                 searchStart = next.range.upperBound
             case 1:
-                result.latexBlockOffset = text.distance(from: text.startIndex, to: next.range.lowerBound)
+                result.latexBlockOffset = offset
                 searchStart = next.range.upperBound
             default:
                 if next.kind == 3 {
                     if detailsDepth == 0 {
-                        detailsOuterOffset = text.distance(from: text.startIndex, to: next.range.lowerBound)
+                        detailsOuterOffset = offset
                     }
                     detailsDepth += 1
                     searchStart = next.range.upperBound
@@ -495,7 +602,7 @@ final class MarkdownStreamBuffer {
                 } else {
                     guard let tagName = next.tagName,
                           let closing = nextValidTagPrefix("</\(tagName)", in: text, from: next.range.upperBound) else {
-                        result.customBlockOffset = text.distance(from: text.startIndex, to: next.range.lowerBound)
+                        result.customBlockOffset = offset
                         result.customBlockName = next.tagName
                         return result
                     }
@@ -508,8 +615,25 @@ final class MarkdownStreamBuffer {
             result.customBlockOffset = detailsOuterOffset
             result.customBlockName = "details"
         }
+        result.inlineCodeOffset = inlineCodeOffset
 
         return result
+    }
+
+    /// 给定一个 run 在全文中的区间，返回其行上下文：前导空格数、前导是否全为空格、行尾是否仅空白。
+    private func lineContext(
+        of range: Range<String.Index>,
+        in text: String
+    ) -> (indentCount: Int, indentAllSpaces: Bool, trailingWhitespaceOnly: Bool) {
+        let lineStart = text[..<range.lowerBound].lastIndex(of: "\n").map { text.index(after: $0) } ?? text.startIndex
+        let lineEnd = text[range.upperBound...].firstIndex(of: "\n") ?? text.endIndex
+        let indent = text[lineStart..<range.lowerBound]
+        let trailing = text[range.upperBound..<lineEnd]
+        return (
+            indentCount: indent.count,
+            indentAllSpaces: indent.allSatisfy { $0 == " " },
+            trailingWhitespaceOnly: trailing.allSatisfy { $0 == " " || $0 == "\t" }
+        )
     }
 
     private func customBlockTagNames() -> [String] {
@@ -580,7 +704,7 @@ final class MarkdownStreamBuffer {
     ///
     /// 只扫描未提交尾部：原实现每次都从第 0 行遍历全文，但 startPosition 之前的行既不参与
     /// 标题收集、也不参与段落切分，唯一会跨越边界的状态就是"是否在代码块内"，而它已在
-    /// `isInsideCodeBlockAtSafePosition` 里固化。
+    /// `committedFenceState` 里固化。
     /// - Parameters:
     ///   - startPosition: 未提交尾部在全文中的起始偏移
     ///   - totalCount: 全文的 Character 总数
@@ -595,7 +719,7 @@ final class MarkdownStreamBuffer {
         var paragraphBoundaries: [Int] = []
 
         // 追踪代码块状态
-        var isInsideCodeBlock = isInsideCodeBlockAtSafePosition
+        var fence = committedFenceState
         var isInsideLatexBlock = false
         let protectedTagNames = customBlockTagNames()
         var customTagDepths = Dictionary(uniqueKeysWithValues: protectedTagNames.map { ($0, 0) })
@@ -605,7 +729,10 @@ final class MarkdownStreamBuffer {
         for (index, line) in lines.enumerated() {
             let trimmedLine = line.trimmingCharacters(in: .whitespaces)
             let isInsideCustomBlock = customTagDepths.values.contains { $0 > 0 }
-            let isOutsideProtectedBlock = !isInsideCodeBlock && !isInsideLatexBlock && !isInsideCustomBlock
+            let isOutsideProtectedBlock = !fence.isInsideCodeBlock
+                && !isInsideLatexBlock
+                && !fence.isInsideInlineCode
+                && !isInsideCustomBlock
             // 最后一段没有换行符收尾，不计入那 1 个字符
             let nextPosition = currentPosition + line.count + (index < lines.count - 1 ? 1 : 0)
 
@@ -637,7 +764,7 @@ final class MarkdownStreamBuffer {
             advanceProtectedBoundaryState(
                 through: line,
                 tagNames: protectedTagNames,
-                isInsideCodeBlock: &isInsideCodeBlock,
+                fence: &fence,
                 isInsideLatexBlock: &isInsideLatexBlock,
                 customTagDepths: &customTagDepths
             )
@@ -672,17 +799,27 @@ final class MarkdownStreamBuffer {
     private func advanceProtectedBoundaryState(
         through line: String,
         tagNames: [String],
-        isInsideCodeBlock: inout Bool,
+        fence: inout FenceState,
         isInsideLatexBlock: inout Bool,
         customTagDepths: inout [String: Int]
     ) {
         var searchStart = line.startIndex
 
         while searchStart < line.endIndex {
-            if isInsideCodeBlock {
-                guard let closing = line.range(of: "```", range: searchStart..<line.endIndex) else { return }
-                isInsideCodeBlock = false
-                searchStart = closing.upperBound
+            if fence.isInsideCodeBlock {
+                // 代码块内：只找行首闭围栏，本行其余都是代码内容
+                if searchStart == line.startIndex,
+                   let openingChar = fence.openingChar,
+                   isClosingFence(line, char: openingChar, minimumLength: fence.openingLength) {
+                    fence.openingChar = nil
+                    fence.openingLength = 0
+                }
+                return
+            }
+            if let delimiterLength = fence.inlineCodeDelimiterLength {
+                guard let closing = nextRun(of: "`", in: line, from: searchStart, exactLength: delimiterLength) else { return }
+                fence.inlineCodeDelimiterLength = nil
+                searchStart = closing.range.upperBound
                 continue
             }
             if isInsideLatexBlock {
@@ -698,27 +835,41 @@ final class MarkdownStreamBuffer {
                 continue
             }
 
-            var candidates: [(range: Range<String.Index>, kind: Int, tagName: String?)] = []
-            if let code = line.range(of: "```", range: searchStart..<line.endIndex) {
-                candidates.append((code, 0, nil))
+            var candidates: [(range: Range<String.Index>, kind: Int, tagName: String?, runLength: Int)] = []
+            if let backticks = nextRun(of: "`", in: line, from: searchStart) {
+                candidates.append((backticks.range, 0, nil, backticks.length))
+            }
+            if let tildes = nextRun(of: "~", in: line, from: searchStart) {
+                candidates.append((tildes.range, 5, nil, tildes.length))
             }
             if let latex = line.range(of: "$$", range: searchStart..<line.endIndex) {
-                candidates.append((latex, 1, nil))
+                candidates.append((latex, 1, nil, 0))
             }
             for tagName in tagNames {
                 if let opening = nextValidTagPrefix("<\(tagName)", in: line, from: searchStart) {
-                    candidates.append((opening, 2, tagName))
+                    candidates.append((opening, 2, tagName, 0))
                 }
             }
             if (customTagDepths["details"] ?? 0) > 0,
                let closing = nextValidTagPrefix("</details", in: line, from: searchStart) {
-                candidates.append((closing, 3, "details"))
+                candidates.append((closing, 3, "details", 0))
             }
 
             guard let next = candidates.min(by: { $0.range.lowerBound < $1.range.lowerBound }) else { return }
             switch next.kind {
-            case 0:
-                isInsideCodeBlock = true
+            case 0, 5:  // 反引号/波浪线 run
+                if next.runLength >= 3,
+                   searchStart == line.startIndex,
+                   leadingSpaceCount(line) <= 3 {
+                    let char = next.kind == 0 ? Character("`") : Character("~")
+                    // 开围栏：反引号允许 info string；波浪线要求尾部仅空白
+                    if char == "`" || line[next.range.upperBound...].allSatisfy({ $0 == " " || $0 == "\t" }) {
+                        fence.openingChar = char
+                        fence.openingLength = next.runLength
+                    }
+                } else if next.kind == 0 {
+                    fence.inlineCodeDelimiterLength = next.runLength
+                }
             case 1:
                 isInsideLatexBlock = true
             case 2:

@@ -596,26 +596,19 @@ extension MarkdownViewTextKit {
         )
         
         // 使用你的 ImageView 加载方法
-        imageView.image(with: source, placeHolder: placeholderImage) { [weak heightConstraint, weak widthConstraint] image in
-            guard let image = image else { return }
+        imageView.image(with: source, placeHolder: placeholderImage) { [weak self, weak heightConstraint, weak widthConstraint] image in
+            guard let self,
+                  let image,
+                  let heightConstraint,
+                  let widthConstraint,
+                  let targetSize = self.applyLoadedImageSize(
+                    image.size,
+                    maxWidth: width,
+                    widthConstraint: widthConstraint,
+                    heightConstraint: heightConstraint
+                  ) else { return }
 
-            let imageSize = image.size
-            guard imageSize.width > 0 && imageSize.height > 0 else { return }
-
-            let aspectRatio = imageSize.width / imageSize.height
-            var targetWidth = min(imageSize.width, width)
-            var targetHeight = targetWidth / aspectRatio
-
-            if targetHeight > self.configuration.imageMaxHeight {
-                targetHeight = self.configuration.imageMaxHeight
-                targetWidth = targetHeight * aspectRatio
-            }
-
-            // 更新约束（lessThanOrEqualToConstant 只需要更新 constant）
-            widthConstraint?.constant = targetWidth
-            heightConstraint?.constant = targetHeight
-
-            mdLog("🖼️ [Image] Loaded - actual size: \(targetWidth) × \(targetHeight)")
+            mdLog("🖼️ [Image] Loaded - actual size: \(targetSize.width) × \(targetSize.height)")
         }
 
         // 设置容器的内容优先级，防止被压缩
@@ -631,6 +624,50 @@ extension MarkdownViewTextKit {
         }
 
         return container
+    }
+
+    /// 提交远程图片的真实尺寸，并把由此产生的结构高度变化合并到下一次布局帧。
+    /// 这里只更新约束与根高度，不重新解析 Markdown，也不重建其他渲染元素。
+    @discardableResult
+    func applyLoadedImageSize(
+        _ imageSize: CGSize,
+        maxWidth: CGFloat,
+        widthConstraint: NSLayoutConstraint,
+        heightConstraint: NSLayoutConstraint
+    ) -> CGSize? {
+        guard imageSize.width.isFinite,
+              imageSize.height.isFinite,
+              imageSize.width > 0,
+              imageSize.height > 0 else { return nil }
+
+        let aspectRatio = imageSize.width / imageSize.height
+        var targetWidth = min(imageSize.width, maxWidth)
+        var targetHeight = targetWidth / aspectRatio
+
+        if targetHeight > configuration.imageMaxHeight {
+            targetHeight = configuration.imageMaxHeight
+            targetWidth = targetHeight * aspectRatio
+        }
+
+        guard targetWidth.isFinite,
+              targetHeight.isFinite,
+              targetWidth > 0,
+              targetHeight > 0 else { return nil }
+
+        let targetSize = CGSize(width: targetWidth, height: targetHeight)
+        let sizeChanged = abs(widthConstraint.constant - targetWidth) > 0.5
+            || abs(heightConstraint.constant - targetHeight) > 0.5
+        guard sizeChanged else { return targetSize }
+
+        UIView.performWithoutAnimation {
+            widthConstraint.constant = targetWidth
+            heightConstraint.constant = targetHeight
+        }
+
+        // 多张图片可能在同一帧完成。复用现有调度器只做一次压缩测高，避免每张图片
+        // 都触发整棵 Markdown 视图布局，同时清掉占位图阶段缓存的根高度。
+        scheduleHeightChangeNotification(force: true)
+        return targetSize
     }
     
     func createPlaceholderImage(size: CGSize, text: String) -> UIImage {

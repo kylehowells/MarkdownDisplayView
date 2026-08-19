@@ -106,6 +106,68 @@ private func makeHeightTestView(width: CGFloat = 320, childHeight: CGFloat = 80)
 
 @available(iOS 15.0, *)
 @MainActor
+@Test func loadedImageSizeChangesCoalesceAndRefreshRootHeight() throws {
+    let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 1_200))
+    _ = view.consumeLayoutWidthChange(320)
+    var imageConstraints: [(width: NSLayoutConstraint, height: NSLayoutConstraint)] = []
+
+    for _ in 0..<7 {
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+
+        let imageView = UIView()
+        imageView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(imageView)
+
+        let widthConstraint = imageView.widthAnchor.constraint(lessThanOrEqualToConstant: 320)
+        let heightConstraint = imageView.heightAnchor.constraint(equalToConstant: 150)
+        NSLayoutConstraint.activate([
+            imageView.topAnchor.constraint(equalTo: container.topAnchor),
+            imageView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            imageView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            widthConstraint,
+            heightConstraint,
+        ])
+
+        imageConstraints.append((widthConstraint, heightConstraint))
+        view.contentStackView.addArrangedSubview(container)
+    }
+
+    view.layoutIfNeeded()
+    let placeholderHeight = view.intrinsicContentSize.height
+    #expect(abs(placeholderHeight - 1_050) < 0.5)
+
+    var scheduledActions: [() -> Void] = []
+    view.heightNotificationClock = { 10 }
+    view.heightNotificationScheduler = { _, action in scheduledActions.append(action) }
+
+    for constraints in imageConstraints {
+        let targetSize = try #require(view.applyLoadedImageSize(
+            CGSize(width: 80, height: 80),
+            maxWidth: 320,
+            widthConstraint: constraints.width,
+            heightConstraint: constraints.height
+        ))
+        #expect(targetSize == CGSize(width: 80, height: 80))
+    }
+
+    #expect(scheduledActions.count == 1)
+    #expect(view.pendingForcedHeightNotification)
+    #expect(view.pendingRequiresFullHeightMeasurement)
+    #expect(view.cachedIntrinsicHeight == nil)
+
+    let scheduledAction = try #require(scheduledActions.first)
+    scheduledActions.removeAll()
+    scheduledAction()
+
+    let loadedHeight = view.intrinsicContentSize.height
+    #expect(abs(loadedHeight - 560) < 0.5)
+    #expect(abs((placeholderHeight - loadedHeight) - 490) < 0.5)
+    #expect(abs((view.cachedIntrinsicHeight ?? -1) - loadedHeight) < 0.5)
+}
+
+@available(iOS 15.0, *)
+@MainActor
 @Test func heightRequestsCoalesceForceAndDiscardOldGenerations() {
     let view = MarkdownViewTextKit(frame: CGRect(x: 0, y: 0, width: 320, height: 400))
     _ = view.consumeLayoutWidthChange(320)

@@ -23,6 +23,7 @@ final class MarkdownParser: MarkdownParserProtocol {
     private let configuration: MarkdownConfiguration
     private let containerWidth: CGFloat
     private let inlineSegmentAttributeKey = NSAttributedString.Key("MarkdownInlineSegment")
+    private let inlineCodeAttributeKey = NSAttributedString.Key("MarkdownInlineCode")
     // 解析锁：避免 swift-cmark 在多线程并发时挂载语法扩展导致崩溃
     private static let parseLock = NSLock()
 
@@ -185,28 +186,18 @@ final class MarkdownParser: MarkdownParserProtocol {
             elements.append(.heading(id: id, text: renderHeading(heading)))
             
         case let paragraph as Paragraph:
-            // 检测段落中是否包含 LaTeX 公式
-            let paragraphText = paragraph.plainText
-            if paragraphText.contains("$$") || paragraphText.contains("$") {
-                renderParagraphWithLatex(paragraph)
-            } else {
-                currentTextBuffer.append(renderParagraph(paragraph))
-            }
+            renderParagraphInOrder(paragraph)
             
         case let codeBlock as CodeBlock:
             flushTextBuffer()
 
-            let rawCode = codeBlock.code.trimmingCharacters(in: .whitespacesAndNewlines)
             let lang = codeBlock.language?.lowercased()
 
-            // Check if it's a LaTeX block (wrapped in $$ or language is math/latex)
-            if rawCode.hasPrefix("$$") && rawCode.hasSuffix("$$") && rawCode.count >= 4 {
-                let startIndex = rawCode.index(rawCode.startIndex, offsetBy: 2)
-                let endIndex = rawCode.index(rawCode.endIndex, offsetBy: -2)
-                let latex = String(rawCode[startIndex..<endIndex])
-                elements.append(.latex(latex))
-            } else if lang == "math" || lang == "latex" {
-                 elements.append(.latex(codeBlock.code))
+            // Fenced code is opaque Markdown source. Keep `latex` as source code so
+            // documentation examples are not executed as formulas. `math` remains the
+            // explicit opt-in extension for users who want a fenced display formula.
+            if lang == "math" {
+                elements.append(.latex(codeBlock.code))
             } else {
                 // 传递语言信息以支持自定义代码块渲染器
                 elements.append(.codeBlock(language: lang, code: renderCodeBlock(codeBlock)))
@@ -347,8 +338,8 @@ final class MarkdownParser: MarkdownParserProtocol {
         if result.length > 0 {
             result.addAttribute(.font, value: font, range: NSRange(location: 0, length: result.length))
         }
-        
-        return result
+
+        return inlineLatexAttributed(result)
     }
     
     // MARK: - Inline Rendering
@@ -442,8 +433,9 @@ final class MarkdownParser: MarkdownParserProtocol {
             .foregroundColor: configuration.headingColor,
             .paragraphStyle: paragraphStyle,
         ], range: range)
-        
-        return result
+
+        // 行内公式：先套标题字体再解析，保证公式字号与标题一致
+        return NSMutableAttributedString(attributedString: inlineLatexAttributed(result))
     }
     
     // MARK: - Paragraph
@@ -483,86 +475,218 @@ final class MarkdownParser: MarkdownParserProtocol {
         return result
     }
 
-    /// 处理包含 LaTeX 公式的段落
-    private func renderParagraphWithLatex(_ paragraph: Paragraph) {
-        let paragraphText = paragraph.plainText
+    /// 按原始顺序渲染段落子节点：文本（含公式）与行内图片交错输出，保持相对顺序。
+    /// 修复 renderMarkup(Image) 把图片元素提前到段落文本之前的副作用顺序。
+    private func renderParagraphInOrder(_ paragraph: Paragraph) {
+        var textBuffer = NSMutableAttributedString()
 
-        let combinedPattern = #"\$\$(.+?)\$\$|\$(.+?)\$"#
-
-        guard let combinedRegex = cachedRegex(combinedPattern, options: [.dotMatchesLineSeparators]) else {
-            currentTextBuffer.append(renderParagraph(paragraph))
-            return
-        }
-
-        let matches = combinedRegex.matches(
-            in: paragraphText,
-            range: NSRange(paragraphText.startIndex..., in: paragraphText)
-        )
-
-        if matches.isEmpty {
-            currentTextBuffer.append(renderParagraph(paragraph))
-            return
-        }
-
-        var lastIndex = paragraphText.startIndex
-
-        for match in matches {
-            guard let fullMatchRange = Range(match.range, in: paragraphText) else { continue }
-
-            let beforeText = String(paragraphText[lastIndex..<fullMatchRange.lowerBound])
-            appendInlineText(beforeText, appendNewline: false)
-
-            if let displayRange = Range(match.range(at: 1), in: paragraphText) {
-                let latex = String(paragraphText[displayRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !latex.isEmpty {
-                    flushTextBuffer()
-                    elements.append(.latex(latex))
-                }
-            } else if let inlineRange = Range(match.range(at: 2), in: paragraphText) {
-                let latex = String(paragraphText[inlineRange]).trimmingCharacters(in: .whitespacesAndNewlines)
-                if !latex.isEmpty {
-                    appendInlineLatex(latex)
-                }
+        func flushText() {
+            guard textBuffer.length > 0 else { return }
+            applyParagraphStyle(to: textBuffer)
+            if textBuffer.string.contains("$") {
+                renderTextWithLatex(textBuffer)
+            } else {
+                currentTextBuffer.append(textBuffer)
             }
-
-            lastIndex = fullMatchRange.upperBound
+            textBuffer = NSMutableAttributedString()
         }
 
-        let remainingText = String(paragraphText[lastIndex...])
-        appendInlineText(remainingText, appendNewline: true)
+        for child in paragraph.children {
+            if let image = child as? Image {
+                flushText()
+                flushTextBuffer()
+                if let source = image.source, !source.isEmpty {
+                    elements.append(.image(source: source, altText: image.plainText))
+                }
+            } else {
+                textBuffer.append(renderMarkup(child))
+            }
+        }
+        flushText()
     }
 
-    private func appendInlineText(_ text: String, appendNewline: Bool) {
-        guard !text.isEmpty || appendNewline else { return }
-        let content = appendNewline ? text + "\n" : text
-        let attr = NSMutableAttributedString(string: content, attributes: defaultTextAttributes)
-        let range = NSRange(location: 0, length: attr.length)
-        attr.addAttribute(inlineSegmentAttributeKey, value: true, range: range)
+    /// 给文本段应用段落样式与结尾换行（与 renderParagraph 保持一致）
+    private func applyParagraphStyle(to text: NSMutableAttributedString) {
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.lineSpacing = isInBlockquote
+            ? configuration.lineSpacing.quote
+            : configuration.lineSpacing.body
+        if listDepth == 0 {
+            paragraphStyle.paragraphSpacing = configuration.paragraphSpacing
+        }
+        if isInBlockquote {
+            paragraphStyle.firstLineHeadIndent = configuration.blockquoteIndent
+            paragraphStyle.headIndent = configuration.blockquoteIndent
+        }
+        let range = NSRange(location: 0, length: text.length)
+        if range.length > 0 {
+            text.addAttribute(.paragraphStyle, value: paragraphStyle, range: range)
+        }
+        if !text.string.hasSuffix("\n") {
+            text.append(NSAttributedString(string: "\n"))
+        }
+    }
+
+    /// 处理已渲染的段落文本中的公式（块级 $$ 与行内 $）
+    private func renderTextWithLatex(_ text: NSAttributedString) {
+        let fullRange = NSRange(location: 0, length: text.length)
+
+        // Swift Markdown keeps a list label and its indented display formula in the same
+        // Paragraph (for example, "1. Formula:\n   $$ ... $$"). Extract every display
+        // range outside inline code instead of requiring the formula to own the paragraph.
+        let displayPattern = #"(?<![\\$])\$\$(?!\$)(.+?)(?<![\\$])\$\$(?!\$)"#
+        let displayMatches = cachedRegex(
+            displayPattern,
+            options: [.dotMatchesLineSeparators]
+        )?.matches(in: text.string, range: fullRange).filter { match in
+            guard !rangeIntersectsInlineCode(match.range, in: text) else {
+                return false
+            }
+            let latex = (text.string as NSString)
+                .substring(with: match.range(at: 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return !latex.isEmpty
+        } ?? []
+
+        if !displayMatches.isEmpty {
+            var location = 0
+
+            for match in displayMatches {
+                let beforeRange = NSRange(
+                    location: location,
+                    length: match.range.location - location
+                )
+                let before = text.attributedSubstring(from: beforeRange)
+                if !before.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    appendTextWithInlineLatex(before)
+                }
+
+                flushTextBuffer()
+                let latex = (text.string as NSString)
+                    .substring(with: match.range(at: 1))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                elements.append(.latex(latex))
+                location = NSMaxRange(match.range)
+            }
+
+            let remainingRange = NSRange(
+                location: location,
+                length: text.length - location
+            )
+            let remaining = text.attributedSubstring(from: remainingRange)
+            if !remaining.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                appendTextWithInlineLatex(remaining)
+            }
+            return
+        }
+
+        appendTextWithInlineLatex(text)
+    }
+
+    private func appendTextWithInlineLatex(_ text: NSAttributedString) {
+        // 段落路径：处理行内公式，并给整段打上 inlineSegment 标记（段落拆分场景抑制段落间距）
+        let processed = inlineLatexAttributed(text)
+        let attr = NSMutableAttributedString(attributedString: processed)
+        attr.addAttribute(
+            inlineSegmentAttributeKey,
+            value: true,
+            range: NSRange(location: 0, length: attr.length)
+        )
         currentTextBuffer.append(attr)
     }
 
-    /// 将行内公式作为 Attachment 嵌入正文，保持阅读流（不拆成块级 View）
-    private func appendInlineLatex(_ latex: String) {
-        // 行内公式使用紧凑内边距，避免在正文中撑出大块背景。
+    /// 处理文本中的行内 $...$ 公式（排除 $$ 与反引号内），返回内嵌 LaTeXAttachment 的字符串。
+    /// 纯函数：不产生块级元素、不写 currentTextBuffer，可用于段落/标题/表格等任何行内上下文。
+    private func inlineLatexAttributed(_ text: NSAttributedString) -> NSAttributedString {
+        // Inline math uses only single-dollar delimiters. Escaped dollars and `$$` are
+        // excluded; display math has already been split into block elements above.
+        let inlinePattern = #"(?<![\\$])\$(?!\$)(.+?)(?<![\\$])\$(?!\$)"#
+        guard let inlineRegex = cachedRegex(
+            inlinePattern,
+            options: [.dotMatchesLineSeparators]
+        ) else {
+            return text
+        }
+
+        let fullRange = NSRange(location: 0, length: text.length)
+        let matches = inlineRegex.matches(in: text.string, range: fullRange)
+            .filter { !rangeIntersectsInlineCode($0.range, in: text) }
+
+        if matches.isEmpty {
+            return text
+        }
+
+        let result = NSMutableAttributedString()
+        var location = 0
+
+        for match in matches {
+            let beforeRange = NSRange(location: location, length: match.range.location - location)
+            result.append(text.attributedSubstring(from: beforeRange))
+
+            let latex = (text.string as NSString)
+                .substring(with: match.range(at: 1))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !latex.isEmpty {
+                let attributes = text.attributes(
+                    at: match.range.location,
+                    effectiveRange: nil
+                )
+                result.append(inlineLatexAttachmentString(latex, sourceAttributes: attributes))
+            } else {
+                result.append(text.attributedSubstring(from: match.range))
+            }
+            location = NSMaxRange(match.range)
+        }
+
+        let remainingRange = NSRange(
+            location: location,
+            length: text.length - location
+        )
+        result.append(text.attributedSubstring(from: remainingRange))
+        return result
+    }
+
+    /// 生成行内公式附件字符串（继承所在文本的字体与段落样式，不添加 inlineSegment 标记）
+    private func inlineLatexAttachmentString(
+        _ latex: String,
+        sourceAttributes: [NSAttributedString.Key: Any]
+    ) -> NSAttributedString {
+        // 行内公式使用透明外观并保留按字号计算的 ink 安全区。数学斜体字母和
+        // 上标会越过 CTLine 的 typographic width；只有 1pt 左右 padding 时，
+        // LatexMathView 的 masksToBounds 会把 C/d/r 和末尾上标直接裁掉。
         // maxWidth 不在此处限制：行内公式的可用宽度由布局时的行片段宽度决定（见
         // LaTeXAttachment.attachmentBounds），此处传无穷大让其保持自然尺寸。
-        let inlinePadding: CGFloat = 2
+        let sourceFont = sourceAttributes[.font] as? UIFont ?? configuration.bodyFont
+        let inlineSafetyInset = max(4, sourceFont.pointSize * 0.3)
         let attachment = LaTeXAttachment(
             latex: latex,
-            fontSize: configuration.bodyFont.pointSize,
+            fontSize: sourceFont.pointSize,
             maxWidth: .greatestFiniteMagnitude,
-            padding: inlinePadding,
-            backgroundColor: configuration.latexBackgroundColor,
+            padding: inlineSafetyInset * 2,
+            backgroundColor: .clear,
             textColor: configuration.latexTextColor,
-            appearance: configuration.latexAppearance,
+            appearance: MarkdownBlockAppearance(),
             isInline: true,
-            inlineCapHeight: configuration.bodyFont.capHeight
+            inlineCapHeight: sourceFont.capHeight
         )
 
         let attr = NSMutableAttributedString(attachment: attachment)
         let range = NSRange(location: 0, length: attr.length)
-        attr.addAttribute(inlineSegmentAttributeKey, value: true, range: range)
-        currentTextBuffer.append(attr)
+        if let paragraphStyle = sourceAttributes[.paragraphStyle] {
+            attr.addAttribute(.paragraphStyle, value: paragraphStyle, range: range)
+        }
+        return attr
+    }
+
+    private func rangeIntersectsInlineCode(_ range: NSRange, in text: NSAttributedString) -> Bool {
+        var intersects = false
+        text.enumerateAttribute(inlineCodeAttributeKey, in: range, options: []) { value, _, stop in
+            if value != nil {
+                intersects = true
+                stop.pointee = true
+            }
+        }
+        return intersects
     }
 
     // MARK: - Text
@@ -724,13 +848,19 @@ final class MarkdownParser: MarkdownParserProtocol {
     
     private func renderInlineCode(_ inlineCode: InlineCode) -> NSMutableAttributedString {
         let text = " \(inlineCode.code) "
-        return NSMutableAttributedString(
+        let result = NSMutableAttributedString(
             string: text,
             attributes: [
                 .font: configuration.codeFont,
                 .foregroundColor: configuration.codeTextColor,
                 .backgroundColor: configuration.codeBackgroundColor,
             ])
+        result.addAttribute(
+            inlineCodeAttributeKey,
+            value: true,
+            range: NSRange(location: 0, length: result.length)
+        )
+        return result
     }
     
     // MARK: - Code Block
@@ -884,7 +1014,7 @@ final class MarkdownParser: MarkdownParserProtocol {
                 if childResult.string.hasSuffix("\n") {
                     childResult.deleteCharacters(in: NSRange(location: childResult.length - 1, length: 1))
                 }
-                result.append(childResult)
+                result.append(inlineLatexAttributed(childResult))
                 hasAddedContent = true
             }
         }

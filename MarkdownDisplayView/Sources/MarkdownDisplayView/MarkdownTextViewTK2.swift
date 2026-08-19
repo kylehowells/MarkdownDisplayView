@@ -53,6 +53,10 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     // 打字机期间行内公式附件的字符索引（attachment -> 字符位置）
     private var inlineAttachmentCharacterIndexes: [NSTextAttachment: Int] = [:]
 
+    // nil 表示正常显示；非 nil 表示打字机只允许显示该 UTF-16 位置之前的附件。
+    // 状态独立于 provider 生命周期，确保 prepare 后才延迟创建的附件也不会提前闪现。
+    private var inlineAttachmentRevealLimit: Int?
+
     var typewriterTextMode: MarkdownTypewriterTextMode = .reveal
     /// ⚠️ 已不再参与 append 打字机的测高决策，保留仅为兼容既有配置。
     ///
@@ -208,6 +212,7 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     /// 最后一帧应先在播放保护下完成测量，再由引擎调用本方法。
     func finishAppendTypewriterPlayback() {
         isAppendingTypewriterText = false
+        setInlineAttachmentRevealLimit(nil)
     }
 
     private func setupGestures() {
@@ -236,6 +241,9 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     private func updateContent() {
         // attributedText 被外部替换意味着上一轮 append 播放已经结束。
         isAppendingTypewriterText = false
+        cachedOriginalAttributedString = nil
+        inlineAttachmentCharacterIndexes.removeAll()
+        inlineAttachmentRevealLimit = nil
 
         guard let attributedText = attributedText else {
             setStorageContent(nil)
@@ -296,8 +304,25 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         var usedAttachments = Set<NSTextAttachment>()
 
         textLayoutManager.enumerateTextLayoutFragments(from: textLayoutManager.documentRange.location, options: [.ensuresLayout]) { fragment in
+            let fragmentDocumentOffset = self.textLayoutManager.offset(
+                from: self.textLayoutManager.documentRange.location,
+                to: fragment.rangeInElement.location
+            )
+
             for textLine in fragment.textLineFragments {
-                let lineRange = textLine.characterRange
+                // NSTextLineFragment.characterRange is relative to its paragraph/layout
+                // fragment, while textStorage is indexed from the document origin. Without
+                // this offset, every paragraph after the first re-enumerates the first
+                // paragraph's attachments and can hide them with a CGRect.zero lookup.
+                let relativeLineRange = textLine.characterRange
+                let lineRange = NSRange(
+                    location: fragmentDocumentOffset + relativeLineRange.location,
+                    length: relativeLineRange.length
+                )
+                guard lineRange.location >= 0,
+                      NSMaxRange(lineRange) <= attrString.length else {
+                    continue
+                }
 
                 attrString.enumerateAttribute(.attachment, in: NSRange(location: lineRange.location, length: lineRange.length)) { value, range, stop in
                     guard let attachment = value as? NSTextAttachment else { return }
@@ -337,8 +362,16 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
                                         width: glyphRect.width,
                                         height: glyphRect.height
                                     )
+                                    self.applyInlineAttachmentVisibility(
+                                        to: view,
+                                        attachment: attachment,
+                                        characterIndex: range.location
+                                    )
                                 } else {
-                                    view.frame = fragment.layoutFragmentFrame
+                                    // TextKit 尚未提供有效 glyph frame 时绝不能回退为整段
+                                    // fragment，否则附件会覆盖整段文字。等待下一次有效布局。
+                                    view.frame = .zero
+                                    view.isHidden = true
                                 }
                             } else {
                                 // 块级附件（表格/代码块/图片/块级公式）：填满 Fragment 区域
@@ -504,13 +537,11 @@ extension MarkdownTextViewTK2 {
 
         // 缓存行内公式附件的字符索引（用于打字机期间控制可见性）
         cacheInlineAttachmentIndexes(in: attr)
+        setInlineAttachmentRevealLimit(0)
 
         // ⚡️ 强制触发布局，确保高度和位置在开始打字前是正确的
         // 这能防止在 hidden = false 瞬间因为布局未完成而导致的闪烁或跳动
         layoutIfNeeded()
-
-        // 布局完成后（attachmentProviders 已填充），隐藏行内公式视图，等揭示到对应字符再显示
-        hideInlineAttachmentViews()
 
         if typewriterTextMode == .append {
             isAppendingTypewriterText = true
@@ -557,22 +588,30 @@ extension MarkdownTextViewTK2 {
         inlineAttachmentCharacterIndexes = indexes
     }
 
-    /// 隐藏所有行内公式附件视图
-    private func hideInlineAttachmentViews() {
-        for (attachment, provider) in attachmentProviders {
-            if (attachment as? LaTeXAttachment)?.isInline == true {
-                provider.view?.isHidden = true
-            }
-        }
-    }
-
-    /// 根据打字机揭示进度，显示/隐藏行内公式附件视图
-    private func updateInlineAttachmentVisibility(revealedUpTo index: Int) {
+    private func setInlineAttachmentRevealLimit(_ limit: Int?) {
+        inlineAttachmentRevealLimit = limit
         for (attachment, provider) in attachmentProviders {
             guard (attachment as? LaTeXAttachment)?.isInline == true,
                   let view = provider.view else { continue }
             let charIndex = inlineAttachmentCharacterIndexes[attachment] ?? Int.max
-            view.isHidden = charIndex >= index
+            applyInlineAttachmentVisibility(
+                to: view,
+                attachment: attachment,
+                characterIndex: charIndex
+            )
+        }
+    }
+
+    private func applyInlineAttachmentVisibility(
+        to view: UIView,
+        attachment: NSTextAttachment,
+        characterIndex: Int
+    ) {
+        guard (attachment as? LaTeXAttachment)?.isInline == true else { return }
+        if let limit = inlineAttachmentRevealLimit {
+            view.isHidden = characterIndex >= limit
+        } else {
+            view.isHidden = false
         }
     }
 
@@ -592,6 +631,7 @@ extension MarkdownTextViewTK2 {
             let startIndex = lastRevealedIndex
             let endIndex = index
             guard endIndex > startIndex else { return (false, false, 0) }
+            setInlineAttachmentRevealLimit(endIndex)
 
             let range = NSRange(location: startIndex, length: endIndex - startIndex)
             let segment = originalAttr.attributedSubstring(from: range)
@@ -631,7 +671,6 @@ extension MarkdownTextViewTK2 {
 
             let previousHeight = heightConstraint?.constant ?? calculatedHeight
             applyLayout(width: layoutWidth, force: true)
-            updateInlineAttachmentVisibility(revealedUpTo: endIndex)
             let currentHeight = heightConstraint?.constant ?? calculatedHeight
             let heightDelta = currentHeight - previousHeight
 
@@ -653,6 +692,7 @@ extension MarkdownTextViewTK2 {
 
         // 如果没有新字符需要显示，直接返回
         guard endIndex > startIndex else { return (false, false, 0) }
+        setInlineAttachmentRevealLimit(endIndex)
 
         // 按属性 run 恢复原始属性（含被 prepare 移除的 .link 与被覆盖的前景色）。
         // setAttributes 会整块替换该范围的属性，效果等价于原先逐字符
@@ -667,9 +707,6 @@ extension MarkdownTextViewTK2 {
 
         // 更新上次显示位置
         lastRevealedIndex = endIndex
-
-        // 显示/隐藏行内公式附件视图
-        updateInlineAttachmentVisibility(revealedUpTo: endIndex)
 
         // 强制重绘。不做局部脏化：UIKit 会把同一帧内的多次 setNeedsDisplay(rect)
         // 合并成整个 bounds 的一次 draw，省不下来，反而要承担矩形算错就漏画的风险。

@@ -152,17 +152,18 @@ class LatexMathView: UIView {
         guard let context = UIGraphicsGetCurrentContext(), let root = parsedFormula?.rootNode else { return }
 
         let resolvedTextColor = formulaTextColor.resolvedColor(with: traitCollection)
+        let drawingBounds = bounds
         
         // 当视图 bounds 小于公式自然尺寸时（行内公式超出所在行），等比缩放以适配，而不是裁切
         let naturalSize = root.size
         let scale = min(1,
-                        rect.width / max(naturalSize.width, 1),
-                        rect.height / max(naturalSize.height, 1))
+                        drawingBounds.width / max(naturalSize.width, 1),
+                        drawingBounds.height / max(naturalSize.height, 1))
         let scaledSize = CGSize(width: naturalSize.width * scale, height: naturalSize.height * scale)
 
         // 居中绘制
-        let startX = (rect.width - scaledSize.width) / 2
-        let startY = (rect.height - scaledSize.height) / 2
+        let startX = drawingBounds.minX + (drawingBounds.width - scaledSize.width) / 2
+        let startY = drawingBounds.minY + (drawingBounds.height - scaledSize.height) / 2
         
         // 翻转坐标系 (如果需要的话，但这里我们尽量使用了 UIKit 坐标)
         // 我们的 Node 实现是基于左上角(Upper-Left)的逻辑，配合 UIKit

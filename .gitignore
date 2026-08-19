@@ -12,3 +12,4 @@ Example/ExampleForMarkdown/ExampleForMarkdown/Config.local.json
 /.derivedData-review
 /.code-abyss
 /cpu.trace
+/.build-inline-review

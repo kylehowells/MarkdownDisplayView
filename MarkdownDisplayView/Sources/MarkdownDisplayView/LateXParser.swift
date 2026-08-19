@@ -366,11 +366,14 @@ class LatexParser {
                     // 或者目前先保持现状，依靠 \text{high~T} 来手动控制空格是最稳妥的。
                     return parseNextItem(font: subFont)
                 // --- 结构类 ---
-            case "frac":
-                let smallFont = font.withSize(currentSize * 0.9)
-                let num = parseNextItem(font: smallFont)
-                let den = parseNextItem(font: smallFont)
-                return FractionNode(numerator: num, denominator: den)
+            case "frac", "dfrac", "tfrac":
+                let contentScale: CGFloat
+                switch cmd {
+                case "dfrac": contentScale = 1.0
+                case "tfrac": contentScale = 0.8
+                default: contentScale = 0.9
+                }
+                return parseFraction(font: font, contentScale: contentScale)
                 
             case "sqrt":
                 let inner = parseNextItem(font: font)
@@ -806,6 +809,13 @@ class LatexParser {
             return content
         }
     // 解析单个参数 (处理 { } 或 单个字符)
+    private func parseFraction(font: UIFont, contentScale: CGFloat) -> FormulaRenderNode {
+        let contentFont = font.withSize(font.pointSize * contentScale)
+        let numerator = parseNextItem(font: contentFont)
+        let denominator = parseNextItem(font: contentFont)
+        return FractionNode(numerator: numerator, denominator: denominator)
+    }
+
     private func parseNextItem(font: UIFont) -> FormulaRenderNode {
         if index < tokens.count && tokens[index].type == .lBrace {
             index += 1
@@ -889,5 +899,4 @@ class LatexParser {
             return MatrixNode(rows: rows, type: type)
         }
 }
-
 

@@ -421,6 +421,54 @@ private let allSamples: [(name: String, text: String)] = [
 }
 
 @available(iOS 15.0, *)
+@Test func inlineCodeDollarDelimitersDoNotOpenLatexBlocks() async throws {
+    let markdown = "Use `$$` literally in documentation.\n\n"
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+
+    let result = buffer.append(markdown)
+
+    #expect(result.hasPendingStructure == false)
+    #expect(result.pendingType == nil)
+    #expect(result.completeModules == [
+        markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+    ])
+}
+
+@available(iOS 15.0, *)
+@Test func incompleteInlineCodeTakesPrecedenceOverDollarTail() async throws {
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    _ = buffer.append("Literal `")
+
+    let opened = buffer.append("$")
+    #expect(opened.hasPendingStructure)
+    #expect(opened.pendingType == .codeBlock)
+
+    let closed = buffer.append("` remains source text.\n\n")
+    #expect(closed.hasPendingStructure == false)
+    #expect(closed.completeModules == ["Literal `$` remains source text."])
+}
+
+@available(iOS 15.0, *)
+@Test func variableLengthInlineCodeKeepsInternalMarkdownOpaque() async throws {
+    let markdown = "Use `` ` and $$ `` literally in a sentence.\n\n"
+
+    #expect(streamedModules(markdown.map(String.init)) == [
+        markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+    ])
+}
+
+@available(iOS 15.0, *)
+@Test func inlineCodeDoesNotConsumeFollowingRealLatexOpener() async throws {
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    _ = buffer.append("Use `$$` literally.\n\n")
+
+    let result = buffer.append("## Math\n\n$$\nx = 1")
+
+    #expect(result.hasPendingStructure)
+    #expect(result.pendingType == .latexBlock)
+}
+
+@available(iOS 15.0, *)
 @Test func customTagLiteralInsideCodeAndLatexDoesNotBecomePending() async throws {
     MarkdownCustomExtensionManager.shared.register(parser: StreamBufferEChartsParser())
     let code = "```html\n<echarts>\n```\n\n"
@@ -461,12 +509,55 @@ private let allSamples: [(name: String, text: String)] = [
 }
 
 @available(iOS 15.0, *)
-@Test func sixConsecutiveBackticksAreTreatedAsTwoClosedFences() async throws {
+@Test func sixConsecutiveBackticksOpenASixBacktickFence() async throws {
     let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
 
-    // 6 个反引号 = 2 个围栏，偶数 → 已闭合
+    // CommonMark：一行 6 个反引号是长度 6 的开围栏，不是两个长度 3 的围栏。
     let result = buffer.append("# Title\n\n``````\ncode line\n")
-    #expect(result.hasPendingStructure == false)
+    #expect(result.hasPendingStructure)
+    #expect(result.pendingType == .codeBlock)
+}
+
+@available(iOS 15.0, *)
+@Test func backtickFenceLengthVariantsOpenUnclosedCodeBlocks() async throws {
+    for length in [3, 4, 7, 8] {
+        let fence = String(repeating: "`", count: length)
+        let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+        let result = buffer.append("# T\n\n\(fence)\ncode line\n")
+        #expect(result.hasPendingStructure, "fence length \(length)")
+        #expect(result.pendingType == .codeBlock, "fence length \(length)")
+    }
+}
+
+@available(iOS 15.0, *)
+@Test func tildeFenceIsRecognizedAndCloses() async throws {
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    let opened = buffer.append("# T\n\n~~~\ncode\n")
+    #expect(opened.hasPendingStructure)
+    #expect(opened.pendingType == .codeBlock)
+
+    let closed = buffer.append("~~~\n")
+    #expect(closed.hasPendingStructure == false)
+}
+
+@available(iOS 15.0, *)
+@Test func midLineBackticksInsideFenceDoNotCloseIt() async throws {
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    let opened = buffer.append("# T\n\n```\ncode with `inline` text\n")
+    #expect(opened.hasPendingStructure)
+    #expect(opened.pendingType == .codeBlock)
+
+    // 中行的 ``` 不是闭围栏（不在行首），代码块仍应未闭合
+    let still = buffer.append("more ``` not a close\n")
+    #expect(still.hasPendingStructure)
+}
+
+@available(iOS 15.0, *)
+@Test func fourSpaceIndentIsNotAFenceOpener() async throws {
+    let buffer = MarkdownStreamBuffer(containerWidth: 320, minModuleLength: 10)
+    // CommonMark 最多 3 个前导空格；4 空格缩进不是围栏
+    let result = buffer.append("# T\n\n    ```\nnot a fence\n")
+    #expect(result.pendingType != .codeBlock)
 }
 
 // MARK: - Unicode Boundaries
