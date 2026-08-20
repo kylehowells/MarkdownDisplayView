@@ -311,6 +311,28 @@ public var latexBackgroundColor: UIColor   // LaTeX 公式背景颜色
 public var latexPadding: CGFloat           // LaTeX 公式内边距（默认: 20）
 ```
 
+#### LaTeX 公式语法
+
+支持两种公式形式：
+
+- **行内公式** — 用单个美元符号 `$...$` 包裹，随正文在段落、标题、表格单元格、引用块和列表项中内联显示：
+
+  ```markdown
+  能量为 $E=mc^2$，动量为 $p=mv$。
+  ```
+
+- **行间公式** — 用双美元符号 `$$...$$` 包裹，以全宽居中的块级形式显示：
+
+  ```markdown
+  $$
+  \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+  $$
+  ```
+
+- **围栏公式** — `math` 围栏渲染为行间公式；`latex` 围栏保持源码，避免文档示例被误当公式。
+
+> 反引号（行内代码）内的 `$...$` 保持字面量，不会被当作公式。
+
 #### 引用块配置
 
 ```swift
@@ -812,6 +834,15 @@ markdownView.setPreparedContent(preparedContent)
 </details>
 
 ## 更新日志
+
+### 2.1.2 (2026-08-19)
+
+- ➗ **行内 LaTeX 全面支持** - 行内 `$...$` 现在会在段落、标题、表格单元格、引用块和列表项中作为行内附件渲染；块级 `$$...$$` 保持块级显示。超宽行内公式会缩放到行宽，不再被裁切。
+- 🛡 **行内代码不再被误判为公式** - 反引号内的 `$...$` 保持字面量，`latex` 围栏保持源码（只有 `math` 渲染为公式），文档示例不再被误读为公式。新增 `\dfrac` / `\tfrac` 分数别名。
+- 📐 **CommonMark 围栏代码块识别** - 智能流式缓存现在遵循 CommonMark 围栏规则：≤3 个前导空格、≥3 个反引号或波浪线、闭围栏需匹配字符与长度（含波浪线围栏）。
+- 📊 **表格与代码布局配置生效** - `tableMinColumnWidth`、`tableMaxColumnWidth`、`tableRowHeight`、`tableCellPadding`、`tableSeparatorHeight`、`codeBlockPadding` 现在真正生效（此前为硬编码），并新增 `tableCellVerticalPadding` 控制单元格垂直内边距。`headingSpacing` 已废弃，改用 `headingTopSpacing` / `headingBottomSpacing`。
+- 🖼 **行内图片顺序** - 行内图片保持其在段落中的位置，不再被提前到文本之前。
+- 🧱 **折叠块展开与快照安全渲染** - 折叠块展开/收起不再丢内容更新，完整文档渲染保持正确并兼容快照安全布局。
 
 ### 2.1.1 (2026-08-18)
 

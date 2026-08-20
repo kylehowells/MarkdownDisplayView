@@ -303,6 +303,28 @@ public var latexBackgroundColor: UIColor   // LaTeX formula background color
 public var latexPadding: CGFloat           // LaTeX formula padding (default: 20)
 ```
 
+#### LaTeX Formula Syntax
+
+Two formula forms are supported:
+
+- **Inline math** — wrap in single dollars `$...$`; it flows inline inside paragraphs, headings, table cells, blockquotes, and list items:
+
+  ```markdown
+  Energy is $E=mc^2$ and momentum is $p=mv$.
+  ```
+
+- **Display math** — wrap in double dollars `$$...$$`; it renders as a full-width, centered block:
+
+  ```markdown
+  $$
+  \int_{-\infty}^{\infty} e^{-x^2}\,dx = \sqrt{\pi}
+  $$
+  ```
+
+- **Fenced math** — a `math` fence renders a display formula; a `latex` fence stays source code so documentation examples are not executed.
+
+> `$...$` inside backticks (inline code) stays literal and is never treated as math.
+
 #### Blockquote Configuration
 
 ```swift
@@ -804,6 +826,15 @@ markdownView.setPreparedContent(preparedContent)
 </details>
 
 ## Changelog
+
+### 2.1.2 (2026-08-19)
+
+- ➗ **Inline LaTeX in Every Inline Context** - Inline `$...$` now renders as an inline attachment inside paragraphs, headings, table cells, blockquotes, and list items; display `$$...$$` stays block-level. Oversized inline formulas scale to fit the line width instead of being clipped.
+- 🛡 **Inline Code Is Not Math** - `$...$` inside backticks stays literal, and a fenced `latex` block is kept as source code (only `math` renders as a formula), so documentation examples are no longer misread as math. Added `\dfrac` / `\tfrac` fraction aliases.
+- 📐 **CommonMark Fenced-Code Detection** - The smart-stream buffer now follows CommonMark fence rules: ≤3 leading spaces, ≥3 backticks or tildes, and the closing fence must match the opening character and length (tilde fences included).
+- 📊 **Table & Code Layout Configs Now Effective** - `tableMinColumnWidth`, `tableMaxColumnWidth`, `tableRowHeight`, `tableCellPadding`, `tableSeparatorHeight`, and `codeBlockPadding` now actually take effect (previously hardcoded), and a new `tableCellVerticalPadding` controls vertical cell padding. `headingSpacing` is deprecated in favor of `headingTopSpacing` / `headingBottomSpacing`.
+- 🖼 **Inline Image Ordering** - Inline images keep their position inside a paragraph instead of being hoisted before the surrounding text.
+- 🧱 **Details Expand & Snapshot-Safe Rendering** - Details expand/collapse no longer drops content updates, and complete-document rendering stays correct while keeping snapshot-safe layout.
 
 ### 2.1.1 (2026-08-18)
 
