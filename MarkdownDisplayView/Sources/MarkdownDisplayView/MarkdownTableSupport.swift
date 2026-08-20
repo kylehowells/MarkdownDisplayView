@@ -10,22 +10,25 @@ import UIKit
 // MARK: - Layout Calculator
 
 struct MarkdownTableLayoutCalculator {
-    static func calculate(data: MarkdownTableData, font: UIFont, containerWidth: CGFloat) -> (columnWidths: [CGFloat], rowHeights: [CGFloat], totalSize: CGSize) {
+    static func calculate(data: MarkdownTableData, config: MarkdownConfiguration, containerWidth: CGFloat) -> (columnWidths: [CGFloat], rowHeights: [CGFloat], totalSize: CGSize) {
         guard !data.headers.isEmpty || !data.rows.isEmpty else {
             return ([], [], .zero)
         }
 
+        // 水平内边距（左右各 tableCellPadding）
+        let horizontalPadding = config.tableCellPadding * 2
+
         // 1. Calculate Column Widths
         let columnCount = max(data.headers.count, data.rows.first?.count ?? 0)
-        var columnWidths: [CGFloat] = Array(repeating: 60, count: columnCount) // Min width 60
+        var columnWidths: [CGFloat] = Array(repeating: config.tableMinColumnWidth, count: columnCount)
 
         // Helper to measure text width
         func measureWidth(_ text: NSAttributedString) -> CGFloat {
             return text.boundingRect(
-                with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: 44),
+                with: CGSize(width: CGFloat.greatestFiniteMagnitude, height: config.tableRowHeight),
                 options: [.usesLineFragmentOrigin],
                 context: nil
-            ).width + 32 // Padding: 12 left + 12 right + 8 buffer
+            ).width + horizontalPadding
         }
 
         // Measure Headers
@@ -44,25 +47,23 @@ struct MarkdownTableLayoutCalculator {
             }
         }
 
-        // Cap max width per column (e.g., 300) to prevent super wide columns
-        // But also ensure we don't shrink too much
-        columnWidths = columnWidths.map { min($0, 300) }
-        
+        // Cap max width per column to prevent super wide columns
+        columnWidths = columnWidths.map { min($0, config.tableMaxColumnWidth) }
+
         // 2. Calculate Row Heights
-        // We need to know exact height of each row given the column width
         var rowHeights: [CGFloat] = []
-        
+
         func measureHeight(_ text: NSAttributedString, width: CGFloat) -> CGFloat {
-            let availableWidth = width - 24 // Padding
+            let availableWidth = max(1, width - horizontalPadding)
             return text.boundingRect(
                 with: CGSize(width: availableWidth, height: CGFloat.greatestFiniteMagnitude),
                 options: [.usesLineFragmentOrigin],
                 context: nil
-            ).height + 20 // Vertical padding: 10 top + 10 bottom
+            ).height + config.tableCellVerticalPadding * 2 // 上下各 tableCellVerticalPadding
         }
 
         // Header Height
-        var headerHeight: CGFloat = 44
+        var headerHeight: CGFloat = config.tableRowHeight
         for (i, header) in data.headers.enumerated() {
             if i < columnCount {
                 headerHeight = max(headerHeight, measureHeight(header, width: columnWidths[i]))
@@ -72,7 +73,7 @@ struct MarkdownTableLayoutCalculator {
 
         // Row Heights
         for row in data.rows {
-            var rowHeight: CGFloat = 44
+            var rowHeight: CGFloat = config.tableRowHeight
             for (i, cell) in row.enumerated() {
                 if i < columnCount {
                     rowHeight = max(rowHeight, measureHeight(cell, width: columnWidths[i]))
@@ -82,13 +83,13 @@ struct MarkdownTableLayoutCalculator {
         }
 
         let totalWidth = columnWidths.reduce(0, +)
-        let totalHeight = rowHeights.reduce(0, +) + CGFloat(rowHeights.count) // +1 separator per row approx
+        let totalHeight = rowHeights.reduce(0, +) + CGFloat(rowHeights.count) * config.tableSeparatorHeight
 
         // Attachment Frame Width: min(totalWidth, containerWidth)
         // If table is smaller than screen, use table width.
         // If table is larger, use screen width (and scroll internally).
         let frameWidth = min(totalWidth, containerWidth)
-        
+
         return (columnWidths, rowHeights, CGSize(width: frameWidth, height: totalHeight))
     }
 }
@@ -462,7 +463,7 @@ class MarkdownTableAttachment: NSTextAttachment {
         // Pre-calculate layout
         let result = MarkdownTableLayoutCalculator.calculate(
             data: data,
-            font: config.bodyFont,
+            config: config,
             containerWidth: containerWidth
         )
         self.columnWidths = result.columnWidths

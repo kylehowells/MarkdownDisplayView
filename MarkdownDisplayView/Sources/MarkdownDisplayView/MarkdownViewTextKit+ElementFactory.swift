@@ -769,12 +769,13 @@ extension MarkdownViewTextKit {
         mdLog("[CODEBLOCK_DEBUG] 🏗️ createCodeBlockView: width=\(width), textLength=\(attributedString.length)")
 
         // 🔥 核心修复:立即应用布局,计算文本实际可用宽度(减去 padding)
-        let codeBlockWidth = max(0, width - 24)  // left 12 + right 12
+        let padding = configuration.codeBlockPadding
+        let codeBlockWidth = max(0, width - padding * 2)
         
         if let fixedHeight = fixedHeight {
-            // ⚡️ 使用预计算高度 (减去上下 padding 24)
+            // ⚡️ 使用预计算高度 (减去上下 padding)
             textView.textContainer.size = CGSize(width: codeBlockWidth, height: .greatestFiniteMagnitude)
-            textView.setFixedHeight(max(0, fixedHeight - 24))
+            textView.setFixedHeight(max(0, fixedHeight - padding * 2))
         } else {
             textView.applyLayout(width: codeBlockWidth, force: true)
         }
@@ -787,10 +788,10 @@ extension MarkdownViewTextKit {
 
         NSLayoutConstraint.activate([
             widthConstraint,
-            textView.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            textView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
+            textView.topAnchor.constraint(equalTo: container.topAnchor, constant: padding),
+            textView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: padding),
+            textView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -padding),
+            textView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -padding),
         ])
 
         return container

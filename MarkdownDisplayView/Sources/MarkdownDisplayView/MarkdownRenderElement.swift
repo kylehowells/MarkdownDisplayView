@@ -248,6 +248,7 @@ public struct MarkdownConfiguration: Sendable {
     public var tocTextColor: UIColor              // 目录文字颜色
 
     public var paragraphSpacing: CGFloat
+    @available(*, deprecated, message: "已被 headingTopSpacing / headingBottomSpacing 取代，不再生效")
     public var headingSpacing: CGFloat
     public var listIndent: CGFloat
     public var codeBlockPadding: CGFloat
@@ -294,6 +295,7 @@ public struct MarkdownConfiguration: Sendable {
     public var tableMaxColumnWidth: CGFloat = 200       // 表格最大列宽
     public var tableRowHeight: CGFloat = 44             // 表格行高
     public var tableCellPadding: CGFloat = 16           // 表格单元格内边距（左右各16）
+    public var tableCellVerticalPadding: CGFloat = 10   // 表格单元格垂直内边距（上下各10）
     public var tableSeparatorHeight: CGFloat = 1        // 表格分隔线高度
     public var autoFixMalformedTables: Bool = true      // 自动修复常见表格断裂（孤立 |、表格中的误空行）
 
@@ -376,6 +378,7 @@ public struct MarkdownConfiguration: Sendable {
             tableMaxColumnWidth: 200,
             tableRowHeight: 44,
             tableCellPadding: 16,
+            tableCellVerticalPadding: 10,
             tableSeparatorHeight: 1,
             // 列表配置
             listItemSpacing: 4,
