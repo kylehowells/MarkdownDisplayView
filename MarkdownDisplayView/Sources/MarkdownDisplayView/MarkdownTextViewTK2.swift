@@ -42,6 +42,7 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     var linkTextAttributes: [NSAttributedString.Key: Any] = [:]
     var onLinkTap: ((URL) -> Void)?
     var onImageTap: ((String) -> Void)?
+    var onImageTapWithImage: ((String, UIImage?) -> Void)?
 
     private var calculatedHeight: CGFloat = 0
     private var heightConstraint: NSLayoutConstraint?
@@ -480,6 +481,7 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         if let attachment = attributes[.attachment] as? MarkdownImageAttachment,
            let urlString = attachment.imageURL {
             onImageTap?(urlString)
+            onImageTapWithImage?(urlString, attachment.image)
             return
         }
 

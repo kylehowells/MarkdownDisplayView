@@ -61,6 +61,9 @@ extension MarkdownViewTextKit {
             textView.onImageTap = { [weak self] urlString in
                 self?.onImageTap?(urlString)
             }
+            textView.onImageTapWithImage = { [weak self] urlString, image in
+                self?.onImageTapWithImage?(urlString, image)
+            }
             textView.translatesAutoresizingMaskIntoConstraints = false
             
             // 🔥 核心修复：立即应用布局

@@ -313,15 +313,7 @@ extension MarkdownViewTextKit {
     }
     
     func loadImage(urlString: String, into attachment: MarkdownImageAttachment) {
-        var processedURLString = urlString
-        if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
-            processedURLString = "https://" + urlString
-        }
-        
-        guard let url = URL(string: processedURLString) else { return }
-        
-        ImageLoader.shared.loadImage(from: url)
-            .receive(on: DispatchQueue.main)
+        imagePublisher(for: urlString)
             .sink { [weak self] image in
                 guard let self = self, let image = image else { return }
                 

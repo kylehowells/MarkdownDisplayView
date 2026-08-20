@@ -158,6 +158,12 @@ public final class MarkdownViewTextKit: UIView {
     
     public var onLinkTap: ((URL) -> Void)?
     public var onImageTap: ((String) -> Void)?
+    /// Called with the Markdown source and rendered image when an image is selected.
+    /// The existing `onImageTap` callback is also invoked for compatibility.
+    public var onImageTapWithImage: ((String, UIImage?) -> Void)?
+    /// Optional application-owned loader for non-network Markdown image sources.
+    /// Return `nil` from the loader to retain the built-in HTTP(S) behavior.
+    public weak var imageLoader: MarkdownImageLoading?
     public var onHeightChange: ((CGFloat) -> Void)?
     /// TypewriterEngine 每次实际揭示文字或块级内容时触发。
     /// 可用于让外层滚动容器跟随真实播放进度，而不是跟随网络数据到达。

@@ -33,6 +33,16 @@ public final class ScrollableMarkdownViewTextKit: UIScrollView {
         get { markdownView.onImageTap }
         set { markdownView.onImageTap = newValue }
     }
+
+    public var onImageTapWithImage: ((String, UIImage?) -> Void)? {
+        get { markdownView.onImageTapWithImage }
+        set { markdownView.onImageTapWithImage = newValue }
+    }
+
+    public var imageLoader: MarkdownImageLoading? {
+        get { markdownView.imageLoader }
+        set { markdownView.imageLoader = newValue }
+    }
     
     public var onTOCItemTap: ((MarkdownTOCItem) -> Void)? {
         get { markdownView.onTOCItemTap }

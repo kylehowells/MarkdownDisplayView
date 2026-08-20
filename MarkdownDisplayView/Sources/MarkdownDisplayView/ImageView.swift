@@ -39,9 +39,6 @@ import Kingfisher
         }
         if !url.hasPrefix("http://"), !url.hasPrefix("https://") {
             urlString = "https://" + url
-        } else if url.hasPrefix("http://"),
-                  let index = urlString.index(urlString.startIndex, offsetBy: 4, limitedBy: urlString.endIndex) {
-            urlString.insert("s", at: index)
         }
         return URL(string: urlString)
     }

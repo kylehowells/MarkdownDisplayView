@@ -595,9 +595,11 @@ extension MarkdownViewTextKit {
             text: altText
         )
         
-        // 使用你的 ImageView 加载方法
-        imageView.image(with: source, placeHolder: placeholderImage) { [weak self, weak heightConstraint, weak widthConstraint] image in
+        imageView.image = placeholderImage
+        imagePublisher(for: source)
+            .sink { [weak self, weak imageView, weak heightConstraint, weak widthConstraint] image in
             guard let self,
+                  let imageView,
                   let image,
                   let heightConstraint,
                   let widthConstraint,
@@ -608,8 +610,11 @@ extension MarkdownViewTextKit {
                     heightConstraint: heightConstraint
                   ) else { return }
 
+            imageView.image = image
+            imageView.backgroundColor = .clear
             mdLog("🖼️ [Image] Loaded - actual size: \(targetSize.width) × \(targetSize.height)")
-        }
+            }
+            .store(in: &cancellables)
 
         // 设置容器的内容优先级，防止被压缩
         container.setContentHuggingPriority(.required, for: .vertical)
@@ -710,21 +715,15 @@ extension MarkdownViewTextKit {
     }
 
     @objc private func imageViewTapped(_ gesture: UITapGestureRecognizer) {
-        if let source = gesture.view?.accessibilityIdentifier {
+        if let imageView = gesture.view as? UIImageView,
+           let source = imageView.accessibilityIdentifier {
             onImageTap?(source)
+            onImageTapWithImage?(source, imageView.image)
         }
     }
 
     func loadImageForView(source: String, into imageView: UIImageView, heightConstraint: NSLayoutConstraint, maxWidth: CGFloat, maxHeight: CGFloat) {
-        var urlString = source
-        if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
-            urlString = "https://" + urlString
-        }
-        
-        guard let url = URL(string: urlString) else { return }
-        
-        ImageLoader.shared.loadImage(from: url)
-            .receive(on: DispatchQueue.main)
+        imagePublisher(for: source)
             .sink { [weak imageView, weak heightConstraint] image in
                 guard let imageView = imageView, let image = image else { return }
                 

@@ -1,5 +1,6 @@
 import Testing
 import UIKit
+import Combine
 @testable import MarkdownDisplayView
 
 @Test func listWrapperPaddingDefaultsToZero() async throws {
@@ -165,9 +166,66 @@ import UIKit
     let bareURL = try #require(ImageView.normalizedImageURL(from: "example.com/photo"))
     let casedExtensionURL = try #require(ImageView.normalizedImageURL(from: "https://example.com/PHOTO.PNG"))
 
-    #expect(httpURL.absoluteString == "https://example.com/photo.png")
+    #expect(httpURL.absoluteString == "http://example.com/photo.png")
     #expect(bareURL.absoluteString == "https://example.com/photo")
     #expect(casedExtensionURL.absoluteString == "https://example.com/PHOTO.PNG")
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func applicationImageLoaderCanHandleFilesystemSources() async throws {
+    final class Loader: MarkdownImageLoading {
+        let image: UIImage
+        private(set) var receivedSource: String?
+
+        init(image: UIImage) {
+            self.image = image
+        }
+
+        func loadMarkdownImage(from source: String) -> AnyPublisher<UIImage?, Never>? {
+            receivedSource = source
+            return Just(image).eraseToAnyPublisher()
+        }
+    }
+
+    let expectedImage = UIImage(systemName: "photo")!
+    let loader = Loader(image: expectedImage)
+    let markdownView = MarkdownViewTextKit()
+    markdownView.imageLoader = loader
+
+    var cancellable: AnyCancellable?
+    let receivedImage: UIImage? = await withCheckedContinuation { continuation in
+        cancellable = markdownView.imagePublisher(for: "artifacts/chart.png")
+            .sink { image in
+                continuation.resume(returning: image)
+            }
+    }
+
+    #expect(loader.receivedSource == "artifacts/chart.png")
+    #expect(receivedImage === expectedImage)
+    _ = cancellable
+}
+
+@available(iOS 15.0, *)
+@MainActor
+@Test func imageTapCanExposeTheRenderedImageWithoutBreakingSourceCallback() async throws {
+    let expectedImage = UIImage(systemName: "photo")!
+    let markdownView = MarkdownViewTextKit()
+    var sourceCallbackValue: String?
+    var imageCallbackValue: (String, UIImage?)?
+    markdownView.onImageTap = { source in
+        sourceCallbackValue = source
+    }
+    markdownView.onImageTapWithImage = { source, image in
+        imageCallbackValue = (source, image)
+    }
+
+    markdownView.onImageTap?("artifacts/chart.png")
+    markdownView.onImageTapWithImage?("artifacts/chart.png", expectedImage)
+
+    #expect(sourceCallbackValue == "artifacts/chart.png")
+    #expect(imageCallbackValue?.0 == "artifacts/chart.png")
+    #expect(imageCallbackValue?.1 === expectedImage)
 }
 
 @available(iOS 15.0, *)

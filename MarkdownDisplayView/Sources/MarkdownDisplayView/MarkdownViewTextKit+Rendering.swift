@@ -381,8 +381,13 @@ extension MarkdownViewTextKit {
         case (.image(let oldSrc, _), .image(let newSrc, _)):
             if oldSrc != newSrc {
                 if let imageView = view.subviews.first(where: { $0 is ImageView }) as? ImageView {
-                    imageView.image(with: newSrc, placeHolder: imageView.image)
                     imageView.accessibilityIdentifier = newSrc
+                    imagePublisher(for: newSrc)
+                        .sink { [weak imageView] image in
+                            guard let image else { return }
+                            imageView?.image = image
+                        }
+                        .store(in: &cancellables)
                 }
             }
             return true
