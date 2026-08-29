@@ -12,7 +12,7 @@ import Foundation
 
 /// 使用 TextKit 2 的自定义 TextView
 @available(iOS 15.0, *)
-class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate, UITextViewDelegate {
+class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate, UITextInput, UIKeyInput {
 
     private let textLayoutManager: NSTextLayoutManager
     private let textContentStorage: NSTextContentStorage
@@ -47,43 +47,24 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate, UITextViewDelega
     var isTextSelectionEnabled: Bool = false {
         didSet {
             if isTextSelectionEnabled {
-                if selectionTextView.superview == nil {
-                    addSubview(selectionTextView)
+                if interactions.contains(where: { $0 === selectionTextInteraction }) == false {
+                    addInteraction(selectionTextInteraction)
                 }
-                selectionTextView.isHidden = false
-                selectionTextView.isSelectable = true
                 scheduleSelectionContentRefresh()
             } else {
-                selectionTextView.isSelectable = false
-                selectionTextView.removeFromSuperview()
+                removeInteraction(selectionTextInteraction)
+                selectedTextRange = nil
             }
         }
     }
 
-    private lazy var selectionTextView: UITextView = {
-        let view: UITextView
-        if #available(iOS 16.0, *) {
-            view = UITextView(usingTextLayoutManager: true)
-        } else {
-            view = UITextView()
-        }
-        view.backgroundColor = .clear
-        view.isEditable = false
-        view.isSelectable = false
-        view.isScrollEnabled = false
-        view.textContainerInset = .zero
-        view.textContainer.lineFragmentPadding = 0
-        view.textContainer.lineBreakMode = .byWordWrapping
-        view.adjustsFontForContentSizeCategory = false
-        view.linkTextAttributes = [
-            .foregroundColor: UIColor.clear,
-            .underlineStyle: 0,
-        ]
-        view.delegate = self
-        view.isHidden = true
-        view.accessibilityIdentifier = "markdownDisplayView.selectionTextView"
-        view.accessibilityLabel = "Selectable Markdown text"
-        return view
+    let selectionSupport = MarkdownTextSelectionSupport()
+    weak var selectionSupportInputDelegate: UITextInputDelegate?
+    var selectionSupportTokenizer: UITextInputTokenizer?
+    private lazy var selectionTextInteraction: UITextInteraction = {
+        let interaction = UITextInteraction(for: .nonEditable)
+        interaction.textInput = self
+        return interaction
     }()
 
     private var selectionRefreshScheduled = false
@@ -340,15 +321,8 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate, UITextViewDelega
 
     private func refreshSelectionContent() {
         guard isTextSelectionEnabled else { return }
-        let selectableText = NSMutableAttributedString(attributedString: textStorage)
-        let fullRange = NSRange(location: 0, length: selectableText.length)
-        selectableText.addAttribute(.foregroundColor, value: UIColor.clear, range: fullRange)
-        selectableText.removeAttribute(.backgroundColor, range: fullRange)
-        selectionTextView.attributedText = selectableText
-        selectionTextView.linkTextAttributes = [
-            .foregroundColor: UIColor.clear,
-            .underlineStyle: 0,
-        ]
+        selectionSupport.setAttributedText(textStorage)
+        selectionSupport.containerSize = bounds.size
     }
 
     private func layoutText() {
@@ -465,7 +439,7 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate, UITextViewDelega
     override func layoutSubviews() {
         super.layoutSubviews()
 
-        selectionTextView.frame = bounds
+        selectionSupport.containerSize = bounds.size
 
         // ⭐️ 修复 2: 确保视图有尺寸时触发布局检查
         if textStorage.length > 0 {
@@ -560,15 +534,6 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate, UITextViewDelega
         }
     }
 
-    func textView(
-        _ textView: UITextView,
-        shouldInteractWith URL: URL,
-        in characterRange: NSRange,
-        interaction: UITextItemInteraction
-    ) -> Bool {
-        onLinkTap?(URL)
-        return false
-    }
 }
 
 // MARK: - Typewriter Support

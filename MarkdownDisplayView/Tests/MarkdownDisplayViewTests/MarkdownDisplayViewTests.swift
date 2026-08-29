@@ -35,7 +35,7 @@ import Combine
 
 @available(iOS 15.0, *)
 @MainActor
-@Test func textSelectionOverlayCarriesRenderedTextWithoutPaintingADuplicateCopy() async throws {
+@Test func textSelectionUsesTheRenderingViewWithoutAddingATextViewOverlay() async throws {
     let view = MarkdownTextViewTK2(frame: CGRect(x: 0, y: 0, width: 280, height: 80))
     view.isTextSelectionEnabled = true
     view.attributedText = NSAttributedString(
@@ -47,11 +47,14 @@ import Combine
     )
     await Task.yield()
 
-    let selectionView = view.subviews.compactMap({ $0 as? UITextView }).first
-    #expect(selectionView?.isSelectable == true)
-    #expect(selectionView?.isEditable == false)
-    #expect(selectionView?.attributedText.string == "Selectable Markdown text")
-    #expect(selectionView?.attributedText.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor == UIColor.clear)
+    let start = view.position(from: view.beginningOfDocument, offset: 11)!
+    let end = view.position(from: start, offset: 8)!
+    view.selectedTextRange = view.textRange(from: start, to: end)
+
+    #expect(view.subviews.contains(where: { $0 is UITextView }) == false)
+    #expect(view.interactions.contains(where: { $0 is UITextInteraction }))
+    #expect(view.text(in: view.selectedTextRange!) == "Markdown")
+    #expect(view.canPerformAction(#selector(view.copy(_:)), withSender: nil))
 }
 
 @available(iOS 15.0, *)
