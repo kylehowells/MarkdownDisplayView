@@ -47,6 +47,7 @@ extension MarkdownViewTextKit {
             container.translatesAutoresizingMaskIntoConstraints = false
             
             let textView = MarkdownTextViewTK2()
+            textView.isTextSelectionEnabled = isTextSelectionEnabled
             textView.attributedText = normalizedText
             textView.typewriterTextMode = configuration.typewriterTextMode
             textView.typewriterHeightUpdateInterval = configuration.typewriterHeightUpdateInterval

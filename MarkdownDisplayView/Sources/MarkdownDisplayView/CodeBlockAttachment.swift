@@ -25,6 +25,9 @@ final class CodeBlockAttachment: NSTextAttachment {
     /// 代码语言标识
     let language: String?
 
+    /// Whether the rendered code permits native selection and copying.
+    let isTextSelectionEnabled: Bool
+
     /// 代码不换行时的实际内容宽度
     let contentWidth: CGFloat
 
@@ -41,12 +44,14 @@ final class CodeBlockAttachment: NSTextAttachment {
         code: NSAttributedString,
         configuration: MarkdownConfiguration,
         containerWidth: CGFloat,
-        language: String? = nil
+        language: String? = nil,
+        isTextSelectionEnabled: Bool = false
     ) {
         self.code = code
         self.configuration = configuration
         self.containerWidth = containerWidth
         self.language = language
+        self.isTextSelectionEnabled = isTextSelectionEnabled
 
         // 计算代码不换行时的实际尺寸（宽度无限大，不换行）
         let size = code.boundingRect(
@@ -140,6 +145,7 @@ final class CodeBlockAttachmentViewProvider: NSTextAttachmentViewProvider {
 
         // 3. 代码文本视图（不换行，使用实际内容宽度）
         let textView = MarkdownTextViewTK2()
+        textView.isTextSelectionEnabled = attachment.isTextSelectionEnabled
         textView.attributedText = attachment.code
         textView.typewriterTextMode = .reveal
         textView.backgroundColor = .clear

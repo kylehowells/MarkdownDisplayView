@@ -84,6 +84,22 @@ public final class MarkdownViewTextKit: UIView {
     // 配置开关
     public var enableTypewriterEffect: Bool = true
 
+    /// Enables native long-press selection and copy interactions for rendered text.
+    public var isTextSelectionEnabled: Bool = false {
+        didSet {
+            updateTextSelectionEnabled(in: self)
+        }
+    }
+
+    private func updateTextSelectionEnabled(in view: UIView) {
+        if let textView = view as? MarkdownTextViewTK2 {
+            textView.isTextSelectionEnabled = isTextSelectionEnabled
+        }
+        for subview in view.subviews {
+            updateTextSelectionEnabled(in: subview)
+        }
+    }
+
     public func updateTypewriterSpeed(charsPerStep: Int? = nil,
                                       baseDuration: TimeInterval? = nil,
                                       elementGapDuration: TimeInterval? = nil) {

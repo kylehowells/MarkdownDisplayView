@@ -12,7 +12,7 @@ import Foundation
 
 /// 使用 TextKit 2 的自定义 TextView
 @available(iOS 15.0, *)
-class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
+class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate, UITextViewDelegate {
 
     private let textLayoutManager: NSTextLayoutManager
     private let textContentStorage: NSTextContentStorage
@@ -43,6 +43,50 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     var onLinkTap: ((URL) -> Void)?
     var onImageTap: ((String) -> Void)?
     var onImageTapWithImage: ((String, UIImage?) -> Void)?
+
+    var isTextSelectionEnabled: Bool = false {
+        didSet {
+            if isTextSelectionEnabled {
+                if selectionTextView.superview == nil {
+                    addSubview(selectionTextView)
+                }
+                selectionTextView.isHidden = false
+                selectionTextView.isSelectable = true
+                scheduleSelectionContentRefresh()
+            } else {
+                selectionTextView.isSelectable = false
+                selectionTextView.removeFromSuperview()
+            }
+        }
+    }
+
+    private lazy var selectionTextView: UITextView = {
+        let view: UITextView
+        if #available(iOS 16.0, *) {
+            view = UITextView(usingTextLayoutManager: true)
+        } else {
+            view = UITextView()
+        }
+        view.backgroundColor = .clear
+        view.isEditable = false
+        view.isSelectable = false
+        view.isScrollEnabled = false
+        view.textContainerInset = .zero
+        view.textContainer.lineFragmentPadding = 0
+        view.textContainer.lineBreakMode = .byWordWrapping
+        view.adjustsFontForContentSizeCategory = false
+        view.linkTextAttributes = [
+            .foregroundColor: UIColor.clear,
+            .underlineStyle: 0,
+        ]
+        view.delegate = self
+        view.isHidden = true
+        view.accessibilityIdentifier = "markdownDisplayView.selectionTextView"
+        view.accessibilityLabel = "Selectable Markdown text"
+        return view
+    }()
+
+    private var selectionRefreshScheduled = false
 
     private var calculatedHeight: CGFloat = 0
     private var heightConstraint: NSLayoutConstraint?
@@ -281,6 +325,30 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
         textContentStorage.performEditingTransaction {
             textStorage.setAttributedString(newValue ?? NSAttributedString())
         }
+        scheduleSelectionContentRefresh()
+    }
+
+    private func scheduleSelectionContentRefresh() {
+        guard isTextSelectionEnabled, !selectionRefreshScheduled else { return }
+        selectionRefreshScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.selectionRefreshScheduled = false
+            self.refreshSelectionContent()
+        }
+    }
+
+    private func refreshSelectionContent() {
+        guard isTextSelectionEnabled else { return }
+        let selectableText = NSMutableAttributedString(attributedString: textStorage)
+        let fullRange = NSRange(location: 0, length: selectableText.length)
+        selectableText.addAttribute(.foregroundColor, value: UIColor.clear, range: fullRange)
+        selectableText.removeAttribute(.backgroundColor, range: fullRange)
+        selectionTextView.attributedText = selectableText
+        selectionTextView.linkTextAttributes = [
+            .foregroundColor: UIColor.clear,
+            .underlineStyle: 0,
+        ]
     }
 
     private func layoutText() {
@@ -397,6 +465,8 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
 
+        selectionTextView.frame = bounds
+
         // ⭐️ 修复 2: 确保视图有尺寸时触发布局检查
         if textStorage.length > 0 {
             layoutText()
@@ -489,6 +559,16 @@ class MarkdownTextViewTK2: UIView, UIGestureRecognizerDelegate {
             onLinkTap?(url)
         }
     }
+
+    func textView(
+        _ textView: UITextView,
+        shouldInteractWith URL: URL,
+        in characterRange: NSRange,
+        interaction: UITextItemInteraction
+    ) -> Bool {
+        onLinkTap?(URL)
+        return false
+    }
 }
 
 // MARK: - Typewriter Support
@@ -517,6 +597,7 @@ extension MarkdownTextViewTK2 {
         textContentStorage.performEditingTransaction {
             body(textStorage)
         }
+        scheduleSelectionContentRefresh()
     }
 
     /// 准备打字机效果：将所有文字设为透明，但保留布局占位

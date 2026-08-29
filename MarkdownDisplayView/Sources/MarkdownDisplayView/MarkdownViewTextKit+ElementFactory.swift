@@ -81,7 +81,8 @@ extension MarkdownViewTextKit {
                 code: attributedString,
                 configuration: configuration,
                 containerWidth: containerWidth,
-                language: language
+                language: language,
+                isTextSelectionEnabled: isTextSelectionEnabled
             )
 
             let codeParagraphStyle = NSMutableParagraphStyle()
@@ -757,6 +758,7 @@ extension MarkdownViewTextKit {
         container.accessibilityIdentifier = "CodeBlockContainer"
 
         let textView = MarkdownTextViewTK2()
+        textView.isTextSelectionEnabled = isTextSelectionEnabled
         textView.attributedText = attributedString
         textView.typewriterTextMode = .reveal
         textView.typewriterHeightUpdateInterval = configuration.typewriterHeightUpdateInterval
